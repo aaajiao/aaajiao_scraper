@@ -125,6 +125,9 @@ class FirecrawlMixin:
                 "required": ["title"],
             }
 
+            # Extract URL slug for targeted extraction
+            url_slug = url.rstrip('/').split('/')[-1].replace('-', ' ').replace('_', ' ')
+            
             payload = {
                 "url": url,
                 "formats": [
@@ -132,9 +135,12 @@ class FirecrawlMixin:
                         "type": "json",
                         "schema": schema,
                         "prompt": (
-                            "You are an art archivist. Extract the artwork metadata from the portfolio page. "
-                            "Ignore navigation links like 'Previous/Next project'. "
-                            "The title usually appears as 'English Title / Chinese Title'. Separate them."
+                            f"You are an art archivist. This is a Single Page Application (SPA) portfolio site. "
+                            f"IMPORTANT: Extract ONLY the artwork that matches the URL slug '{url_slug}'. "
+                            f"The page may show multiple artworks, but you must find and extract the one "
+                            f"whose title or ID matches '{url_slug}'. "
+                            f"Ignore navigation links and other artworks. "
+                            f"The title usually appears as 'English Title / Chinese Title'. Separate them."
                         ),
                     }
                 ],
@@ -175,6 +181,17 @@ class FirecrawlMixin:
                         work["title"] = parts[0].strip()
                         if len(parts) > 1:
                             work["title_cn"] = parts[1].strip()
+
+                    # Post-processing: Normalize year field (remove month names)
+                    if work["year"]:
+                        import re
+                        # Extract year(s) like "2024", "2018-2022", "2024 - 2025"
+                        years = re.findall(r'\d{4}', work["year"])
+                        if years:
+                            if len(years) == 1:
+                                work["year"] = years[0]
+                            elif len(years) >= 2:
+                                work["year"] = f"{years[0]}-{years[-1]}"
 
                     # Save to cache
                     if self.use_cache:

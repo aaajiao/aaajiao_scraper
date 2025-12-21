@@ -72,6 +72,7 @@ logs/
 aaajiao_works.json
 aaajiao_portfolio.md
 *.html
+*.csv
 
 # Temporary files
 *.tmp

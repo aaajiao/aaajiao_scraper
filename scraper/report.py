@@ -81,8 +81,16 @@ class ReportMixin:
             "\n---\n\n",
         ]
 
-        # Sort by year in descending order
-        sorted_works = sorted(self.works, key=lambda x: x.get("year") or "0000", reverse=True)
+        # Sort by year in descending order (newest first)
+        def get_sort_year(work):
+            year = work.get("year") or "0000"
+            # For year ranges like "2018-2022", use the end year for sorting
+            if "-" in year:
+                parts = year.split("-")
+                return parts[-1].strip()  # Use end year (most recent)
+            return year
+        
+        sorted_works = sorted(self.works, key=get_sort_year, reverse=True)
 
         current_year = None
         for work in sorted_works:

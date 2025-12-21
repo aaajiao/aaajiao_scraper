@@ -12,11 +12,14 @@ for incremental updates.
 """
 
 import logging
-from typing import Dict, List
+import os
+import re
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
-from .constants import BASE_URL, SITEMAP_URL, TIMEOUT
+from .constants import BASE_URL, CACHE_DIR, SITEMAP_URL, TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -212,4 +215,255 @@ class BasicScraperMixin:
             return False
 
         return True
+
+    # ====================
+    # Image Extraction (HTML-based, no API)
+    # ====================
+
+    def extract_images_from_page(self, url: str) -> List[str]:
+        """Extract high-resolution image URLs from an artwork page.
+        
+        Uses HTML parsing to find images specific to this artwork by targeting
+        the slideshow container associated with the active project.
+        
+        Args:
+            url: The artwork page URL to extract images from.
+            
+        Returns:
+            List of image URLs (preferring src_o for high resolution).
+            Empty list if extraction fails or no images found.
+            
+        Note:
+            - Targets `slideshow_container_{ID}` to avoid extracting images
+              from other works visible on the page
+            - Prefers `src_o` attribute for high-res, falls back to `data-src` or `src`
+            - Filters out thumbnails and navigation images
+        """
+        try:
+            logger.debug(f"Extracting images from: {url}")
+            resp = self.session.get(url, timeout=TIMEOUT)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.content, "html.parser")
+            
+            images: List[str] = []
+            
+            # Strategy 1: Find active project's slideshow container
+            # Look for project_thumb with 'active' class to get the project ID
+            active_thumb = soup.find(class_=re.compile(r"project_thumb.*active"))
+            
+            if active_thumb and active_thumb.get("id"):
+                # Extract numeric ID from "item_12345678"
+                item_id = active_thumb.get("id", "").replace("item_", "")
+                
+                if item_id:
+                    # Find the corresponding slideshow container
+                    container = soup.find(id=re.compile(f"slideshow_container_{item_id}"))
+                    
+                    if container:
+                        for img in container.find_all("img"):
+                            src = self._get_best_image_src(img)
+                            if src and self._is_valid_image(src):
+                                full_url = urljoin(url, src)
+                                if full_url not in images:
+                                    images.append(full_url)
+                        
+                        if images:
+                            logger.debug(f"Found {len(images)} images in slideshow container")
+                            return images
+            
+            # Strategy 2: Fallback - find main content images
+            # Look for images in common content containers
+            content_selectors = [
+                ".project_content",
+                ".slide_content", 
+                ".content_inner",
+                "article",
+                "main"
+            ]
+            
+            for selector in content_selectors:
+                container = soup.select_one(selector)
+                if container:
+                    for img in container.find_all("img"):
+                        src = self._get_best_image_src(img)
+                        if src and self._is_valid_image(src):
+                            full_url = urljoin(url, src)
+                            if full_url not in images:
+                                images.append(full_url)
+            
+            # Strategy 3: Last resort - all images with src_o attribute
+            if not images:
+                for img in soup.find_all("img", attrs={"src_o": True}):
+                    src = img.get("src_o")
+                    if src and self._is_valid_image(src):
+                        full_url = urljoin(url, src)
+                        if full_url not in images:
+                            images.append(full_url)
+            
+            logger.debug(f"Found {len(images)} images (fallback strategies)")
+            return images
+            
+        except Exception as e:
+            logger.error(f"Image extraction failed for {url}: {e}")
+            return []
+
+    def _get_best_image_src(self, img_tag) -> Optional[str]:
+        """Get the best available image source from an img tag.
+        
+        Priority: src_o (high-res) > data-src (lazy load) > src
+        """
+        return (
+            img_tag.get("src_o") or 
+            img_tag.get("data-src") or 
+            img_tag.get("src")
+        )
+
+    def _is_valid_image(self, src: str) -> bool:
+        """Check if an image URL is valid (not a thumbnail or icon)."""
+        if not src:
+            return False
+        
+        # Skip common non-artwork images
+        skip_patterns = [
+            "thumbnail",
+            "thumb_",
+            "icon",
+            "logo",
+            "avatar",
+            "placeholder",
+            "loading",
+            "spinner",
+            "/assets/",
+            "1x1.gif",
+            "blank.gif"
+        ]
+        
+        src_lower = src.lower()
+        for pattern in skip_patterns:
+            if pattern in src_lower:
+                return False
+        
+        # Must be an actual image file
+        valid_extensions = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif")
+        if not any(src_lower.endswith(ext) or ext + "?" in src_lower for ext in valid_extensions):
+            # Check if URL contains image-like patterns
+            if "image" not in src_lower and "img" not in src_lower and "photo" not in src_lower:
+                return False
+        
+        return True
+
+    def download_image(self, url: str, output_dir: str, filename: Optional[str] = None) -> Optional[str]:
+        """Download a single image to the specified directory.
+        
+        Args:
+            url: Image URL to download.
+            output_dir: Directory to save the image to.
+            filename: Optional custom filename. If None, extracts from URL.
+            
+        Returns:
+            Local file path if successful, None otherwise.
+        """
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Generate filename from URL if not provided
+            if not filename:
+                filename = url.split("/")[-1].split("?")[0]
+                # Ensure valid filename
+                filename = re.sub(r'[^\w\-_\.]', '_', filename)
+                if not filename or len(filename) < 4:
+                    filename = f"image_{hash(url) % 10000}.jpg"
+            
+            local_path = os.path.join(output_dir, filename)
+            
+            # Skip if already exists
+            if os.path.exists(local_path):
+                logger.debug(f"Image already exists: {filename}")
+                return local_path
+            
+            # Download
+            resp = self.session.get(url, timeout=30)
+            resp.raise_for_status()
+            
+            with open(local_path, "wb") as f:
+                f.write(resp.content)
+            
+            logger.debug(f"Downloaded: {filename}")
+            return local_path
+            
+        except Exception as e:
+            logger.warning(f"Failed to download {url}: {e}")
+            return None
+
+    def get_all_cached_works(self) -> List[Dict[str, Any]]:
+        """Load all cached work data from the cache directory.
+        
+        Returns:
+            List of cached work dictionaries, each containing metadata
+            like title, url, year, etc.
+        """
+        import pickle
+        
+        works: List[Dict[str, Any]] = []
+        
+        if not os.path.exists(CACHE_DIR):
+            logger.warning(f"Cache directory not found: {CACHE_DIR}")
+            return works
+        
+        for filename in os.listdir(CACHE_DIR):
+            # Only load basic cache files (not extract or discovery caches)
+            if filename.endswith(".pkl") and not filename.startswith(("extract_", "discovery_")):
+                cache_path = os.path.join(CACHE_DIR, filename)
+                try:
+                    with open(cache_path, "rb") as f:
+                        data = pickle.load(f)
+                        if isinstance(data, dict) and data.get("url"):
+                            works.append(data)
+                except Exception as e:
+                    logger.debug(f"Failed to load cache {filename}: {e}")
+        
+        logger.info(f"Loaded {len(works)} cached works")
+        return works
+
+    def enrich_work_with_images(
+        self, 
+        work: Dict[str, Any], 
+        download: bool = False,
+        output_dir: Optional[str] = None
+    ) -> Tuple[Dict[str, Any], List[str]]:
+        """Enrich a work dictionary with image URLs extracted from its page.
+        
+        Args:
+            work: Work dictionary containing at least 'url' key.
+            download: Whether to download images to local directory.
+            output_dir: Directory for downloaded images (required if download=True).
+            
+        Returns:
+            Tuple of (updated work dict, list of image paths/URLs)
+        """
+        url = work.get("url")
+        if not url:
+            return work, []
+        
+        # Extract images from page
+        images = self.extract_images_from_page(url)
+        
+        local_paths: List[str] = []
+        
+        if download and images and output_dir:
+            # Create work-specific subdirectory
+            work_slug = url.split("/")[-1] or "unknown"
+            work_dir = os.path.join(output_dir, work_slug)
+            
+            for img_url in images:
+                local_path = self.download_image(img_url, work_dir)
+                if local_path:
+                    local_paths.append(local_path)
+        
+        # Update work dictionary
+        work["images"] = images
+        if local_paths:
+            work["local_images"] = local_paths
+        
+        return work, local_paths if download else images
 

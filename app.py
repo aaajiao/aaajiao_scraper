@@ -55,6 +55,15 @@ def run_scraper(incremental: bool = False):
              st.session_state.log_messages.append("No changes detected. / 没有检测到更新。")
              st.info("✅ No new artworks found / 没有发现新作品")
              status_text.text("Done.")
+             
+             # Load existing cached data into session state so UI can display it
+             try:
+                 with open("aaajiao_works.json", "r", encoding="utf-8") as f:
+                     st.session_state.works = json.load(f)
+                     st.session_state.log_messages.append(f"📦 Loaded {len(st.session_state.works)} cached works")
+             except FileNotFoundError:
+                 pass
+             
              st.session_state.scraping = False
              return
 
@@ -91,20 +100,39 @@ def run_scraper(incremental: bool = False):
                     except Exception as e:
                         st.session_state.log_messages.append(f"Error: {e}")
                     
-                    # Auto-save every 5 items
+                    # Auto-save every 5 items (with deduplication)
                     if completed_count % 5 == 0:
-                        scraper.works = st.session_state.works
+                        # Deduplicate by URL before saving
+                        seen_urls = set()
+                        unique_works = []
+                        for w in st.session_state.works:
+                            url = w.get('url', '')
+                            if url and url not in seen_urls:
+                                seen_urls.add(url)
+                                unique_works.append(w)
+                        scraper.works = unique_works
                         scraper.save_to_json()
-                        st.session_state.log_messages.append(f"💾 Auto-saved {len(st.session_state.works)} items")
+                        st.session_state.log_messages.append(f"💾 Auto-saved {len(unique_works)} items")
 
-        # 3. Save Files
+        # 3. Save Files (with final deduplication)
         status_text.text("Saving files... / 正在保存文件...")
-        scraper.works = st.session_state.works
+        
+        # Final deduplication by URL
+        seen_urls = set()
+        unique_works = []
+        for w in st.session_state.works:
+            url = w.get('url', '')
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                unique_works.append(w)
+        
+        st.session_state.works = unique_works  # Update session state with deduplicated list
+        scraper.works = unique_works
         
         scraper.save_to_json()
         scraper.generate_markdown()
         
-        st.success(f"Completed! Scraped {len(st.session_state.works)} artworks. / 抓取完成！共获取 {len(st.session_state.works)} 个作品。")
+        st.success(f"Completed! Scraped {len(unique_works)} artworks. / 抓取完成！共获取 {len(unique_works)} 个作品。")
         st.balloons()
         
     except Exception as e:
@@ -211,6 +239,140 @@ with tab1:
 
     elif not st.session_state.scraping:
         st.info("Click the button above to start. / 点击上方按钮开始运行。")
+    
+    # ============ Image Enrichment Section ============
+    st.divider()
+    st.subheader("🖼️ Image Enrichment / 图片整合")
+    st.markdown("""
+    **从已缓存的作品数据中提取图片 (无需 API)**
+    - 使用 HTML 解析提取每个作品的高清图片
+    - 可选择下载到本地
+    - 生成包含图片的完整报告
+    """)
+    
+    # Load cached works count
+    scraper_preview = AaajiaoScraper()
+    cached_works = scraper_preview.get_all_cached_works()
+    
+    if cached_works:
+        st.success(f"📦 Found {len(cached_works)} cached works / 发现 {len(cached_works)} 个已缓存作品")
+        
+        col_opt1, col_opt2 = st.columns(2)
+        with col_opt1:
+            download_images_option = st.checkbox("📥 Download Images / 下载图片到本地", value=True, key="enrich_download")
+        with col_opt2:
+            limit_works = st.slider("处理数量限制", min_value=1, max_value=len(cached_works), value=min(50, len(cached_works)), key="enrich_limit")
+        
+        if st.button("🖼️ Start Image Enrichment / 开始图片整合", type="primary", key="enrich_btn"):
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            scraper = AaajiaoScraper()
+            works_to_process = cached_works[:limit_works]
+            enriched_works = []
+            all_images = []
+            
+            output_dir = "output/images" if download_images_option else None
+            
+            for i, work in enumerate(works_to_process):
+                title = work.get("title", "Unknown")[:30]
+                status_text.text(f"[{i+1}/{len(works_to_process)}] Processing: {title}...")
+                
+                try:
+                    enriched_work, images = scraper.enrich_work_with_images(
+                        work, 
+                        download=download_images_option,
+                        output_dir=output_dir
+                    )
+                    enriched_works.append(enriched_work)
+                    all_images.extend(images)
+                except Exception as e:
+                    st.warning(f"Failed: {title} - {e}")
+                    enriched_works.append(work)
+                
+                progress_bar.progress((i + 1) / len(works_to_process))
+            
+            status_text.text("Generating report...")
+            
+            # Generate Markdown report
+            report_lines = ["# aaajiao Portfolio with Images\n", f"*Generated: {time.strftime('%Y-%m-%d %H:%M')}*\n\n"]
+            
+            for work in enriched_works:
+                title = work.get("title", "Untitled")
+                title_cn = work.get("title_cn", "")
+                year = work.get("year", "")
+                url = work.get("url", "")
+                desc_en = work.get("description_en", "")
+                desc_cn = work.get("description_cn", "")
+                images = work.get("images", [])
+                local_images = work.get("local_images", [])
+                
+                report_lines.append(f"## {title}")
+                if title_cn:
+                    report_lines.append(f" / {title_cn}")
+                report_lines.append(f"\n\n**Year:** {year}\n")
+                report_lines.append(f"**URL:** [{url}]({url})\n\n")
+                
+                if desc_en:
+                    report_lines.append(f"{desc_en}\n\n")
+                if desc_cn:
+                    report_lines.append(f"{desc_cn}\n\n")
+                
+                # Images section
+                if images:
+                    report_lines.append("### Images\n\n")
+                    for j, img_url in enumerate(images[:6]):
+                        if local_images and j < len(local_images):
+                            # Convert absolute path to relative path from output/ folder
+                            local_path = local_images[j]
+                            # Extract relative path starting from "images/"
+                            if "images/" in local_path:
+                                rel_path = "images/" + local_path.split("images/", 1)[1]
+                            else:
+                                rel_path = os.path.basename(local_path)
+                            report_lines.append(f"![Image {j+1}]({rel_path})\n\n")
+                        else:
+                            report_lines.append(f"![Image {j+1}]({img_url})\n\n")
+                
+                report_lines.append("---\n\n")
+            
+            report_content = "".join(report_lines)
+            
+            # Save report
+            os.makedirs("output", exist_ok=True)
+            report_path = "output/portfolio_with_images.md"
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write(report_content)
+            
+            # Also save enriched JSON
+            json_path = "output/works_with_images.json"
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(enriched_works, f, ensure_ascii=False, indent=2)
+            
+            st.success(f"✅ Done! Processed {len(enriched_works)} works, found {len(all_images)} images")
+            
+            # Download buttons
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                st.download_button(
+                    "📄 Download Report / 下载报告",
+                    data=report_content,
+                    file_name="portfolio_with_images.md",
+                    mime="text/markdown"
+                )
+            with col_d2:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    st.download_button(
+                        "📊 Download JSON / 下载 JSON",
+                        data=f.read(),
+                        file_name="works_with_images.json",
+                        mime="application/json"
+                    )
+            
+            if download_images_option and all_images:
+                st.info(f"📁 Images saved to: `{output_dir}/`")
+    else:
+        st.warning("⚠️ No cached works found. Run 'Start Scraping' first to cache artwork data.")
 
 
 # ============ Tab 2: Quick Extract / AI Search (The Agent) ============
