@@ -512,6 +512,210 @@ class AaajiaoScraper:
             logger.error(f"Agent 请求错误: {e}")
             return None
 
+    # ==================== 图片下载和报告生成 ====================
+    
+    def download_images(self, image_urls: List[str], output_dir: str, timestamp: str = "") -> List[str]:
+        """
+        下载图片到本地
+        
+        Args:
+            image_urls: 图片 URL 列表
+            output_dir: 输出目录
+            timestamp: 时间戳，用于创建独立的图片文件夹
+            
+        Returns:
+            本地图片路径列表
+        """
+        # 使用带时间戳的文件夹名
+        folder_name = f"images_{timestamp}" if timestamp else "images"
+        images_dir = os.path.join(output_dir, folder_name)
+        os.makedirs(images_dir, exist_ok=True)
+        
+        local_paths = []
+        for i, url in enumerate(image_urls):
+            try:
+                # 清理 URL
+                url = url.strip()
+                if not url or not url.startswith(('http://', 'https://')):
+                    continue
+                
+                # 生成文件名
+                ext = os.path.splitext(url.split('?')[0])[-1] or '.jpg'
+                if ext not in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
+                    ext = '.jpg'
+                filename = f"{i+1:02d}_image{ext}"
+                local_path = os.path.join(images_dir, filename)
+                
+                logger.info(f"   下载图片 [{i+1}/{len(image_urls)}]: {filename}")
+                
+                # 下载
+                resp = self.session.get(url, timeout=30, stream=True)
+                if resp.status_code == 200:
+                    with open(local_path, 'wb') as f:
+                        for chunk in resp.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                    local_paths.append(f"{folder_name}/{filename}")
+                else:
+                    logger.warning(f"   下载失败: {url} (状态码: {resp.status_code})")
+                    
+            except Exception as e:
+                logger.warning(f"   下载异常: {url} - {e}")
+                
+        return local_paths
+    
+    def generate_agent_report(self, data: Dict[str, Any], output_dir: str, prompt: str = ""):
+        """
+        根据 Agent 返回的数据生成 Markdown 报告和下载图片
+        
+        Args:
+            data: Agent 返回的数据
+            output_dir: 输出目录
+            prompt: 用户输入的查询 prompt
+        """
+        from datetime import datetime
+        
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # 生成时间戳
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        logger.info(f"📁 生成报告到: {output_dir}")
+        
+        # 1. 提取图片 URL 并下载
+        image_urls = self._extract_image_urls(data)
+        local_images = []
+        
+        if image_urls:
+            logger.info(f"🖼️  找到 {len(image_urls)} 张图片，开始下载...")
+            local_images = self.download_images(image_urls, output_dir, timestamp=timestamp)
+            logger.info(f"✅ 成功下载 {len(local_images)} 张图片")
+        
+        # 2. 生成 Markdown 报告（带时间戳文件名）
+        report_filename = f"report_{timestamp}.md"
+        report_path = os.path.join(output_dir, report_filename)
+        
+        lines = []
+        
+        # 标题
+        title = data.get('title', data.get('artwork_title', 'Untitled'))
+        if isinstance(title, str):
+            lines.append(f"# {title}\n\n")
+        
+        # 查询信息
+        lines.append(f"> **查询时间:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        if prompt:
+            lines.append(f"> **Prompt:** {prompt}\n")
+        lines.append("\n---\n\n")
+        
+        # 元数据表格
+        metadata_fields = [
+            ('artist', '艺术家'),
+            ('year', '年份'),
+            ('artwork_type', '类型'),
+            ('type', '类型'),
+            ('materials', '材料'),
+            ('dimensions', '尺寸'),
+            ('duration', '时长'),
+        ]
+        
+        metadata_lines = []
+        for key, label in metadata_fields:
+            value = data.get(key)
+            if value and key != 'title':
+                metadata_lines.append(f"**{label}:** {value}")
+        
+        if metadata_lines:
+            lines.append("\n".join(metadata_lines))
+            lines.append("\n\n")
+        
+        # 图片
+        if local_images:
+            lines.append("## 图片\n\n")
+            for img_path in local_images:
+                lines.append(f"![{img_path}]({img_path})\n\n")
+        
+        # 描述/概念
+        for field in ['description', 'summary', 'concept', 'description_en', 'description_cn']:
+            value = data.get(field)
+            if value and isinstance(value, str):
+                lines.append(f"## 描述\n\n{value}\n\n")
+                break
+        
+        # 展览信息
+        exhibition = data.get('exhibition')
+        if exhibition and isinstance(exhibition, dict):
+            lines.append("## 展览信息\n\n")
+            for key, value in exhibition.items():
+                if value:
+                    lines.append(f"- **{key}:** {value}\n")
+            lines.append("\n")
+        
+        # 其他字段（JSON 格式）
+        excluded = {'title', 'artist', 'year', 'artwork_type', 'type', 'materials', 
+                   'dimensions', 'duration', 'description', 'summary', 'concept',
+                   'description_en', 'description_cn', 'exhibition', 'image_urls', 'images'}
+        
+        other_data = {k: v for k, v in data.items() if k not in excluded and v}
+        if other_data:
+            lines.append("## 其他信息\n\n")
+            lines.append("```json\n")
+            lines.append(json.dumps(other_data, indent=2, ensure_ascii=False))
+            lines.append("\n```\n")
+        
+        # 写入文件
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write("".join(lines))
+        
+        logger.info(f"📄 Markdown 报告已生成: {report_path}")
+        
+        # 同时保存原始 JSON（带时间戳）
+        json_filename = f"data_{timestamp}.json"
+        json_path = os.path.join(output_dir, json_filename)
+        
+        # 在 JSON 中也保存 prompt 信息
+        output_data = {
+            "_meta": {
+                "prompt": prompt,
+                "timestamp": datetime.now().isoformat(),
+            },
+            **data
+        }
+        
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(output_data, f, ensure_ascii=False, indent=2)
+        
+        logger.info(f"📋 JSON 数据已保存: {json_path}")
+    
+    def _extract_image_urls(self, data: Dict[str, Any]) -> List[str]:
+        """从 Agent 返回数据中提取所有图片 URL"""
+        urls = []
+        
+        # 常见的图片字段名
+        image_fields = ['image_urls', 'images', 'image', 'imageUrls', 'imageUrl', 
+                       'cover_image', 'thumbnail', 'photos', 'gallery']
+        
+        def extract_from_value(value):
+            if isinstance(value, str):
+                if value.startswith(('http://', 'https://')) and any(ext in value.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', 'image']):
+                    urls.append(value)
+            elif isinstance(value, list):
+                for item in value:
+                    extract_from_value(item)
+            elif isinstance(value, dict):
+                for v in value.values():
+                    extract_from_value(v)
+        
+        # 优先检查已知字段
+        for field in image_fields:
+            if field in data:
+                extract_from_value(data[field])
+        
+        # 递归搜索所有值
+        if not urls:
+            extract_from_value(data)
+        
+        return list(set(urls))  # 去重
+
 
 def main():
     """命令行入口"""
@@ -526,8 +730,8 @@ def main():
   # Agent 模式：开放式查询
   python3 aaajiao_scraper.py --agent "Find all video installations by aaajiao"
   
-  # Agent 模式 + 指定 URL
-  python3 aaajiao_scraper.py --agent "Summarize this artwork" --urls "https://eventstructure.com/Absurd-Reality-Check"
+  # Agent 模式 + 指定 URL + 图片下载
+  python3 aaajiao_scraper.py --agent "Get complete info including images" --urls "https://eventstructure.com/Absurd-Reality-Check" --output-dir ./agent_output
         """
     )
     
@@ -553,6 +757,13 @@ def main():
     )
     
     parser.add_argument(
+        "--output-dir", "-o",
+        type=str,
+        metavar="DIR",
+        help="Agent 模式下的输出目录（将下载图片并生成 Markdown 报告）"
+    )
+    
+    parser.add_argument(
         "--no-cache",
         action="store_true",
         help="禁用缓存，强制重新抓取"
@@ -563,15 +774,25 @@ def main():
     scraper = AaajiaoScraper(use_cache=not args.no_cache)
     
     if args.agent:
-        # Agent 模式
+        # Agent 模式 - 增强 prompt 以请求图片
+        enhanced_prompt = args.agent
+        if args.output_dir:
+            # 自动添加图片请求到 prompt
+            if "image" not in args.agent.lower():
+                enhanced_prompt = f"{args.agent}. Also extract all image URLs from the page."
+        
         urls = args.urls.split(",") if args.urls else None
-        result = scraper.agent_search(args.agent, urls=urls, max_credits=args.max_credits)
+        result = scraper.agent_search(enhanced_prompt, urls=urls, max_credits=args.max_credits)
         
         if result:
             print("\n" + "="*50)
             print("📋 Agent 结果:")
             print("="*50)
             print(json.dumps(result, indent=2, ensure_ascii=False))
+            
+            # 如果指定了输出目录，下载图片并生成报告
+            if args.output_dir:
+                scraper.generate_agent_report(result, args.output_dir, prompt=enhanced_prompt)
         else:
             print("❌ Agent 查询失败")
             sys.exit(1)

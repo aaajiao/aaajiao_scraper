@@ -107,15 +107,57 @@ python3 aaajiao_scraper.py --agent "Find contact information" \
 python3 aaajiao_scraper.py --agent "Find exhibitions featuring aaajiao in 2024"
 ```
 
+#### 📥 图片下载和报告生成
+
+使用 `--output-dir` 参数自动下载图片并生成 Markdown 报告：
+
+```bash
+python3 aaajiao_scraper.py \
+  --agent "Get complete information including all images" \
+  --urls "https://eventstructure.com/Absurd-Reality-Check" \
+  --output-dir ./agent_output
+```
+
+**输出目录结构：**
+```
+agent_output/
+├── report_20241221_103500.md      # Markdown 报告（含 prompt 和时间戳）
+├── data_20241221_103500.json       # JSON 数据（含元信息）
+└── images_20241221_103500/         # 图片文件夹
+    ├── 01_image.jpg
+    ├── 02_image.png
+    └── ...
+```
+
+每次查询生成独立的文件组，便于版本管理。
+
 ---
 
 ## ⚙️ 配置选项
+
+### 缓存系统
+
+Scrape 模式内置本地缓存，有以下优势：
+
+| 优势 | 说明 |
+|------|------|
+| 💰 节省 API 成本 | 已抓取的页面不会重复调用 API |
+| ⏱️ 加速运行 | 再次运行仅需 ~10 秒（vs 首次 ~36 分钟） |
+| 🔄 支持增量更新 | 仅对新增作品调用 API |
+
+**缓存位置**：`.cache/` 目录下，以 URL 的 MD5 哈希命名的 `.pkl` 文件
 
 ### 禁用缓存
 
 如需强制重新抓取所有作品：
 
+```bash
+# 命令行
+python3 aaajiao_scraper.py --no-cache
+```
+
 ```python
+# 代码中
 scraper = AaajiaoScraper(use_cache=False)
 ```
 

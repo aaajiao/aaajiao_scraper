@@ -94,7 +94,7 @@ def run_scraper():
         st.session_state.scraping = False
 
 
-def run_agent(prompt: str, urls: str, max_credits: int):
+def run_agent(prompt: str, urls: str, max_credits: int, download_images: bool = False):
     """运行 Agent 查询"""
     st.session_state.agent_result = None
     
@@ -111,13 +111,24 @@ def run_agent(prompt: str, urls: str, max_credits: int):
         if urls.strip():
             url_list = [u.strip() for u in urls.split(",") if u.strip()]
         
+        # 如果需要下载图片，增强 prompt
+        enhanced_prompt = prompt
+        if download_images and "image" not in prompt.lower():
+            enhanced_prompt = f"{prompt}. Also extract all image URLs from the page."
+        
         # 调用 Agent
-        result = scraper.agent_search(prompt, urls=url_list, max_credits=max_credits)
+        result = scraper.agent_search(enhanced_prompt, urls=url_list, max_credits=max_credits)
         
         if result:
             st.session_state.agent_result = result
             status_area.success("✅ Agent 查询完成!")
             result_area.json(result)
+            
+            # 如果勾选了下载图片，生成报告
+            if download_images:
+                status_area.info("📥 正在下载图片并生成报告...")
+                scraper.generate_agent_report(result, "agent_output", prompt=enhanced_prompt)
+                status_area.success("✅ 报告生成完成!")
         else:
             status_area.error("❌ Agent 查询失败")
             
@@ -188,14 +199,14 @@ with tab2:
     
     **示例查询：**
     - "Find all video installations by aaajiao"
-    - "Summarize the artwork Absurd Reality Check"
-    - "List all works from 2023 with their materials"
+    - "Get complete information including all images"
+    - "Summarize the artwork and list exhibition history"
     """)
     
     # 输入区域
     prompt = st.text_area(
         "查询描述 (Prompt)",
-        placeholder="例如: Summarize the artwork and list its exhibition history",
+        placeholder="例如: Get complete information about this artwork including all images",
         height=100
     )
     
@@ -204,24 +215,53 @@ with tab2:
         placeholder="https://eventstructure.com/Absurd-Reality-Check"
     )
     
-    max_credits = st.slider("最大 Credits 消耗", min_value=10, max_value=100, value=50)
+    col1, col2 = st.columns(2)
+    with col1:
+        max_credits = st.slider("最大 Credits 消耗", min_value=10, max_value=100, value=50)
+    with col2:
+        download_images = st.checkbox("📥 下载图片并生成报告", value=True)
     
     if st.button("🔍 开始查询", type="primary", key="agent_btn", disabled=not prompt.strip()):
-        run_agent(prompt, urls, max_credits)
+        run_agent(prompt, urls, max_credits, download_images)
     
     # 显示上次结果
     if st.session_state.agent_result:
         st.divider()
         st.subheader("📋 查询结果")
         
-        # 提供下载按钮
-        result_json = json.dumps(st.session_state.agent_result, ensure_ascii=False, indent=2)
-        st.download_button(
-            label="下载结果 JSON",
-            data=result_json,
-            file_name="agent_result.json",
-            mime="application/json"
-        )
+        c1, c2 = st.columns(2)
+        with c1:
+            # 提供下载按钮
+            result_json = json.dumps(st.session_state.agent_result, ensure_ascii=False, indent=2)
+            st.download_button(
+                label="下载结果 JSON",
+                data=result_json,
+                file_name="agent_result.json",
+                mime="application/json"
+            )
+        
+        with c2:
+            # 如果有生成报告，提供下载
+            report_path = "agent_output/artwork_report.md"
+            if os.path.exists(report_path):
+                with open(report_path, "rb") as f:
+                    st.download_button(
+                        label="下载 Markdown 报告",
+                        data=f,
+                        file_name="artwork_report.md",
+                        mime="text/markdown"
+                    )
+        
+        # 显示下载的图片
+        images_dir = "agent_output/images"
+        if os.path.exists(images_dir):
+            images = [f for f in os.listdir(images_dir) if f.endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp'))]
+            if images:
+                st.subheader("🖼️ 下载的图片")
+                cols = st.columns(min(len(images), 3))
+                for i, img in enumerate(sorted(images)[:6]):
+                    with cols[i % 3]:
+                        st.image(os.path.join(images_dir, img), caption=img, use_container_width=True)
 
 
 # 侧边栏：退出功能
