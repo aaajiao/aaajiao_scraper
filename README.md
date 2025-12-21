@@ -70,6 +70,43 @@ scraper.save_to_json('output.json')
 scraper.generate_markdown('output.md')
 ```
 
+### 方式五：Agent 模式（开放式查询）
+
+Agent 模式允许你用自然语言描述需求，Firecrawl 会自动搜索并提取数据：
+
+```bash
+# 简单查询
+python3 aaajiao_scraper.py --agent "Find all video installations by aaajiao"
+
+# 指定 URL 的查询
+python3 aaajiao_scraper.py --agent "Summarize this artwork" --urls "https://eventstructure.com/Absurd-Reality-Check"
+
+# 限制 credits 消耗
+python3 aaajiao_scraper.py --agent "List all works from 2023" --max-credits 30
+```
+
+#### Scrape vs Agent 对比
+
+| 功能 | Scrape 模式（默认） | Agent 模式 |
+|------|---------------------|------------|
+| **适用网站** | 仅 `eventstructure.com` | ✅ **任意网站** |
+| 适用场景 | 已知 URL，逐页抓取 | 开放式查询 |
+| 需要 URL | ✅ 必须 | ❌ 可选 |
+| 数据结构 | 预定义 schema | 根据 prompt 自动推断 |
+| 并发 | 多线程并发 | 单任务，内部并行 |
+| 成本 | 每页 1 credit | 按复杂度计费（可设上限） |
+
+#### Agent 跨站查询示例
+
+```bash
+# 查询其他网站
+python3 aaajiao_scraper.py --agent "Find contact information" \
+  --urls "https://example.com/about"
+
+# 开放式搜索（不指定 URL，Agent 自主搜索）
+python3 aaajiao_scraper.py --agent "Find exhibitions featuring aaajiao in 2024"
+```
+
 ---
 
 ## ⚙️ 配置选项

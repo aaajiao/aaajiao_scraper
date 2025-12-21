@@ -24,6 +24,8 @@ if 'scraping' not in st.session_state:
     st.session_state.scraping = False
 if 'log_messages' not in st.session_state:
     st.session_state.log_messages = []
+if 'agent_result' not in st.session_state:
+    st.session_state.agent_result = None
 
 def run_scraper():
     st.session_state.scraping = True
@@ -91,61 +93,148 @@ def run_scraper():
     finally:
         st.session_state.scraping = False
 
-# 按钮区域
-col1, col2 = st.columns([1, 4])
-with col1:
-    if st.button("🚀 开始抓取", disabled=st.session_state.scraping, type="primary"):
+
+def run_agent(prompt: str, urls: str, max_credits: int):
+    """运行 Agent 查询"""
+    st.session_state.agent_result = None
+    
+    status_area = st.empty()
+    result_area = st.empty()
+    
+    try:
+        scraper = AaajiaoScraper()
+        
+        status_area.info("🤖 启动 Agent 任务...")
+        
+        # 解析 URLs
+        url_list = None
+        if urls.strip():
+            url_list = [u.strip() for u in urls.split(",") if u.strip()]
+        
+        # 调用 Agent
+        result = scraper.agent_search(prompt, urls=url_list, max_credits=max_credits)
+        
+        if result:
+            st.session_state.agent_result = result
+            status_area.success("✅ Agent 查询完成!")
+            result_area.json(result)
+        else:
+            status_area.error("❌ Agent 查询失败")
+            
+    except Exception as e:
+        status_area.error(f"发生错误: {str(e)}")
+
+
+# ============ 主界面：使用 Tabs ============
+
+tab1, tab2 = st.tabs(["📋 批量抓取", "🤖 Agent 查询"])
+
+# ============ Tab 1: 批量抓取 ============
+with tab1:
+    st.markdown("从 Sitemap 获取所有作品链接，逐一抓取详细信息。")
+    
+    if st.button("🚀 开始抓取", disabled=st.session_state.scraping, type="primary", key="scrape_btn"):
         run_scraper()
 
-# 结果展示区域
-if st.session_state.works:
-    st.divider()
-    st.subheader("📊 抓取结果预览")
-    
-    # 转为 DataFrame 展示
-    df = pd.DataFrame(st.session_state.works)
-    # 选取主要列展示
-    display_cols = ['title', 'title_cn', 'year', 'type', 'url']
-    cols_to_show = [c for c in display_cols if c in df.columns]
-    st.dataframe(df[cols_to_show], use_container_width=True)
-    
-    st.divider()
-    st.subheader("📥 下载文件")
-    
-    c1, c2 = st.columns(2)
-    with c1:
-        # 读取生成的文件供下载
-        try:
-            with open("aaajiao_works.json", "rb") as f:
-                st.download_button(
-                    label="下载 JSON 数据",
-                    data=f,
-                    file_name="aaajiao_works.json",
-                    mime="application/json"
-                )
-        except FileNotFoundError:
-            st.warning("JSON 文件尚未生成")
-            
-    with c2:
-        try:
-            with open("aaajiao_portfolio.md", "rb") as f:
-                st.download_button(
-                    label="下载 Markdown 文档",
-                    data=f,
-                    file_name="aaajiao_portfolio.md",
-                    mime="text/markdown"
-                )
-        except FileNotFoundError:
-            st.warning("Markdown 文件尚未生成")
+    # 结果展示区域
+    if st.session_state.works:
+        st.divider()
+        st.subheader("📊 抓取结果预览")
+        
+        # 转为 DataFrame 展示
+        df = pd.DataFrame(st.session_state.works)
+        # 选取主要列展示
+        display_cols = ['title', 'title_cn', 'year', 'type', 'url']
+        cols_to_show = [c for c in display_cols if c in df.columns]
+        st.dataframe(df[cols_to_show], use_container_width=True)
+        
+        st.divider()
+        st.subheader("📥 下载文件")
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            # 读取生成的文件供下载
+            try:
+                with open("aaajiao_works.json", "rb") as f:
+                    st.download_button(
+                        label="下载 JSON 数据",
+                        data=f,
+                        file_name="aaajiao_works.json",
+                        mime="application/json"
+                    )
+            except FileNotFoundError:
+                st.warning("JSON 文件尚未生成")
+                
+        with c2:
+            try:
+                with open("aaajiao_portfolio.md", "rb") as f:
+                    st.download_button(
+                        label="下载 Markdown 文档",
+                        data=f,
+                        file_name="aaajiao_portfolio.md",
+                        mime="text/markdown"
+                    )
+            except FileNotFoundError:
+                st.warning("Markdown 文件尚未生成")
 
-elif not st.session_state.scraping:
-    st.info("点击上方按钮开始运行。")
+    elif not st.session_state.scraping:
+        st.info("点击上方按钮开始运行。")
+
+
+# ============ Tab 2: Agent 查询 ============
+with tab2:
+    st.markdown("""
+    使用自然语言描述你想要的信息，Firecrawl Agent 会自动搜索并提取数据。
+    
+    **示例查询：**
+    - "Find all video installations by aaajiao"
+    - "Summarize the artwork Absurd Reality Check"
+    - "List all works from 2023 with their materials"
+    """)
+    
+    # 输入区域
+    prompt = st.text_area(
+        "查询描述 (Prompt)",
+        placeholder="例如: Summarize the artwork and list its exhibition history",
+        height=100
+    )
+    
+    urls = st.text_input(
+        "指定 URL（可选，多个用逗号分隔）",
+        placeholder="https://eventstructure.com/Absurd-Reality-Check"
+    )
+    
+    max_credits = st.slider("最大 Credits 消耗", min_value=10, max_value=100, value=50)
+    
+    if st.button("🔍 开始查询", type="primary", key="agent_btn", disabled=not prompt.strip()):
+        run_agent(prompt, urls, max_credits)
+    
+    # 显示上次结果
+    if st.session_state.agent_result:
+        st.divider()
+        st.subheader("📋 查询结果")
+        
+        # 提供下载按钮
+        result_json = json.dumps(st.session_state.agent_result, ensure_ascii=False, indent=2)
+        st.download_button(
+            label="下载结果 JSON",
+            data=result_json,
+            file_name="agent_result.json",
+            mime="application/json"
+        )
+
 
 # 侧边栏：退出功能
 with st.sidebar:
     st.markdown("### 控制台")
+    st.markdown("---")
+    st.markdown("**模式说明：**")
+    st.markdown("- **批量抓取**：抓取所有作品")
+    st.markdown("- **Agent 查询**：自然语言查询")
+    st.markdown("---")
     if st.button("❌ 退出程序"):
         st.warning("程序正在退出...您可以关闭此浏览器标签页了。")
         # 给一点时间让上面的提示渲染出来
         time.sleep(1)
         os._exit(0)
+

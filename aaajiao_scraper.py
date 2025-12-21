@@ -22,6 +22,7 @@ import pickle
 import concurrent.futures
 from typing import List, Dict, Optional, Any
 from urllib.parse import urljoin
+import argparse
 from threading import Lock
 import requests
 from requests.adapters import HTTPAdapter
@@ -414,8 +415,172 @@ class AaajiaoScraper:
         
         logger.info(f"Markdown 文件已生成: {filename}")
 
+    # ==================== Agent 模式 ====================
+    
+    def agent_search(self, prompt: str, urls: Optional[List[str]] = None, max_credits: int = 50) -> Optional[Dict[str, Any]]:
+        """
+        使用 Firecrawl Agent 进行开放式查询
+        
+        Args:
+            prompt: 查询描述（自然语言）
+            urls: 可选，指定要搜索的 URL 列表
+            max_credits: 最大消耗 credits 数（控制成本）
+            
+        Returns:
+            Agent 返回的结构化数据
+        """
+        logger.info(f"🤖 启动 Agent 任务...")
+        logger.info(f"   Prompt: {prompt}")
+        if urls:
+            logger.info(f"   URLs: {urls}")
+        
+        agent_endpoint = "https://api.firecrawl.dev/v2/agent"
+        
+        headers = {
+            "Authorization": f"Bearer {self.firecrawl_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "prompt": prompt,
+            "maxCredits": max_credits
+        }
+        
+        if urls:
+            payload["urls"] = urls
+        
+        try:
+            # 1. 启动 Agent 任务
+            resp = requests.post(agent_endpoint, json=payload, headers=headers, timeout=self.FC_TIMEOUT)
+            
+            if resp.status_code != 200:
+                logger.error(f"Agent 启动失败: {resp.status_code} - {resp.text[:200]}")
+                return None
+            
+            result = resp.json()
+            
+            if not result.get("success"):
+                logger.error(f"Agent 启动失败: {result}")
+                return None
+            
+            job_id = result.get("id")
+            if not job_id:
+                # 同步模式：直接返回结果
+                if result.get("status") == "completed":
+                    logger.info(f"✅ Agent 任务完成 (credits: {result.get('creditsUsed', 'N/A')})")
+                    return result.get("data")
+                logger.error(f"Agent 返回格式异常: {result}")
+                return None
+            
+            # 2. 轮询等待任务完成
+            logger.info(f"   任务 ID: {job_id}")
+            status_endpoint = f"{agent_endpoint}/{job_id}"
+            max_wait = 300  # 最长等待 5 分钟
+            poll_interval = 5  # 每 5 秒查询一次
+            elapsed = 0
+            
+            while elapsed < max_wait:
+                time.sleep(poll_interval)
+                elapsed += poll_interval
+                
+                status_resp = requests.get(status_endpoint, headers=headers, timeout=self.FC_TIMEOUT)
+                
+                if status_resp.status_code != 200:
+                    logger.warning(f"状态查询失败: {status_resp.status_code}")
+                    continue
+                
+                status_data = status_resp.json()
+                status = status_data.get("status")
+                
+                if status == "processing":
+                    logger.info(f"   ⏳ 处理中... ({elapsed}s)")
+                    continue
+                elif status == "completed":
+                    credits_used = status_data.get("creditsUsed", "N/A")
+                    logger.info(f"✅ Agent 任务完成 (耗时: {elapsed}s, credits: {credits_used})")
+                    return status_data.get("data")
+                elif status == "failed":
+                    logger.error(f"Agent 任务失败: {status_data}")
+                    return None
+                else:
+                    logger.warning(f"未知状态: {status}")
+            
+            logger.error(f"Agent 任务超时 ({max_wait}s)")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Agent 请求错误: {e}")
+            return None
+
+
+def main():
+    """命令行入口"""
+    parser = argparse.ArgumentParser(
+        description="aaajiao 作品集爬虫 - Firecrawl Edition",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例用法:
+  # 抓取所有作品（默认模式）
+  python3 aaajiao_scraper.py
+  
+  # Agent 模式：开放式查询
+  python3 aaajiao_scraper.py --agent "Find all video installations by aaajiao"
+  
+  # Agent 模式 + 指定 URL
+  python3 aaajiao_scraper.py --agent "Summarize this artwork" --urls "https://eventstructure.com/Absurd-Reality-Check"
+        """
+    )
+    
+    parser.add_argument(
+        "--agent", "-a",
+        type=str,
+        metavar="PROMPT",
+        help="使用 Agent 模式进行开放式查询"
+    )
+    
+    parser.add_argument(
+        "--urls", "-u",
+        type=str,
+        metavar="URL1,URL2",
+        help="Agent 模式下指定的 URL 列表（逗号分隔）"
+    )
+    
+    parser.add_argument(
+        "--max-credits",
+        type=int,
+        default=50,
+        help="Agent 模式下的最大 credits 消耗（默认: 50）"
+    )
+    
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="禁用缓存，强制重新抓取"
+    )
+    
+    args = parser.parse_args()
+    
+    scraper = AaajiaoScraper(use_cache=not args.no_cache)
+    
+    if args.agent:
+        # Agent 模式
+        urls = args.urls.split(",") if args.urls else None
+        result = scraper.agent_search(args.agent, urls=urls, max_credits=args.max_credits)
+        
+        if result:
+            print("\n" + "="*50)
+            print("📋 Agent 结果:")
+            print("="*50)
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            print("❌ Agent 查询失败")
+            sys.exit(1)
+    else:
+        # 默认模式：抓取所有作品
+        scraper.scrape_all()
+        scraper.save_to_json()
+        scraper.generate_markdown()
+
+
 if __name__ == "__main__":
-    scraper = AaajiaoScraper()
-    scraper.scrape_all()
-    scraper.save_to_json()
-    scraper.generate_markdown()
+    main()
