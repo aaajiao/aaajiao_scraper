@@ -37,7 +37,7 @@ payload = {
 print(f"Testing Firecrawl on {URL}...")
 start = time.time()
 try:
-    response = requests.post("https://api.firecrawl.dev/v1/scrape", headers=headers, json=payload)
+    response = requests.post("https://api.firecrawl.dev/v2/scrape", headers=headers, json=payload)
     print(f"Status Code: {response.status_code}")
     
     if response.status_code == 200:

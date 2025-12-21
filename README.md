@@ -131,6 +131,26 @@ agent_output/
 
 每次查询生成独立的文件组，便于版本管理。
 
+#### 🚀 智能发现模式 (Smart Discovery)
+
+解决部分网页内容需要**滚动加载**（如无限滚动、横向画廊）导致 Agent 无法看到隐藏内容的问题。
+
+此模式采用两阶段流程：
+1.  **Phase 1 (Scrape)**: 使用 Scrape 模式并执行滚动动作（水平+垂直），彻底加载页面并发现所有作品链接。
+2.  **Phase 2 (Agent)**: 将发现的链接投喂给 Agent 进行深入提取。
+
+**CLI 用法:**
+```bash
+python3 aaajiao_scraper.py --discovery-url "https://eventstructure.com" --output-dir ./hybrid_output --scroll-mode auto
+```
+
+**GUI 用法:**
+启动 Web 界面后，切换到 **"🚀 智能发现"** 标签页。
+选择 **滚动策略** (Auto/Horizontal/Vertical) 以适应不同网站的布局。
+- **Auto**: 混合尝试，最稳妥。
+- **Horizontal**: 针对水平画廊。
+- **Vertical**: 针对垂直网页。
+
 ---
 
 ## ⚙️ 配置选项

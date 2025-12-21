@@ -206,7 +206,7 @@ class AaajiaoScraper:
         try:
             logger.info(f"[{retry_count+1}/{max_retries}] 正在抓取: {url}")
             
-            fc_endpoint = "https://api.firecrawl.dev/v1/scrape"
+            fc_endpoint = "https://api.firecrawl.dev/v2/scrape"
             
             schema = {
                 "type": "object",
@@ -414,6 +414,124 @@ class AaajiaoScraper:
             f.write("".join(lines))
         
         logger.info(f"Markdown 文件已生成: {filename}")
+
+    # ==================== Discovery Mode ====================
+
+    def discover_urls_with_scroll(self, url: str, scroll_mode: str = "auto") -> List[str]:
+        """
+        Phase 1: 使用 Scrape 模式 + 滚动动作去发现作品链接
+        
+        Args:
+            url: 目标列表页 URL
+            scroll_mode: 滚动模式 ("auto", "horizontal", "vertical")
+            
+        Returns:
+            发现的作品 URL 列表
+        """
+        logger.info(f"🕵️  启动 Discovery Phase: {url} (Mode: {scroll_mode})")
+        
+        # 1. 配置滚动动作 (按照 Firecrawl 官方文档格式)
+        actions = []
+        
+        # 初始等待页面加载
+        actions.append({"type": "wait", "milliseconds": 2000})
+        
+        if scroll_mode == "horizontal":
+            # 横向滚动：使用 executeJavascript (原生 scroll 不支持 horizontal)
+            # 向右滚动 5 次，每次 2000px
+            for i in range(5):
+                actions.append({
+                    "type": "executeJavascript", 
+                    "script": "window.scrollBy(2000, 0);"
+                })
+                actions.append({"type": "wait", "milliseconds": 1500})
+                
+        elif scroll_mode == "vertical":
+            # 垂直滚动：使用原生 scroll action (官方支持 up/down)
+            for _ in range(3):
+                actions.append({"type": "scroll", "direction": "down"})
+                actions.append({"type": "wait", "milliseconds": 1000})
+            
+        else:  # auto 模式
+            # 混合模式：先横向滚动，再垂直滚动
+            # 1. 横向滚动 (executeJavascript)
+            for i in range(5):
+                actions.append({
+                    "type": "executeJavascript", 
+                    "script": "window.scrollBy(2000, 0);"
+                })
+                actions.append({"type": "wait", "milliseconds": 1200})
+                
+            # 2. 垂直滚动 (原生 scroll)
+            for _ in range(3):
+                actions.append({"type": "scroll", "direction": "down"})
+                actions.append({"type": "wait", "milliseconds": 1000})
+        
+        payload = {
+            "url": url,
+            "formats": ["html"],
+            "actions": actions,
+            "onlyMainContent": False  # 获取完整 DOM 以便提取链接
+        }
+        
+        # 使用 v2 endpoint (官方文档推荐)
+        endpoint = "https://api.firecrawl.dev/v2/scrape"
+        headers = {
+            "Authorization": f"Bearer {self.firecrawl_key}",
+            "Content-Type": "application/json"
+        }
+        
+        try:
+            logger.info(f"   正在执行 Scrape + Actions (共 {len(actions)} 步)...")
+            resp = requests.post(endpoint, json=payload, headers=headers, timeout=120)
+            
+            if resp.status_code != 200:
+                logger.error(f"Scrape 失败: {resp.status_code} - {resp.text[:200]}")
+                return []
+                
+            data = resp.json()
+            if not data.get("success"):
+                logger.error(f"Scrape 任务失败: {data}")
+                return []
+                
+            html_content = data.get("data", {}).get("html", "")
+            if not html_content:
+                logger.error("未获取到 HTML 内容")
+                return []
+                
+            # 2. 从 HTML 提取链接
+            logger.info(f"   获取到 HTML ({len(html_content)} chars)，正在提取链接...")
+            return self._extract_links_from_html(html_content, url)
+            
+        except Exception as e:
+            logger.error(f"Discovery 异常: {e}")
+            return []
+
+    def _extract_links_from_html(self, html: str, base_url: str) -> List[str]:
+        """从 HTML 中提取有价值的作品链接"""
+        from bs4 import BeautifulSoup
+        from urllib.parse import urljoin
+        
+        soup = BeautifulSoup(html, 'html.parser')
+        links = set()
+        
+        # aaajiao 网站 (eventstructure.com) 特定的链接模式
+        # 通常是 /Title-of-Work 格式
+        
+        for a_tag in soup.find_all('a', href=True):
+            href = a_tag['href']
+            full_url = urljoin(base_url, href)
+            
+            # 过滤逻辑：只保留像是作品详情页的链接
+            # 排除首页、关于页等
+            if base_url in full_url and full_url != base_url:
+                # 排除常见非作品页面
+                if not any(x in full_url.lower() for x in ['contact', 'about', 'cv', 'text', 'press', 'index']):
+                    links.add(full_url)
+                    
+        sorted_links = sorted(list(links))
+        logger.info(f"   发现 {len(sorted_links)} 个潜在作品链接")
+        return sorted_links
 
     # ==================== Agent 模式 ====================
     
@@ -757,6 +875,19 @@ def main():
     )
     
     parser.add_argument(
+        "--discovery-url", "-d",
+        type=str,
+        help="[New] 使用 Scrape+Agent 模式：先滚动发现 URL，再用 Agent 提取"
+    )
+    
+    parser.add_argument(
+        "--scroll-mode",
+        choices=["auto", "horizontal", "vertical"],
+        default="auto",
+        help="Discovery 模式下的滚动策略 (default: auto)"
+    )
+    
+    parser.add_argument(
         "--output-dir", "-o",
         type=str,
         metavar="DIR",
@@ -773,7 +904,53 @@ def main():
     
     scraper = AaajiaoScraper(use_cache=not args.no_cache)
     
-    if args.agent:
+    if args.discovery_url:
+        # ====================== Discovery Mode ======================
+        logger.info(f"🚀 启动混合模式 (Scrape Discovery -> Agent Extraction) [Scroll: {args.scroll_mode}]")
+        
+        # Phase 1: Discovery
+        found_urls = scraper.discover_urls_with_scroll(args.discovery_url, scroll_mode=args.scroll_mode)
+        
+        if not found_urls:
+            logger.error("❌ 未发现任何链接，退出")
+            sys.exit(1)
+            
+        logger.info(f"📋 共发现 {len(found_urls)} 个作品链接")
+        
+        # 限制数量用于测试 (可选，这里先处理前 5 个避免消耗过多)
+        # found_urls = found_urls[:5] 
+        # logger.info(f"⚠️  测试模式：仅处理前 5 个链接")
+        
+        # Phase 2: Agent Extraction
+        prompt = args.agent or "Deeply analyze these artworks. Extract title, year, materials, description, concept, and exhibition history."
+        enhanced_prompt = prompt
+        
+        if args.output_dir:
+            if "image" not in prompt.lower():
+                enhanced_prompt = f"{prompt}. Also extract all image URLs for each artwork."
+        
+        logger.info("🤖 提交 Agent 批量处理任务 (这可能需要一些时间)...")
+        
+        # 传递发现的所有 URL 给 Agent
+        # 注意：URL 太多可能会导致 Agent 任务过大，Firecrawl 建议一次处理少量 URL
+        # 这里演示原理，实际使用可能需要切片分批处理
+        
+        result = scraper.agent_search(enhanced_prompt, urls=found_urls, max_credits=args.max_credits)
+        
+        if result:
+            print("\n" + "="*50)
+            print("📋 Discovery + Agent 结果:")
+            print("="*50)
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            
+            if args.output_dir:
+                scraper.generate_agent_report(result, args.output_dir, prompt=enhanced_prompt)
+        else:
+            print("❌ Agent 任务失败")
+            sys.exit(1)
+            
+    elif args.agent:
+        # ====================== Standard Agent Mode ======================
         # Agent 模式 - 增强 prompt 以请求图片
         enhanced_prompt = args.agent
         if args.output_dir:
@@ -797,6 +974,7 @@ def main():
             print("❌ Agent 查询失败")
             sys.exit(1)
     else:
+        # ====================== Standard Scrape Mode ======================
         # 默认模式：抓取所有作品
         scraper.scrape_all()
         scraper.save_to_json()
