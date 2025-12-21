@@ -5,7 +5,7 @@ import os
 
 # Manual env loading
 try:
-    with open(".env", "r") as f:
+    with open("../.env", "r") as f:
         for line in f:
             if line.strip() and not line.startswith("#"):
                 key, val = line.strip().split("=", 1)

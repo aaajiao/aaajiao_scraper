@@ -3,7 +3,7 @@ import time
 import pandas as pd
 import json
 import os
-from aaajiao_scraper import AaajiaoScraper
+from scraper import AaajiaoScraper
 import concurrent.futures
 
 # Page Config
@@ -457,7 +457,7 @@ with tab3:
                             table_data.append({
                                 "标题": item.get("title", "N/A"),
                                 "年份": item.get("year", "N/A"),
-                                "类型": item.get("type", "N/A"),
+                                "类型": item.get("category") or item.get("type", "N/A"),
                                 "图片数": len(item.get("high_res_images", item.get("images", [])) or [])
                             })
                         st.dataframe(table_data, use_container_width=True)

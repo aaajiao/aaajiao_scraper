@@ -141,4 +141,4 @@ def verify(md_path, csv_path):
             print(f"  - {m}")
 
 if __name__ == "__main__":
-    verify("aaajiao_portfolio.md", "xxx/2025-12-16T18-17_export.csv")
+    verify("../aaajiao_portfolio.md", "xxx/2025-12-16T18-17_export.csv")

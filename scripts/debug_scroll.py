@@ -4,7 +4,7 @@ import json
 import logging
 
 # Manual .env loading
-env_path = ".env"
+env_path = "../.env"
 if os.path.exists(env_path):
     with open(env_path, "r") as f:
         for line in f:

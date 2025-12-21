@@ -75,7 +75,7 @@ class AaajiaoScraper:
             "title": {"type": "string", "description": "English title of the artwork"},
             "title_cn": {"type": "string", "description": "Chinese title if available"},
             "year": {"type": "string", "description": "Creation year or year range"},
-            "type": {"type": "string", "description": "Art category (e.g. Video, Installation)"},
+            "category": {"type": "string", "description": "Art category (e.g. Video, Installation)"},
             "has_images": {"type": "boolean", "description": "Whether the page contains images"}
         }
     }
@@ -87,7 +87,7 @@ class AaajiaoScraper:
             "title": {"type": "string", "description": "English title"},
             "title_cn": {"type": "string", "description": "Chinese title"},
             "year": {"type": "string", "description": "Creation year"},
-            "type": {"type": "string", "description": "Art category"},
+            "category": {"type": "string", "description": "Art category"},
             "description_en": {"type": "string", "description": "Full English description"},
             "description_cn": {"type": "string", "description": "Full Chinese description"},
             "high_res_images": {
@@ -102,8 +102,8 @@ class AaajiaoScraper:
     
     # ==================== Prompt 模板库 ====================
     PROMPT_TEMPLATES = {
-        "quick": "Extract basic artwork info: title (English and Chinese if available), year, and type. Return JSON only, no explanation.",
-        "full": "Extract complete artwork details including title, year, type, full descriptions in English and Chinese, materials, and all high-resolution image URLs (use 'src_o' attribute when available). Return JSON only.",
+        "quick": "Extract basic artwork info: title (English and Chinese if available), year, and category. Return JSON only, no explanation.",
+        "full": "Extract complete artwork details including title, year, category, full descriptions in English and Chinese, materials, and all high-resolution image URLs (use 'src_o' attribute when available). Return JSON only.",
         "images_only": "Extract all high-resolution image URLs from the page. Prioritize 'src_o' attributes for high-res versions. Exclude thumbnails and icons. Return as JSON array of URLs.",
         "default": "Extract all text content from the page (title, description, metadata, full text). Also extract the URL of the first visible image (or main artwork image) and map it to the field 'image'. IMPORTANT: If the image has a 'src_o' attribute, extract that URL for high resolution."
     }
@@ -317,7 +317,9 @@ class AaajiaoScraper:
                     "title": {"type": "string", "description": "The English title of the work"},
                     "title_cn": {"type": "string", "description": "The Chinese title of the work. If not explicitly found, leave empty."},
                     "year": {"type": "string", "description": "Creation year or year range (e.g. 2018-2022)"},
-                    "type": {"type": "string", "description": "The art category (e.g. Video Installation, Software, Website)"},
+                    "year": {"type": "string", "description": "Creation year or year range (e.g. 2018-2022)"},
+                    "category": {"type": "string", "description": "The art category (e.g. Video Installation, Software, Website)"},
+                    "materials": {"type": "string", "description": "Materials list (e.g. LED screen, 3D printing)"},
                     "materials": {"type": "string", "description": "Materials list (e.g. LED screen, 3D printing)"},
                     "description_en": {"type": "string", "description": "Detailed work description in English. Exclude navigation text."},
                     "description_cn": {"type": "string", "description": "Detailed work description in Chinese. Exclude navigation text."},
@@ -351,7 +353,7 @@ class AaajiaoScraper:
                         'url': url,
                         'title': result.get('title', ''),
                         'title_cn': result.get('title_cn', ''),
-                        'type': result.get('type', ''),
+                        'type': result.get('category', '') or result.get('type', ''),
                         'materials': result.get('materials', ''),
                         'year': result.get('year', ''),
                         'description_cn': result.get('description_cn', ''),
@@ -1111,8 +1113,8 @@ class AaajiaoScraper:
             # 属性列表
             if year:
                 lines.append(f"| 年份 | {year} |\n")
-            if item.get("type"):
-                lines.append(f"| 类型 | {item['type']} |\n")
+            if item.get("category") or item.get("type"):
+                lines.append(f"| 类型 | {item.get('category') or item.get('type')} |\n")
             if item.get("video_link"):
                 lines.append(f"| 视频 | [{item['video_link']}]({item['video_link']}) |\n")
             if item.get("materials"):
