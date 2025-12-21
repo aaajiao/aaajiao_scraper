@@ -109,15 +109,15 @@ def run_agent(prompt: str, urls: str, max_credits: int, download_images: bool = 
         
         status_area.info("🤖 Starting Agent Task... / 启动 Agent 任务...")
         
-        # Parse URLs
-        url_list = None
-        if urls.strip():
+        # Parse URLs if list of strings, or keep if already list
+        url_list = urls
+        if isinstance(urls, str) and urls.strip():
             url_list = [u.strip() for u in urls.split(",") if u.strip()]
         
-        # Enhanced prompt
+        # Enhanced prompt for images
         enhanced_prompt = prompt
         if download_images and "image" not in prompt.lower():
-            enhanced_prompt = f"{prompt}. Also extract all image URLs from the page."
+            enhanced_prompt = f"{prompt}. IMPORTANT: For images, extract the 'src_o' attribute which contains the high-resolution URL. Do not mistakenly extract thumbnails from the sidebar gallery."
         
         # Call Agent
         result = scraper.agent_search(enhanced_prompt, urls=url_list, max_credits=max_credits)
@@ -141,11 +141,11 @@ def run_agent(prompt: str, urls: str, max_credits: int, download_images: bool = 
 
 # ============ Main Interface with Tabs ============
 
-tab1, tab2, tab3 = st.tabs(["📋 Batch Scrape / 批量抓取", "🤖 Agent Query / Agent 查询", "🚀 Smart Discovery / 智能发现"])
+tab1, tab2, tab3 = st.tabs(["🏗️ Basic Scraper / 基础爬虫", "⚡️ Quick Extract / 快速提取", "🚀 Batch Discovery / 批量发现"])
 
-# ============ Tab 1: Batch Scrape ============
+# ============ Tab 1: Basic Scraper (Original) ============
 with tab1:
-    st.markdown("Scrape all artwork details from Sitemap links. / 从 Sitemap 获取所有作品链接并抓取。")
+    st.markdown("Click button below to scrape all artworks defined in `sitemap.xml` / 点击下方按钮抓取所有作品")
     
     if st.button("🚀 Start Scraping / 开始抓取", disabled=st.session_state.scraping, type="primary", key="scrape_btn"):
         run_scraper()
@@ -192,37 +192,62 @@ with tab1:
         st.info("Click the button above to start. / 点击上方按钮开始运行。")
 
 
-# ============ Tab 2: Agent Query ============
+# ============ Tab 2: Quick Extract / AI Search (The Agent) ============
 with tab2:
     st.markdown("""
-    Use natural language to query Firecrawl Agent. / 使用自然语言描述你想要的信息。
-    
-    **Example / 示例:**
-    - "Find all video installations by aaajiao"
-    - "Get complete information including all images"
+    **Quick Mode / 快速模式**:
+    - **Single URL**: Paste a link below to extract data immediately. / 输入链接直接提取。
+    - **Open Query**: Ask a question (e.g., "Find exhibitions") without a URL. / 直接提问。
     """)
     
+    # Standardized Prompt
+    default_prompt = "Extract all text content from the page (title, description, metadata, full text). Also extract the URL of the first visible image (or main artwork image) and map it to the field 'image'. IMPORTANT: If the image has a 'src_o' attribute, extract that URL for high resolution."
+
     # Input Area
     prompt = st.text_area(
         "Query Prompt / 查询描述",
-        placeholder="e.g.: Get complete information about this artwork including all images",
-        height=100
+        value=default_prompt,
+        height=150
     )
     
     urls = st.text_input(
-        "Specific URLs (Optional) / 指定 URL (可选)",
-        placeholder="https://eventstructure.com/Absurd-Reality-Check"
+        "Specific URL (Optional) / 指定 URL (可选)",
+        placeholder="https://eventstructure.com/Absurd-Reality-Check",
+        help="Paste a single URL here in Quick Mode. / 在此粘贴单个 URL。",
+        key="quick_url_input"
     )
+    
+    # Determine mode based on input
+    has_url = bool(urls and urls.strip())
     
     col1, col2 = st.columns(2)
     with col1:
-        max_credits = st.slider("Max Credits", min_value=10, max_value=100, value=50)
+        if has_url:
+            st.info("🎯 **Mode: Single Page Extraction**\n(Cost: ~50-80 credits per page)")
+            # In URL mode, slider sets the COUNT of pages (if multiple comma-separated)
+            max_credits = st.slider("Limit (Pages) / 数量限制 (页数)", min_value=1, max_value=10, value=1, help="Number of URLs to process.")
+        else:
+            st.info("🤖 **Mode: Open AI Research**\n(Cost: Variable)")
+            # In Agent mode, slider sets the Credit Budget
+            max_credits = st.slider("Max Budget (Credits) / 预算上限 (积分)", min_value=10, max_value=200, value=50, help="Max credits the agent can spend.")
+            
     with col2:
         download_images = st.checkbox("📥 Download Images & Report / 下载图片并生成报告", value=True)
     
-    if st.button("🔍 Start Query / 开始查询", type="primary", key="agent_btn", disabled=not prompt.strip()):
-        run_agent(prompt, urls, max_credits, download_images)
-    
+    if st.button("🔍 Start / 开始执行", type="primary", key="agent_btn", disabled=not prompt.strip()):
+        # Handle single URL as list
+        url_list = urls.split(",") if urls else None
+        if url_list:
+             url_list = [u.strip() for u in url_list if u.strip()]
+             
+        # Debug feedback
+        if has_url:
+            st.toast(f"Processing {len(url_list)} URL(s)...", icon="🚀")
+        else:
+            st.toast("Starting Open Agent Search...", icon="🤖")
+            
+        run_agent(prompt, url_list, max_credits, download_images)
+
     # Show Results
     if st.session_state.agent_result:
         st.divider()
@@ -261,7 +286,7 @@ with tab2:
                         st.image(os.path.join(images_dir, img), caption=img, use_container_width=True)
 
 
-# ============ Tab 3: Smart Discovery ============
+# ============ Tab 3: Batch Discovery (The Factory) ============
 with tab3:
     st.markdown("""
     **Solve Infinite/Horizontal Scroll Issues / 解决滚动加载问题**:
@@ -330,9 +355,17 @@ with tab3:
         # Agent Config
         c1, c2 = st.columns(2)
         with c1:
-            disc_prompt = st.text_area("Agent Prompt", value="Extract title, year, materials and description", height=70)
+             # Same Standardized Prompt
+            default_prompt_disc = "Extract all text content from the page (title, description, metadata, full text). Also extract the URL of the first visible image (or main artwork image) and map it to the field 'image'. IMPORTANT: If the image has a 'src_o' attribute, extract that URL for high resolution."
+
+            disc_prompt = st.text_area("Agent Prompt", value=default_prompt_disc, height=150)
         with c2:
-            disc_credits = st.slider("Max Credits (Total / 总计)", 10, 500, 100, key="disc_slider")
+            # Dynamic Cost Calculation
+            est_cost = len(selected_urls)
+            st.markdown(f"**Estimated Cost / 预计消耗:** `{est_cost} Credits`")
+            
+            # Slider as a safety limit
+            disc_credits = st.slider("Batch Limit / 数量限制", 1, max(50, est_cost), est_cost, key="disc_slider", help="Limit the number of URLs to process / 限制处理的数量")
             disc_download = st.checkbox("Download Images / 下载图片", value=True, key="disc_img")
             
         if st.button("🤖 Batch Extract / 开始批量提取", disabled=len(selected_urls)==0, type="primary"):
@@ -341,6 +374,7 @@ with tab3:
                 st.info("🚀 Submitting Agent Task... / 正在提交 Agent 任务...")
                 
                 final_prompt = disc_prompt
+                # We already have a strong prompt, but extra check
                 if disc_download and "image" not in disc_prompt.lower():
                     final_prompt += ". Also extract all image URLs."
                 
@@ -363,9 +397,9 @@ with st.sidebar:
     st.markdown("### Console / 控制台")
     st.markdown("---")
     st.markdown("**Modes / 模式说明：**")
-    st.markdown("- **Batch / 批量**: Scrape all / 抓取所有")
-    st.markdown("- **Agent**: AI Query / AI 查询")
-    st.markdown("- **Discovery / 智能发现**: Smart Scroll / 智能滚动")
+    st.markdown("- **Basic**: Scrape Sitemap / 抓取站点地图")
+    st.markdown("- **Quick**: Single URL or AI / 快速提取")
+    st.markdown("- **Batch**: Discovery -> Extract / 批量发现")
     st.markdown("---")
     if st.button("❌ Exit App / 退出程序"):
         st.warning("Exiting... / 程序退出...")

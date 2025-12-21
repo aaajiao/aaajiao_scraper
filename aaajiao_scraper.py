@@ -438,8 +438,9 @@ class AaajiaoScraper:
         
         if scroll_mode == "horizontal":
             # 横向滚动：使用增强版 JS 脚本 (模拟滚动到底部触发加载)
-            # 增加到 25 次循环以应对超长页面
-            for i in range(25):
+            # 调整为 20 次循环 (这是一个平衡点：15次不够全，30次会超时)
+            # 每次 1.5s，总耗时约 35s，安全可靠
+            for i in range(20):
                 actions.append({
                     "type": "executeJavascript", 
                     "script": """
@@ -450,7 +451,7 @@ class AaajiaoScraper:
                     """
                 })
                 # 等待 Carg CMS 加载新内容
-                actions.append({"type": "wait", "milliseconds": 2000})
+                actions.append({"type": "wait", "milliseconds": 1500})
                 
         elif scroll_mode == "vertical":
             # 垂直滚动：使用原生 scroll
@@ -460,7 +461,7 @@ class AaajiaoScraper:
             
         else:  # auto Mode
             # 混合模式：横向增强 + 垂直
-            # 1. 横向滚动 (JS) - 增加到 15 次
+            # 1. 横向滚动 (JS)
             for i in range(15):
                 actions.append({
                     "type": "executeJavascript", 
@@ -477,7 +478,8 @@ class AaajiaoScraper:
             "url": url,
             "formats": ["html"],
             "actions": actions,
-            "onlyMainContent": False  # 获取完整 DOM 以便提取链接
+            "onlyMainContent": False,  # 获取完整 DOM 以便提取链接
+            "timeout": 300000 # 5分钟超时，确保跑完所有滚动动作
         }
         
         # 使用 v2 endpoint (官方文档推荐)
@@ -557,98 +559,163 @@ class AaajiaoScraper:
     
     def agent_search(self, prompt: str, urls: Optional[List[str]] = None, max_credits: int = 50) -> Optional[Dict[str, Any]]:
         """
-        使用 Firecrawl Agent 进行开放式查询
+        智能搜索/提取入口
         
-        Args:
-            prompt: 查询描述（自然语言）
-            urls: 可选，指定要搜索的 URL 列表
-            max_credits: 最大消耗 credits 数（控制成本）
-            
-        Returns:
-            Agent 返回的结构化数据
+        策略分离:
+        1. 指定 URLs -> 使用 v2/extract 批量提取 -> 针对已知页面进行结构化/内容提取
+        2. 无 URLs (开放查询) -> 使用 v2/agent -> 成本高 (自主调研)
         """
-        logger.info(f"🤖 启动 Agent 任务...")
-        logger.info(f"   Prompt: {prompt}")
-        if urls:
-            logger.info(f"   URLs: {urls}")
         
-        agent_endpoint = "https://api.firecrawl.dev/v2/agent"
-        
-        headers = {
-            "Authorization": f"Bearer {self.firecrawl_key}",
-            "Content-Type": "application/json"
-        }
-        
-        payload = {
-            "prompt": prompt,
-            "maxCredits": max_credits
-        }
-        
-        if urls:
-            payload["urls"] = urls
-        
-        try:
-            # 1. 启动 Agent 任务
-            resp = requests.post(agent_endpoint, json=payload, headers=headers, timeout=self.FC_TIMEOUT)
+        # === 场景 1: 批量提取 (指定 URL) ===
+        if urls and len(urls) > 0:
+            # 限制 URL 数量以符合 Max Credits
+            target_urls = urls[:max_credits]
+            logger.info(f"🚀 启动批量提取任务 (Target: {len(target_urls)} URLs)")
+            logger.info(f"   Prompt: {prompt}")
             
-            if resp.status_code != 200:
-                logger.error(f"Agent 启动失败: {resp.status_code} - {resp.text[:200]}")
-                return None
+            extract_endpoint = "https://api.firecrawl.dev/v2/extract"
+            headers = {
+                "Authorization": f"Bearer {self.firecrawl_key}",
+                "Content-Type": "application/json"
+            }
             
-            result = resp.json()
+            payload = {
+                "urls": target_urls,
+                "prompt": prompt,
+                "enableWebSearch": False
+            }
             
-            if not result.get("success"):
-                logger.error(f"Agent 启动失败: {result}")
-                return None
-            
-            job_id = result.get("id")
-            if not job_id:
-                # 同步模式：直接返回结果
-                if result.get("status") == "completed":
-                    logger.info(f"✅ Agent 任务完成 (credits: {result.get('creditsUsed', 'N/A')})")
-                    return result.get("data")
-                logger.error(f"Agent 返回格式异常: {result}")
-                return None
-            
-            # 2. 轮询等待任务完成
-            logger.info(f"   任务 ID: {job_id}")
-            status_endpoint = f"{agent_endpoint}/{job_id}"
-            max_wait = 300  # 最长等待 5 分钟
-            poll_interval = 5  # 每 5 秒查询一次
-            elapsed = 0
-            
-            while elapsed < max_wait:
-                time.sleep(poll_interval)
-                elapsed += poll_interval
+            # Check for high-res instruction
+            if "src_o" in prompt:
+                 pass
+
+            try:
+                # 1. 提交任务
+                resp = requests.post(extract_endpoint, json=payload, headers=headers, timeout=self.FC_TIMEOUT)
                 
-                status_resp = requests.get(status_endpoint, headers=headers, timeout=self.FC_TIMEOUT)
-                
-                if status_resp.status_code != 200:
-                    logger.warning(f"状态查询失败: {status_resp.status_code}")
-                    continue
-                
-                status_data = status_resp.json()
-                status = status_data.get("status")
-                
-                if status == "processing":
-                    logger.info(f"   ⏳ 处理中... ({elapsed}s)")
-                    continue
-                elif status == "completed":
-                    credits_used = status_data.get("creditsUsed", "N/A")
-                    logger.info(f"✅ Agent 任务完成 (耗时: {elapsed}s, credits: {credits_used})")
-                    return status_data.get("data")
-                elif status == "failed":
-                    logger.error(f"Agent 任务失败: {status_data}")
+                if resp.status_code != 200:
+                    logger.error(f"Extract 启动失败: {resp.status_code} - {resp.text}")
                     return None
-                else:
-                    logger.warning(f"未知状态: {status}")
+                    
+                result = resp.json()
+                if not result.get("success"):
+                    logger.error(f"Extract 启动失败: {result}")
+                    return None
+                
+                job_id = result.get("id")
+                if not job_id:
+                     if result.get("status") == "completed":
+                         return result.get("data")
+                     return None
+
+                # 2. 轮询等待
+                logger.info(f"   Extract 任务 ID: {job_id}")
+                status_endpoint = f"{extract_endpoint}/{job_id}"
+                max_wait = 600 # 10分钟
+                poll_interval = 5
+                elapsed = 0
+                
+                while elapsed < max_wait:
+                    time.sleep(poll_interval)
+                    elapsed += poll_interval
+                    
+                    status_resp = requests.get(status_endpoint, headers=headers, timeout=self.FC_TIMEOUT)
+                    if status_resp.status_code != 200: continue
+                    
+                    status_data = status_resp.json()
+                    status = status_data.get("status")
+                    
+                    if status == "processing":
+                        logger.info(f"   ⏳ 提取中... ({elapsed}s)")
+                    elif status == "completed":
+                        credits = status_data.get("creditsUsed", "N/A")
+                        logger.info(f"✅ 提取完成 (Credits: {credits})")
+                        # Return 'data' field directly (which is a list of results for extract endpoint)
+                        return {"data": status_data.get("data")}
+                    elif status == "failed":
+                        logger.error(f"提取任务失败: {status_data}")
+                        return None
+                        
+                return None
+                
+            except Exception as e:
+                logger.error(f"Extract Exception: {e}")
+                return None
+
+        # === 场景 2: 开放式 Agent 搜索 (无 URL) ===
+        else:
+            logger.info(f"🤖 启动 Smart Agent 任务 (开放搜索)...")
+            logger.info(f"   Prompt: {prompt}")
             
-            logger.error(f"Agent 任务超时 ({max_wait}s)")
-            return None
+            agent_endpoint = "https://api.firecrawl.dev/v2/agent"
+            headers = {
+                "Authorization": f"Bearer {self.firecrawl_key}",
+                "Content-Type": "application/json"
+            }
             
-        except Exception as e:
-            logger.error(f"Agent 请求错误: {e}")
-            return None
+            payload = {
+                "prompt": prompt,
+                "maxCredits": max_credits
+            }
+            
+            try:
+                # 1. 启动 Agent 任务
+                resp = requests.post(agent_endpoint, json=payload, headers=headers, timeout=self.FC_TIMEOUT)
+                
+                if resp.status_code != 200:
+                    logger.error(f"Agent 启动失败: {resp.status_code} - {resp.text[:200]}")
+                    return None
+                
+                result = resp.json()
+                
+                if not result.get("success"):
+                    logger.error(f"Agent 启动失败: {result}")
+                    return None
+                
+                job_id = result.get("id")
+                
+                if not job_id:
+                    # 同步模式
+                    if result.get("status") == "completed":
+                        logger.info(f"✅ Agent 任务完成 (credits: {result.get('creditsUsed', 'N/A')})")
+                        return result.get("data")
+                    return None
+                
+                # 2. 轮询等待任务完成
+                logger.info(f"   任务 ID: {job_id}")
+                status_endpoint = f"{agent_endpoint}/{job_id}"
+                max_wait = 300 
+                elapsed = 0
+                
+                while elapsed < max_wait:
+                    time.sleep(5)
+                    elapsed += 5
+                    
+                    status_resp = requests.get(status_endpoint, headers=headers, timeout=self.FC_TIMEOUT)
+                    
+                    if status_resp.status_code != 200: continue
+                    
+                    status_data = status_resp.json()
+                    status = status_data.get("status")
+                    
+                    if status == "processing":
+                        logger.info(f"   ⏳ 处理中... ({elapsed}s)")
+                        continue
+                    elif status == "completed":
+                        credits_used = status_data.get("creditsUsed", "N/A")
+                        logger.info(f"✅ Agent 任务完成 (耗时: {elapsed}s, credits: {credits_used})")
+                        return status_data.get("data")
+                    elif status == "failed":
+                        logger.error(f"Agent 任务失败: {status_data}")
+                        return None
+                
+                logger.error(f"Agent 任务超时 ({max_wait}s)")
+                return None
+                
+            except Exception as e:
+                logger.error(f"Agent 请求错误: {e}")
+                return None
+
 
     # ==================== 图片下载和报告生成 ====================
     
@@ -943,11 +1010,10 @@ def main():
         
         # Phase 2: Agent Extraction
         prompt = args.agent or "Deeply analyze these artworks. Extract title, year, materials, description, concept, and exhibition history."
-        enhanced_prompt = prompt
-        
-        if args.output_dir:
-            if "image" not in prompt.lower():
-                enhanced_prompt = f"{prompt}. Also extract all image URLs for each artwork."
+        # Enhanced Prompt logic
+        final_prompt = prompt
+        if args.output_dir and "image" not in prompt.lower():
+            final_prompt = f"{prompt}. IMPORTANT: For images, extract the 'src_o' attribute (if available) or 'src'. 'src_o' contains the high-res version. Ignore sidebar thumbnails. for each artwork."
         
         logger.info("🤖 提交 Agent 批量处理任务 (这可能需要一些时间)...")
         

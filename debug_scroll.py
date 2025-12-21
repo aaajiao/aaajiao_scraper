@@ -30,10 +30,16 @@ def test_scroll(mode):
     actions.append({"type": "wait", "milliseconds": 2000})
 
     if mode == "horizontal":
-        # The logic that is potentially broken
-        for i in range(5): 
-            actions.append({"type": "press", "key": "ArrowRight"})
-            actions.append({"type": "wait", "milliseconds": 500})
+        # The aggressive JS script from aaajiao_scraper.py
+        for i in range(5): # Test with 5 iterations
+            actions.append({
+                "type": "executeJavascript", 
+                "script": """
+                    window.scrollTo(document.documentElement.scrollWidth, 0);
+                    window.dispatchEvent(new Event('scroll'));
+                """
+            })
+            actions.append({"type": "wait", "milliseconds": 2000})
             
     elif mode == "vertical":
         for _ in range(3):
@@ -54,19 +60,33 @@ def test_scroll(mode):
     }
 
     try:
-        resp = requests.post(endpoint, json=payload, headers=headers, timeout=60)
+        resp = requests.post(endpoint, json=payload, headers=headers, timeout=300)
         logger.info(f"Status: {resp.status_code}")
         
         if resp.status_code == 200:
             data = resp.json()
-            # Log the keys to see structure
-            logger.info(f"Response Keys: {data.keys()}")
-            
             if data.get('success'):
                 html = data.get('data', {}).get('html', '')
                 logger.info(f"HTML Length: {len(html)}")
-                if len(html) < 1000:
-                    logger.warning("HTML content seems too short!")
+                
+                # Test Selector
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(html, 'html.parser')
+                
+                # Check 1: nohover
+                nohover = soup.select('a.nohover')
+                logger.info(f"Selector 'a.nohover' found: {len(nohover)}")
+                if len(nohover) > 0:
+                    logger.info(f"First link: {nohover[0]}")
+                
+                # Check 2: content_container a
+                container = soup.select_one('#content_container')
+                if container:
+                    c_links = container.find_all('a')
+                    logger.info(f"Selector '#content_container a' found: {len(c_links)}")
+                else:
+                    logger.info("'#content_container' NOT found")
+                    
             else:
                 logger.error(f"API Error: {data}")
         else:
@@ -76,4 +96,4 @@ def test_scroll(mode):
         logger.error(f"Exception: {e}")
 
 if __name__ == "__main__":
-    test_scroll("vertical")
+    test_scroll("horizontal")

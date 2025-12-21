@@ -1,0 +1,10 @@
+/Users/aaajiao/Library/Python/3.9/lib/python/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+--- Testing /v2/scrape with 'json' key ---
+Scrape Status: 400
+Scrape Response: {"success":false,"code":"BAD_REQUEST","error":"Unrecognized key in body -- please review the v2 API documentation for request body changes","details":[{"code":"unrecognized_keys","keys":["json"],"path":[],"message":"Unrecognized key: \"json\""}]}
+
+--- Testing /v2/extract endpoint ---
+Extract Status: 200
+Extract Response: {"success":true,"id":"019b40b5-cbb1-7288-9762-061c71341926","urlTrace":[]}
+
