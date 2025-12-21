@@ -83,6 +83,20 @@ class FirecrawlMixin:
                 logger.debug(f"Cache hit: {url}")
                 return cached
 
+        # 2. Local Extraction Heuristic (Cost Saving)
+        # Try to parse with simple rules first
+        if hasattr(self, "extract_metadata_bs4"):
+            local_data = self.extract_metadata_bs4(url)
+            if local_data and local_data.get("title") and local_data.get("year"):
+                logger.info(f"✅ Local extraction successful: {local_data['title']}")
+                # Save to cache so next run is fast
+                if self.use_cache:
+                    self._save_cache(url, local_data)
+                return local_data
+
+        # 3. Rate limiting
+
+
         # 2. Rate limiting
         self.rate_limiter.wait()
 

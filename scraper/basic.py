@@ -216,6 +216,116 @@ class BasicScraperMixin:
 
         return True
 
+    def extract_metadata_bs4(self, url: str) -> Optional[Dict[str, Any]]:
+        """Extract artwork metadata using local HTML parsing (No API cost).
+        
+        Attempts to parse the page structure to find title, year, description,
+        materials, and category.
+        
+        Args:
+            url: The artwork page URL.
+            
+        Returns:
+            Dictionary with extracted fields if successful, None otherwise.
+            Includes 'source': 'local' to indicate origin.
+        """
+        try:
+            logger.info(f"Parsing locally (BS4): {url}")
+            resp = self.session.get(url, timeout=TIMEOUT)
+            resp.raise_for_status()
+            
+            soup = BeautifulSoup(resp.content, "html.parser")
+            
+            # --- 1. Title ---
+            title_div = soup.find("div", class_="project_title")
+            raw_title = title_div.get_text().strip() if title_div else ""
+            if not raw_title:
+                return None  # Minimum requirement
+                
+            title = raw_title
+            title_cn = ""
+            
+            # Split "English / Chinese"
+            if "/" in raw_title:
+                parts = raw_title.split("/", 1)
+                title = parts[0].strip()
+                title_cn = parts[1].strip()
+                
+            # --- 2. Content Analysis ---
+            content_div = soup.find("div", class_="project_content")
+            
+            year = ""
+            category = ""
+            materials = ""
+            desc_en = ""
+            desc_cn = ""
+            
+            if content_div:
+                # Cleanup
+                for s in content_div(["script", "style"]):
+                    s.decompose()
+                
+                # Extract text lines
+                text = content_div.get_text(separator="\n")
+                lines = [line.strip() for line in text.split("\n") if line.strip()]
+                
+                # Heuristic Parsing
+                import re
+                
+                # A. Find Year (Priority: Standalone year specific regex)
+                for line in lines:
+                    # Match 2018 or 2018-2022
+                    year_match = re.search(r'\b(20\d{2}(?:\s*[-–]\s*20\d{2})?)\b', line)
+                    if year_match:
+                        year = year_match.group(1).replace("–", "-") # Normalize en-dash
+                        break
+                
+                # B. Find Category/Materials (Short lines with / or english/chinese mix)
+                # This is tricky without NLP, so we look for short lines that aren't the year
+                candidates = [l for l in lines if len(l) < 100 and l != year]
+                
+                # Heuristic: Category often comes early
+                if candidates:
+                    # Try to guess based on keywords
+                    common_cats = ["Video", "Installation", "Website", "Software", "Print", "Data", "Performance", "装置", "录像"]
+                    for line in candidates:
+                        if any(c.lower() in line.lower() for c in common_cats):
+                            category = line
+                            break
+                            
+                # C. Descriptions (Longer lines)
+                long_lines = [l for l in lines if len(l) > 100]
+                if long_lines:
+                    # Determine language by character checking
+                    for line in long_lines:
+                        # Simple check for Chinese characters
+                        if any('\u4e00' <= char <= '\u9fff' for char in line):
+                            desc_cn += line + "\n\n"
+                        else:
+                            desc_en += line + "\n\n"
+                            
+            # --- 3. Images ---
+            images = self.extract_images_from_page(url)
+            
+            return {
+                "url": url,
+                "title": title,
+                "title_cn": title_cn,
+                "year": year,
+                "category": category,
+                "materials": materials,  # Hard to separate from category without LLM
+                "description_en": desc_en.strip(),
+                "description_cn": desc_cn.strip(),
+                "images": images,
+                "high_res_images": images, # Alias for compatibility
+                "source": "local",  # Marker for UI
+                "video_link": "", # Hard to extract without JS sometimes
+            }
+            
+        except Exception as e:
+            logger.warning(f"Local metadata extraction failed: {e}")
+            return None
+
     # ====================
     # Image Extraction (HTML-based, no API)
     # ====================
@@ -425,45 +535,63 @@ class BasicScraperMixin:
         logger.info(f"Loaded {len(works)} cached works")
         return works
 
-    def enrich_work_with_images(
-        self, 
-        work: Dict[str, Any], 
-        download: bool = False,
-        output_dir: Optional[str] = None
-    ) -> Tuple[Dict[str, Any], List[str]]:
-        """Enrich a work dictionary with image URLs extracted from its page.
+    def enrich_work_with_images(self, work: Dict[str, Any], output_dir: str = "output") -> Dict[str, Any]:
+        """Enrich a work entry with local images (Download Strategy).
+        
+        Logic:
+        1. If work has 'images' (URLs), iterate and download them.
+        2. If work has NO 'images', fallback to extracting from HTML, then download.
+        3. Save downloaded paths to 'local_images'.
         
         Args:
-            work: Work dictionary containing at least 'url' key.
-            download: Whether to download images to local directory.
-            output_dir: Directory for downloaded images (required if download=True).
+            work: Work dictionary to enrich.
+            output_dir: Base directory for output.
             
         Returns:
-            Tuple of (updated work dict, list of image paths/URLs)
+            Updated work dictionary with 'local_images' populated.
         """
         url = work.get("url")
         if not url:
-            return work, []
-        
-        # Extract images from page
-        images = self.extract_images_from_page(url)
-        
-        local_paths: List[str] = []
-        
-        if download and images and output_dir:
-            # Create work-specific subdirectory
-            work_slug = url.split("/")[-1] or "unknown"
-            work_dir = os.path.join(output_dir, work_slug)
+            return work
             
-            for img_url in images:
-                local_path = self.download_image(img_url, work_dir)
-                if local_path:
-                    local_paths.append(local_path)
-        
-        # Update work dictionary
-        work["images"] = images
-        if local_paths:
-            work["local_images"] = local_paths
-        
-        return work, local_paths if download else images
+        # Determine image list source
+        existing_urls = work.get("images", [])
+        if not existing_urls:
+            # Fallback: Extract from HTML if no URLs exist
+            logger.info(f"No existing images for {work.get('title')}, scraping from HTML...")
+            existing_urls = self.extract_images_from_page(url)
+            # Update work with newly found URLs to persist them
+            work["images"] = existing_urls
+            
+        if not existing_urls:
+            logger.debug(f"No images found for {url}")
+            return work
 
+        # Prepare storage
+        safe_title = "".join(c if c.isalnum() or c in "-_ " else "_" for c in work.get("title", "untitled"))[:50]
+        work_images_dir = os.path.join(output_dir, "images", safe_title)
+        os.makedirs(work_images_dir, exist_ok=True)
+        
+        local_images = []
+        
+        # Download Loop
+        for i, img_url in enumerate(existing_urls):
+            try:
+                # Extension
+                parsed = urlparse(img_url)
+                ext = os.path.splitext(parsed.path)[1]
+                if not ext:
+                    ext = ".jpg"
+                    
+                filename = f"{i+1:02d}{ext}"
+                saved_path = self.download_image(img_url, work_images_dir, filename)
+                
+                if saved_path:
+                    # Store absolute path for consistency, report generator handles relative
+                    local_images.append(os.path.abspath(saved_path))
+            except Exception as e:
+                logger.warning(f"Failed to download image {img_url}: {e}")
+                
+        # Update work
+        work["local_images"] = local_images
+        return work

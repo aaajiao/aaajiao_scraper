@@ -279,13 +279,20 @@ with tab1:
                 status_text.text(f"[{i+1}/{len(works_to_process)}] Processing: {title}...")
                 
                 try:
-                    enriched_work, images = scraper.enrich_work_with_images(
+                    # Enrich works (download logic is now internal based on images presence)
+                    enriched_work = scraper.enrich_work_with_images(
                         work, 
-                        download=download_images_option,
-                        output_dir=output_dir
+                        output_dir="output" # Always needs output dir for potential downloads
                     )
                     enriched_works.append(enriched_work)
-                    all_images.extend(images)
+                    
+                    # Track for stats if local_images populated
+                    if enriched_work.get("local_images"):
+                         all_images.extend(enriched_work["local_images"])
+                         
+                except Exception as e:
+                    st.warning(f"Failed: {title} - {e}")
+                    enriched_works.append(work)
                 except Exception as e:
                     st.warning(f"Failed: {title} - {e}")
                     enriched_works.append(work)
