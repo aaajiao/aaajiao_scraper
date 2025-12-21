@@ -437,35 +437,38 @@ class AaajiaoScraper:
         actions.append({"type": "wait", "milliseconds": 2000})
         
         if scroll_mode == "horizontal":
-            # 横向滚动：使用 executeJavascript (原生 scroll 不支持 horizontal)
-            # 向右滚动 5 次，每次 2000px
-            for i in range(5):
+            # 横向滚动：回退到 executeJavascript (press action 导致崩溃)
+            # 向右滚动 10 次，每次 2000px
+            for i in range(10):
                 actions.append({
                     "type": "executeJavascript", 
                     "script": "window.scrollBy(2000, 0);"
                 })
-                actions.append({"type": "wait", "milliseconds": 1500})
+                actions.append({"type": "wait", "milliseconds": 800})
                 
         elif scroll_mode == "vertical":
-            # 垂直滚动：使用原生 scroll action (官方支持 up/down)
+            # 垂直滚动：使用原生 scroll + PageDown
             for _ in range(3):
                 actions.append({"type": "scroll", "direction": "down"})
-                actions.append({"type": "wait", "milliseconds": 1000})
+                actions.append({"type": "wait", "milliseconds": 1500})
             
-        else:  # auto 模式
-            # 混合模式：先横向滚动，再垂直滚动
-            # 1. 横向滚动 (executeJavascript)
-            for i in range(5):
+        else:  # auto Mode
+            # 混合模式：先横向 (JS) 后垂直 (Native)
+            # 1. 横向滚动
+            for i in range(10):
                 actions.append({
                     "type": "executeJavascript", 
                     "script": "window.scrollBy(2000, 0);"
                 })
-                actions.append({"type": "wait", "milliseconds": 1200})
-                
-            # 2. 垂直滚动 (原生 scroll)
-            for _ in range(3):
-                actions.append({"type": "scroll", "direction": "down"})
-                actions.append({"type": "wait", "milliseconds": 1000})
+                if i % 2 == 0:
+                     actions.append({"type": "wait", "milliseconds": 500})
+            
+            # 2. 休息等待
+            actions.append({"type": "wait", "milliseconds": 1500})
+            
+            # 3. 垂直滚动
+            actions.append({"type": "scroll", "direction": "down"})
+            actions.append({"type": "wait", "milliseconds": 1500})
         
         payload = {
             "url": url,
