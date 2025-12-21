@@ -4,13 +4,16 @@
 
 ---
 
-## ✨ 功能特性
+## ✨ 核心特性
 
-- 🤖 **AI 智能提取**：使用 Firecrawl AI 精准识别标题、年份、材质、描述等信息
-- 💾 **本地缓存**：已抓取的作品自动缓存，避免重复调用 API
-- 🚦 **速率控制**：内置智能限流，不会触发 API 限制
-- 📊 **实时进度**：tqdm 进度条显示抓取状态
-- 🔒 **安全配置**：API Key 通过环境变量管理，不会泄露
+- 🤖 **多模态 AI 提取**：
+  - **Basic Scraper**: 基于规则的快速提取，成本低（1 credit/页）。
+  - **Smart Agent**: 基于 LLM (v2/extract) 的智能理解，支持自定义 Prompt。
+  - **Discovery Mode**: 智能滚屏扫描，解决无限滚动加载问题。
+- 💰 **成本透明**：GUI 界面实时显示预估积分消耗（Batch/Extract）。
+- 🎨 **一键高清图**：自动识别 `src_o` 属性，优先下载高清作品原图。
+- 💾 **本地缓存**：已抓取的作品自动缓存，避免重复调用 API。
+- 🔒 **安全配置**：API Key 通过环境变量管理，不会泄露。
 
 ---
 
@@ -19,7 +22,7 @@
 ### 1. 安装依赖
 
 ```bash
-pip3 install requests beautifulsoup4 tqdm
+pip3 install requests beautifulsoup4 tqdm streamlit pandas
 ```
 
 ### 2. 配置 API Key
@@ -37,255 +40,108 @@ FIRECRAWL_API_KEY=your-api-key-here
 
 ## 🚀 使用方法
 
-### 方式一：双击启动（最简单）
-
-1. 在 Finder 中双击 `start_gui.command` 文件
-2. 浏览器会自动打开 Web 界面
-
-> 💡 如果双击没反应，先运行：`chmod +x start_gui.command`
-
-### 方式二：命令行运行
-
-```bash
-cd /Users/aaajiao/Documents/aaajiao_scraper
-python3 aaajiao_scraper.py
-```
-
-### 方式三：Web GUI
+### 方式一：Web GUI (推荐)
 
 ```bash
 python3 -m streamlit run app.py
 ```
+浏览器会自动打开 `http://localhost:8501`.
 
-然后在浏览器中打开 `http://localhost:8501`
+#### 界面功能详解：
 
-### 方式四：作为模块导入
+1.  **Tab 1: Basic Scraper / 基础爬虫**
+    *   **原理**: 读取 `sitemap.xml`，使用固定规则爬取。
+    *   **优点**: 速度快，成本极低 (仅 URL 获取费)。
+    *   **缺点**: 只能抓标准作品页，无法自定义字段。
 
-```python
-from aaajiao_scraper import AaajiaoScraper
+2.  **Tab 2: Quick Extract / 快速提取**
+    *   **原理**: 使用 `v2/extract` (LLM) 分析单页。
+    *   **单页模式**: 输入 URL，直接提取所有文字和高清图。成本 ~75 credits/页。
+    *   **开放搜索**: 不输 URL，直接问问题 (Agent Research)。
 
-scraper = AaajiaoScraper()
-scraper.scrape_all()
-scraper.save_to_json('output.json')
-scraper.generate_markdown('output.md')
-```
+3.  **Tab 3: Batch Discovery / 批量发现**
+    *   **适用**: 针对作品列表页、画廊页（如主页）。
+    *   **流程**: 
+        1. **Scan**: 自动滚动屏幕 (Auto/Horizontal/Vertical) 扫描所有链接。
+        2. **Filter**: 勾选你感兴趣的作品。
+        3. **Extract**: 批量发送给 AI 进行提取。
 
-### 方式五：Agent 模式（开放式查询）
+### 方式二：命令行 CLI
 
-Agent 模式允许你用自然语言描述需求，Firecrawl 会自动搜索并提取数据：
+#### 1. 简单 Agent 查询
 
 ```bash
-# 简单查询
 python3 aaajiao_scraper.py --agent "Find all video installations by aaajiao"
-
-# 指定 URL 的查询
-python3 aaajiao_scraper.py --agent "Summarize this artwork" --urls "https://eventstructure.com/Absurd-Reality-Check"
-
-# 限制 credits 消耗
-python3 aaajiao_scraper.py --agent "List all works from 2023" --max-credits 30
 ```
 
-#### Scrape vs Agent 对比
+#### 2. 批量已知 URL 提取 (New!)
 
-| 功能 | Scrape 模式（默认） | Agent 模式 |
-|------|---------------------|------------|
-| **适用网站** | 仅 `eventstructure.com` | ✅ **任意网站** |
-| 适用场景 | 已知 URL，逐页抓取 | 开放式查询 |
-| 需要 URL | ✅ 必须 | ❌ 可选 |
-| 数据结构 | 预定义 schema | 根据 prompt 自动推断 |
-| 并发 | 多线程并发 | 单任务，内部并行 |
-| 成本 | 每页 1 credit | 按复杂度计费（可设上限） |
-
-#### Agent 跨站查询示例
-
-```bash
-# 查询其他网站
-python3 aaajiao_scraper.py --agent "Find contact information" \
-  --urls "https://example.com/about"
-
-# 开放式搜索（不指定 URL，Agent 自主搜索）
-python3 aaajiao_scraper.py --agent "Find exhibitions featuring aaajiao in 2024"
-```
-
-#### 📥 图片下载和报告生成
-
-使用 `--output-dir` 参数自动下载图片并生成 Markdown 报告：
+新版支持将 `--agent` 配合 `--urls` 使用，调用高效的 `v2/extract` 接口：
 
 ```bash
 python3 aaajiao_scraper.py \
-  --agent "Get complete information including all images" \
-  --urls "https://eventstructure.com/Absurd-Reality-Check" \
-  --output-dir ./agent_output
+  --agent "Extract details and high-res images" \
+  --urls "https://link1.com, https://link2.com" \
+  --max-credits 2  # 限制处理前2个链接
 ```
 
-**输出目录结构：**
-```
-agent_output/
-├── report_20241221_103500.md      # Markdown 报告（含 prompt 和时间戳）
-├── data_20241221_103500.json       # JSON 数据（含元信息）
-└── images_20241221_103500/         # 图片文件夹
-    ├── 01_image.jpg
-    ├── 02_image.png
-    └── ...
-```
+#### 3. 智能发现模式 (Discovery)
 
-每次查询生成独立的文件组，便于版本管理。
-
-#### 🚀 智能发现模式 (Smart Discovery)
-
-解决部分网页内容需要**滚动加载**（如无限滚动、横向画廊）导致 Agent 无法看到隐藏内容的问题。
-
-此模式采用两阶段流程：
-1.  **Phase 1 (Scrape)**: 使用 Scrape 模式并执行滚动动作（水平+垂直），彻底加载页面并发现所有作品链接。
-2.  **Phase 2 (Agent)**: 将发现的链接投喂给 Agent 进行深入提取。
-
-**CLI 用法:**
 ```bash
-python3 aaajiao_scraper.py --discovery-url "https://eventstructure.com" --output-dir ./hybrid_output --scroll-mode auto
+python3 aaajiao_scraper.py \
+  --discovery-url "https://eventstructure.com" \
+  --scroll-mode auto \
+  --output-dir ./hybrid_output
 ```
-
-**GUI 用法:**
-启动 Web 界面后，切换到 **"🚀 智能发现"** 标签页。
-选择 **滚动策略** (Auto/Horizontal/Vertical) 以适应不同网站的布局。
-- **Auto**: 混合尝试，最稳妥。
-- **Horizontal**: 针对水平画廊。
-- **Vertical**: 针对垂直网页。
 
 ---
 
-## ⚙️ 配置选项
+## ⚙️ 成本说明 (Cost Model)
 
-### 缓存系统
+Firecrawl V2 计费机制如下：
 
-Scrape 模式内置本地缓存，有以下优势：
+| 模式 | 底层技术 | 典型成本 | 适用场景 |
+|------|---------|----------|----------|
+| **HTML Scrape** | 纯 HTML 下载 | ~1 Credit | 基础爬虫 (Tab 1) |
+| **LLM Extract** | HTML + AI 分析 | ~50-80 Credits | 快速提取 (Tab 2) / 批量发现 (Tab 3) |
+| **Agent Search** | 自主搜索 + 浏览 | >100 Credits | 开放式提问 (Tab 2 无 URL) |
 
-| 优势 | 说明 |
-|------|------|
-| 💰 节省 API 成本 | 已抓取的页面不会重复调用 API |
-| ⏱️ 加速运行 | 再次运行仅需 ~10 秒（vs 首次 ~36 分钟） |
-| 🔄 支持增量更新 | 仅对新增作品调用 API |
-
-**缓存位置**：`.cache/` 目录下，以 URL 的 MD5 哈希命名的 `.pkl` 文件
-
-### 禁用缓存
-
-如需强制重新抓取所有作品：
-
-```bash
-# 命令行
-python3 aaajiao_scraper.py --no-cache
-```
-
-```python
-# 代码中
-scraper = AaajiaoScraper(use_cache=False)
-```
-
-### 清除缓存
-
-```bash
-rm -rf .cache/
-```
+> 💡 **Tip**: 为了省钱，建议先用 Discovery 模式扫描出链接，然后只勾选真正需要的作品进行 Extract。
 
 ---
 
 ## 📁 输出文件
 
-| 文件 | 格式 | 说明 |
-|------|------|------|
-| `aaajiao_works.json` | JSON | 结构化数据，适合程序处理 |
-| `aaajiao_portfolio.md` | Markdown | 人类可读，适合浏览和导出 |
-
-### JSON 数据结构
-
-```json
-{
-  "url": "https://eventstructure.com/work-name",
-  "title": "Work Title",
-  "title_cn": "作品中文名",
-  "year": "2024",
-  "type": "Video Installation",
-  "materials": "LED screen, 3D printing",
-  "description_en": "English description...",
-  "description_cn": "中文描述...",
-  "video_link": "https://vimeo.com/..."
-}
-```
-
----
-
-## ⏱️ 性能说明
-
-| 场景 | 预计时间 |
-|------|----------|
-| 首次运行（约 180 个作品） | ~36 分钟 |
-| 再次运行（有缓存） | ~10 秒 |
-| 部分更新（新增作品） | 视数量而定 |
-
-> 🔧 速率限制：每 12 秒调用一次 Firecrawl API（5 calls/min）
-
----
-
-## 🗂️ 项目结构
+自动生成的文件结构：
 
 ```
 aaajiao_scraper/
-├── aaajiao_scraper.py    # 主爬虫脚本
-├── app.py                # Streamlit Web GUI
-├── .env                  # API Key 配置（需自行创建）
-├── .gitignore            # Git 忽略规则
-├── .cache/               # 缓存目录（自动创建）
-├── aaajiao_works.json    # 输出：JSON
-└── aaajiao_portfolio.md  # 输出：Markdown
+├── aaajiao_works.json      # 基础爬虫数据
+├── aaajiao_portfolio.md    # 基础爬虫 Markdown
+├── agent_output/           # Agent/Extract 模式输出
+│   ├── artwork_report.md
+│   ├── agent_result.json
+│   └── images/             # 下载的高清图片
+└── .cache/                 # 缓存文件
 ```
-
----
-
-## ❓ 常见问题
-
-### Q: 提示 "未找到 Firecrawl API Key"
-
-确保 `.env` 文件存在且格式正确：
-```
-FIRECRAWL_API_KEY=fc-xxxxxxxxxxxx
-```
-
-### Q: 出现 429 Rate Limit 错误
-
-正常现象，程序会自动等待并重试（最多 3 次）。
-
-### Q: 如何只抓取部分作品？
-
-修改代码中的 `get_all_work_links()` 方法，添加过滤条件。
-
-### Q: 缓存数据在哪里？
-
-`.cache/` 目录下，以 URL 的 MD5 哈希命名的 `.pkl` 文件。
 
 ---
 
 ## 📝 更新日志
 
-### v3.0 (2024-12-16)
-- ✨ 集成 Firecrawl AI 提取引擎
-- 🔒 API Key 安全管理
-- 💾 本地缓存系统
-- 📊 tqdm 进度条
-- 🚦 智能速率控制
+### v5.0 (2024-12-21)
+- ✨ **Smart Discovery**: 完整的“扫描-筛选-提取”工作流。
+- 🔄 **V2 Extract**: 修复 400 错误，支持批量 URL 的 AI 提取。
+- 🖼️ **高清图支持**: 自动提取 `src_o` 属性，拒绝缩略图。
+- 🖥️ **GUI 重构**: Tab 重命名为 Quick Extract / Batch Discovery。
 
-### v2.0
-- 使用 sitemap.xml 获取完整作品列表
-- 优化 HTML 解析逻辑
-
-### v1.0
-- 初始版本
+### v4.0
+- ⚡️ V2 API 迁移：全面升级到 Firecrawl V2。
 
 ---
 
 ## 📄 License
 
 MIT License
-
----
 
 *Made with ❤️ for aaajiao*
