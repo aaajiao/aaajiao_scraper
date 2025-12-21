@@ -72,6 +72,7 @@ logs/
 # Generated data files (can regenerate by running scraper)
 aaajiao_works.json
 aaajiao_portfolio.md
+aaajiao_portfolio_with_web_images.md
 *.html
 *.csv
 

@@ -241,14 +241,8 @@ with tab1:
         st.info("Click the button above to start. / 点击上方按钮开始运行。")
     
     # ============ Image Enrichment Section ============
+
     st.divider()
-    st.subheader("🖼️ Image Enrichment / 图片整合")
-    st.markdown("""
-    **从已缓存的作品数据中提取图片 (无需 API)**
-    - 使用 HTML 解析提取每个作品的高清图片
-    - 可选择下载到本地
-    - 生成包含图片的完整报告
-    """)
     
     # Load cached works count
     scraper_preview = AaajiaoScraper()
@@ -256,43 +250,48 @@ with tab1:
     
     if cached_works:
         st.success(f"📦 Found {len(cached_works)} cached works / 发现 {len(cached_works)} 个已缓存作品")
+        st.subheader("🖼️ Image Enrichment / 图片整合")
         
+        st.markdown("""
+        **从已缓存的作品数据中提取图片 (无需 API)**
+        - 使用 HTML 解析提取每个作品的高清图片
+        - 可选择下载到本地
+        - 生成包含图片的完整报告
+        """)
+        
+        # --- Feature 1: Image Enrichment (Download & Patch) ---
         col_opt1, col_opt2 = st.columns(2)
         with col_opt1:
             download_images_option = st.checkbox("📥 Download Images / 下载图片到本地", value=True, key="enrich_download")
         with col_opt2:
             limit_works = st.slider("处理数量限制", min_value=1, max_value=len(cached_works), value=min(50, len(cached_works)), key="enrich_limit")
         
-        if st.button("🖼️ Start Image Enrichment / 开始图片整合", type="primary", key="enrich_btn"):
+        if st.button("🖼️ Start Image Enrichment (Local) / 开始图片整合", type="primary", key="enrich_btn"):
             progress_bar = st.progress(0)
             status_text = st.empty()
             
             scraper = AaajiaoScraper()
             works_to_process = cached_works[:limit_works]
             enriched_works = []
-            all_images = []
+            all_images = [] # Track for stats
             
-            output_dir = "output/images" if download_images_option else None
+            output_dir = "output/images" if download_images_option else "output"
             
             for i, work in enumerate(works_to_process):
                 title = work.get("title", "Unknown")[:30]
                 status_text.text(f"[{i+1}/{len(works_to_process)}] Processing: {title}...")
                 
                 try:
-                    # Enrich works (download logic is now internal based on images presence)
+                    # Enrich works
                     enriched_work = scraper.enrich_work_with_images(
                         work, 
-                        output_dir="output" # Always needs output dir for potential downloads
+                        output_dir="output" 
                     )
                     enriched_works.append(enriched_work)
                     
-                    # Track for stats if local_images populated
                     if enriched_work.get("local_images"):
                          all_images.extend(enriched_work["local_images"])
                          
-                except Exception as e:
-                    st.warning(f"Failed: {title} - {e}")
-                    enriched_works.append(work)
                 except Exception as e:
                     st.warning(f"Failed: {title} - {e}")
                     enriched_works.append(work)
@@ -326,20 +325,22 @@ with tab1:
                     report_lines.append(f"{desc_cn}\n\n")
                 
                 # Images section
-                if images:
+                if images or local_images:
                     report_lines.append("### Images\n\n")
-                    for j, img_url in enumerate(images[:6]):
-                        if local_images and j < len(local_images):
-                            # Convert absolute path to relative path from output/ folder
-                            local_path = local_images[j]
-                            # Extract relative path starting from "images/"
-                            if "images/" in local_path:
-                                rel_path = "images/" + local_path.split("images/", 1)[1]
-                            else:
-                                rel_path = os.path.basename(local_path)
-                            report_lines.append(f"![Image {j+1}]({rel_path})\n\n")
-                        else:
-                            report_lines.append(f"![Image {j+1}]({img_url})\n\n")
+                    
+                    imgs_to_show = images
+                    use_local = bool(local_images)
+                    
+                    if use_local:
+                        for img_path in local_images[:10]:
+                             if "images/" in img_path:
+                                rel_path = "images/" + img_path.split("images/", 1)[1]
+                             else:
+                                rel_path = os.path.basename(img_path)
+                             report_lines.append(f"![Image]({rel_path})\n\n")     
+                    else:
+                        for img_url in images[:10]:
+                            report_lines.append(f"![Image]({img_url})\n\n")
                 
                 report_lines.append("---\n\n")
             
@@ -351,33 +352,89 @@ with tab1:
             with open(report_path, "w", encoding="utf-8") as f:
                 f.write(report_content)
             
-            # Also save enriched JSON
-            json_path = "output/works_with_images.json"
-            with open(json_path, "w", encoding="utf-8") as f:
-                json.dump(enriched_works, f, ensure_ascii=False, indent=2)
-            
-            st.success(f"✅ Done! Processed {len(enriched_works)} works, found {len(all_images)} images")
-            
-            # Download buttons
-            col_d1, col_d2 = st.columns(2)
-            with col_d1:
-                st.download_button(
-                    "📄 Download Report / 下载报告",
-                    data=report_content,
-                    file_name="portfolio_with_images.md",
-                    mime="text/markdown"
-                )
-            with col_d2:
-                with open(json_path, "r", encoding="utf-8") as f:
-                    st.download_button(
-                        "📊 Download JSON / 下载 JSON",
-                        data=f.read(),
-                        file_name="works_with_images.json",
-                        mime="application/json"
-                    )
+            st.success("✅ Image Enrichment Complete! / 图片整合完成!")
             
             if download_images_option and all_images:
-                st.info(f"📁 Images saved to: `{output_dir}/`")
+                 st.info(f"📁 Images saved to: `output/images/`")
+
+            st.download_button(
+                label="📥 Download Enriched Portfolio (With Local Images) / 下载完整图文报告 (含本地图)",
+                data=report_content,
+                file_name="aaajiao_portfolio_images.md",
+                mime="text/markdown"
+            )
+
+        # --- Feature 2: Web Image Report (Lightweight) ---
+        st.divider()
+        st.subheader("🌐 Web-Image Report / 网络图片报告")
+        st.markdown("生成一份仅包含**在线图片链接**的轻量级报告，无需下载图片，便于分享。")
+        
+        if st.button("📄 Generate Web Report / 生成报告", key="gen_web_report"):
+            # Use cached_works directly since we are inside the if block
+            works = cached_works
+            
+            # Sort
+            def get_sort_year(w):
+                y = w.get("year", "0000")
+                if "-" in y: return y.split("-")[-1]
+                return y
+            
+            works.sort(key=get_sort_year, reverse=True)
+            
+            lines = [
+                "# aaajiao Portfolio (Web Images)\n", 
+                f"> Generated: {time.strftime('%Y-%m-%d %H:%M')}\n",
+                "> **Note**: Images are direct links to eventstructure.com\n\n",
+                "---\n\n"
+            ]
+            
+            progress = st.progress(0)
+            status = st.empty()
+            
+            for i, work in enumerate(works):
+                status.text(f"Processing {i+1}/{len(works)}...")
+                progress.progress((i+1)/len(works))
+                
+                title = work.get("title", "Untitled")
+                lines.append(f"## {work.get('year', '')} - {title}")
+                if work.get('title_cn'):
+                    lines.append(f" / {work['title_cn']}")
+                lines.append("\n\n")
+                
+                lines.append(f"**URL:** [{work.get('url')}]({work.get('url')})\n\n")
+                
+                if work.get("description_cn"):
+                    lines.append(f"> {work['description_cn']}\n\n")
+                if work.get("description_en"):
+                    lines.append(f"{work['description_en']}\n\n")
+                    
+                # Images logic
+                imgs = work.get("images", [])
+                if not imgs: imgs = work.get("high_res_images", [])
+                
+                # Fetch if missing
+                if not imgs and work.get("url"):
+                    try:
+                        scraper_temp = AaajiaoScraper() # Need instance for method
+                        imgs = scraper_temp.extract_images_from_page(work['url'])
+                    except:
+                        pass
+                
+                if imgs:
+                    lines.append("### Images\n\n")
+                    for img in imgs:
+                         lines.append(f"![]({img})\n\n")
+                
+                lines.append("---\n")
+            
+            st.success(f"✅ Generated report for {len(works)} works!")
+            st.download_button(
+                label="📥 Download Web Report / 下载网络版报告",
+                data="".join(lines),
+                file_name="aaajiao_web_images_report.md",
+                mime="text/markdown"
+            )
+
     else:
         st.warning("⚠️ No cached works found. Run 'Start Scraping' first to cache artwork data.")
 
