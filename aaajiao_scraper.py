@@ -437,38 +437,41 @@ class AaajiaoScraper:
         actions.append({"type": "wait", "milliseconds": 2000})
         
         if scroll_mode == "horizontal":
-            # 横向滚动：回退到 executeJavascript (press action 导致崩溃)
-            # 向右滚动 10 次，每次 2000px
-            for i in range(10):
+            # 横向滚动：使用增强版 JS 脚本 (模拟滚动到底部触发加载)
+            # 增加到 25 次循环以应对超长页面
+            for i in range(25):
                 actions.append({
                     "type": "executeJavascript", 
-                    "script": "window.scrollBy(2000, 0);"
+                    "script": """
+                        // 1. 滚动到当前最右侧
+                        window.scrollTo(document.documentElement.scrollWidth, 0);
+                        // 2. 触发 scroll 事件以激活懒加载
+                        window.dispatchEvent(new Event('scroll'));
+                    """
                 })
-                actions.append({"type": "wait", "milliseconds": 800})
+                # 等待 Carg CMS 加载新内容
+                actions.append({"type": "wait", "milliseconds": 2000})
                 
         elif scroll_mode == "vertical":
-            # 垂直滚动：使用原生 scroll + PageDown
-            for _ in range(3):
+            # 垂直滚动：使用原生 scroll
+            for _ in range(5):
                 actions.append({"type": "scroll", "direction": "down"})
                 actions.append({"type": "wait", "milliseconds": 1500})
             
         else:  # auto Mode
-            # 混合模式：先横向 (JS) 后垂直 (Native)
-            # 1. 横向滚动
-            for i in range(10):
+            # 混合模式：横向增强 + 垂直
+            # 1. 横向滚动 (JS) - 增加到 15 次
+            for i in range(15):
                 actions.append({
                     "type": "executeJavascript", 
-                    "script": "window.scrollBy(2000, 0);"
+                    "script": "window.scrollTo(document.documentElement.scrollWidth, 0); window.dispatchEvent(new Event('scroll'));"
                 })
-                if i % 2 == 0:
-                     actions.append({"type": "wait", "milliseconds": 500})
+                actions.append({"type": "wait", "milliseconds": 1500})
             
-            # 2. 休息等待
-            actions.append({"type": "wait", "milliseconds": 1500})
-            
-            # 3. 垂直滚动
-            actions.append({"type": "scroll", "direction": "down"})
-            actions.append({"type": "wait", "milliseconds": 1500})
+            # 2. 垂直滚动
+            for _ in range(3):
+                actions.append({"type": "scroll", "direction": "down"})
+                actions.append({"type": "wait", "milliseconds": 1500})
         
         payload = {
             "url": url,
@@ -486,7 +489,7 @@ class AaajiaoScraper:
         
         try:
             logger.info(f"   正在执行 Scrape + Actions (共 {len(actions)} 步)...")
-            resp = requests.post(endpoint, json=payload, headers=headers, timeout=120)
+            resp = requests.post(endpoint, json=payload, headers=headers, timeout=300)
             
             if resp.status_code != 200:
                 logger.error(f"Scrape 失败: {resp.status_code} - {resp.text[:200]}")
@@ -518,20 +521,34 @@ class AaajiaoScraper:
         soup = BeautifulSoup(html, 'html.parser')
         links = set()
         
-        # aaajiao 网站 (eventstructure.com) 特定的链接模式
-        # 通常是 /Title-of-Work 格式
+        # 经过分析，作品链接使用 'nohover' class，且位于 #content_container 内
+        # 示例: <a class="nohover" href="/Project-Name">Title</a>
+        # 我们使用精准的 CSS selector 来提取
         
-        for a_tag in soup.find_all('a', href=True):
-            href = a_tag['href']
+        # 1. 尝试使用精准 selector
+        artwork_links = soup.select('a.nohover')
+        
+        if not artwork_links:
+             # Fallback if class changes: search inside content container
+             container = soup.select_one('#content_container')
+             if container:
+                 artwork_links = container.find_all('a', href=True)
+             else:
+                 artwork_links = soup.find_all('a', href=True)
+                 
+        for a_tag in artwork_links:
+            href = a_tag.get('href')
+            if not href:
+                continue
+                
             full_url = urljoin(base_url, href)
             
-            # 过滤逻辑：只保留像是作品详情页的链接
-            # 排除首页、关于页等
-            if base_url in full_url and full_url != base_url:
-                # 排除常见非作品页面
-                if not any(x in full_url.lower() for x in ['contact', 'about', 'cv', 'text', 'press', 'index']):
+            # 过滤逻辑：再次确保不包含非作品页
+            if base_url in full_url:
+                # 排除常见非作品页面 (Double Check)
+                if not any(x in full_url.lower() for x in ['contact', 'about', 'cv', 'text', 'press', 'index', 'filter']):
                     links.add(full_url)
-                    
+                
         sorted_links = sorted(list(links))
         logger.info(f"   发现 {len(sorted_links)} 个潜在作品链接")
         return sorted_links
