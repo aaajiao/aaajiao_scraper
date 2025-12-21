@@ -1,0 +1,54 @@
+# Ruff configuration for aaajiao-scraper
+# Documentation: https://docs.astral.sh/ruff/
+
+line-length = 100
+target-version = "py39"
+
+extend-exclude = [
+    ".cache",
+    ".venv",
+    "agent_discovery_output",
+    "xxx",
+    "*.egg-info",
+]
+
+[lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "N",      # pep8-naming
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "SIM",    # flake8-simplify
+    "RUF",    # ruff-specific rules
+    "ANN",    # flake8-annotations (type hints)
+]
+
+ignore = [
+    "E501",     # line too long (handled by formatter)
+    "B008",     # do not perform function calls in argument defaults
+    "B905",     # zip without explicit strict parameter
+    "ANN101",   # missing type annotation for self
+    "ANN102",   # missing type annotation for cls
+    "ANN401",   # dynamically typed expressions (Any) are disallowed
+]
+
+[lint.per-file-ignores]
+"__init__.py" = ["F401", "F403"]  # imported but unused, wildcard imports
+"tests/**/*.py" = ["N802", "N803", "ANN"]  # test naming and annotations
+"scripts/**/*.py" = ["ANN"]  # scripts don't need strict annotations
+
+[lint.isort]
+known-first-party = ["scraper"]
+combine-as-imports = true
+
+[lint.pydocstyle]
+convention = "google"
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"

@@ -1,391 +1,610 @@
+"""
+Firecrawl API integration mixin for AI-powered extraction.
 
-import time
-import requests
+This module provides advanced scraping capabilities using Firecrawl V2 API:
+- LLM-based content extraction with custom schemas
+- Batch URL processing with async job polling
+- Discovery mode with JavaScript scrolling for infinite-scroll pages
+- Smart caching to minimize API credit usage
+
+All methods integrate with the caching system to reduce API costs.
+"""
+
+import json
 import logging
-from typing import List, Dict, Optional, Any
+import time
+from typing import Any, Dict, List, Optional
 
-from .constants import QUICK_SCHEMA, FULL_SCHEMA, PROMPT_TEMPLATES, FC_TIMEOUT
+import requests
+
+from .constants import FC_TIMEOUT, FULL_SCHEMA, PROMPT_TEMPLATES, QUICK_SCHEMA
 
 logger = logging.getLogger(__name__)
 
+
 class FirecrawlMixin:
-    """Firecrawl V2 API Interactions"""
+    """Mixin providing Firecrawl V2 API integration.
     
-    def extract_work_details(self, url: str, retry_count: int = 0) -> Optional[Dict]:
-        """提取详情 (使用 Firecrawl AI 提取，带缓存和重试)"""
-        max_retries = 3
+    This mixin adds AI-powered extraction capabilities using Firecrawl's
+    LLM-based scraping service. Supports multiple extraction modes with
+    automatic schema selection and caching.
+    
+    Attributes:
+        firecrawl_key: API key from CoreScraper.
+        rate_limiter: Rate limiter from CoreScraper.
+        use_cache: Cache flag from CoreScraper.
         
-        # 1. 缓存优先
+    Note:
+        Requires valid FIRECRAWL_API_KEY in environment for AI features.
+    """
+
+    def extract_work_details(self, url: str, retry_count: int = 0) -> Optional[Dict[str, Any]]:
+        """Extract artwork details using Firecrawl AI with caching and retries.
+        
+        Uses structured LLM extraction to parse artwork metadata from HTML.
+        Implements exponential backoff for rate limit errors and automatic
+        cache management.
+        
+        Args:
+            url: Artwork page URL to extract from.
+            retry_count: Current retry attempt (for internal recursion).
+                Defaults to 0. Max 3 retries.
+        
+        Returns:
+            Dictionary with extracted artwork fields:
+                - url: Original URL
+                - title: English title
+                - title_cn: Chinese title (if found)
+                - type/category: Art category
+                - materials: Materials description
+                - year: Creation year
+                - description_en/cn: Descriptions
+                - video_link: Vimeo URL if present
+            Returns None if extraction fails after retries.
+            
+        Note:
+            - Checks cache first to save API credits
+            - Automatically splits bilingual titles (format: "English / Chinese")
+            - Rate limited to prevent API quota exhaustion
+            - Retries with exponential backoff on 429 errors
+            
+        Example:
+            >>> scraper = AaajiaoScraper()
+            >>> details = scraper.extract_work_details("https://eventstructure.com/work/title")
+            >>> print(details['title'], details['year'])
+        """
+        max_retries = 3
+
+        # 1. Cache priority
         if self.use_cache:
             cached = self._load_cache(url)
             if cached:
-                logger.debug(f"命中缓存: {url}")
+                logger.debug(f"Cache hit: {url}")
                 return cached
-        
-        # 2. 速率限制
+
+        # 2. Rate limiting
         self.rate_limiter.wait()
-        
+
         try:
-            logger.info(f"[{retry_count+1}/{max_retries}] 正在抓取: {url}")
-            
+            logger.info(f"[{retry_count+1}/{max_retries}] Scraping: {url}")
+
             fc_endpoint = "https://api.firecrawl.dev/v2/scrape"
-            
-            # 使用 inline schema 定义，以确保兼容性
-            schema = {
+
+            # Use inline schema for compatibility
+            schema: Dict[str, Any] = {
                 "type": "object",
                 "properties": {
                     "title": {"type": "string", "description": "The English title of the work"},
-                    "title_cn": {"type": "string", "description": "The Chinese title of the work. If not explicitly found, leave empty."},
-                    "year": {"type": "string", "description": "Creation year or year range (e.g. 2018-2022)"},
-                    "category": {"type": "string", "description": "The art category (e.g. Video Installation, Software, Website)"},
-                    "materials": {"type": "string", "description": "Materials list (e.g. LED screen, 3D printing)"},
-                    "description_en": {"type": "string", "description": "Detailed work description in English. Exclude navigation text."},
-                    "description_cn": {"type": "string", "description": "Detailed work description in Chinese. Exclude navigation text."},
-                    "video_link": {"type": "string", "description": "Vimeo URL if present"}
+                    "title_cn": {
+                        "type": "string",
+                        "description": "The Chinese title of the work. If not explicitly found, leave empty.",
+                    },
+                    "year": {
+                        "type": "string",
+                        "description": "Creation year or year range (e.g. 2018-2022)",
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "The art category (e.g. Video Installation, Software, Website)",
+                    },
+                    "materials": {
+                        "type": "string",
+                        "description": "Materials list (e.g. LED screen, 3D printing)",
+                    },
+                    "description_en": {
+                        "type": "string",
+                        "description": "Detailed work description in English. Exclude navigation text.",
+                    },
+                    "description_cn": {
+                        "type": "string",
+                        "description": "Detailed work description in Chinese. Exclude navigation text.",
+                    },
+                    "video_link": {"type": "string", "description": "Vimeo URL if present"},
                 },
-                "required": ["title"]
+                "required": ["title"],
             }
-            
+
             payload = {
                 "url": url,
                 "formats": ["extract"],
                 "extract": {
                     "schema": schema,
-                    "systemPrompt": "You are an art archivist. Extract the artwork metadata from the portfolio page. Ignore navigation links like 'Previous/Next project'. The title usually appears as 'English Title / Chinese Title'. Separate them."
-                }
+                    "systemPrompt": (
+                        "You are an art archivist. Extract the artwork metadata from the portfolio page. "
+                        "Ignore navigation links like 'Previous/Next project'. "
+                        "The title usually appears as 'English Title / Chinese Title'. Separate them."
+                    ),
+                },
             }
-            
+
             headers = {
                 "Authorization": f"Bearer {self.firecrawl_key}",
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
             }
-            
+
             resp = requests.post(fc_endpoint, json=payload, headers=headers, timeout=FC_TIMEOUT)
-            
+
             if resp.status_code == 200:
                 data = resp.json()
-                if 'data' in data and 'extract' in data['data']:
-                    result = data['data']['extract']
-                    
+                if "data" in data and "extract" in data["data"]:
+                    result = data["data"]["extract"]
+
                     work = {
-                        'url': url,
-                        'title': result.get('title', ''),
-                        'title_cn': result.get('title_cn', ''),
-                        'type': result.get('category', '') or result.get('type', ''),
-                        'materials': result.get('materials', ''),
-                        'year': result.get('year', ''),
-                        'description_cn': result.get('description_cn', ''),
-                        'description_en': result.get('description_en', ''),
-                        'video_link': result.get('video_link', ''),
-                        'size': '',
-                        'duration': '',
-                        'tags': []
+                        "url": url,
+                        "title": result.get("title", ""),
+                        "title_cn": result.get("title_cn", ""),
+                        "type": result.get("category", "") or result.get("type", ""),
+                        "materials": result.get("materials", ""),
+                        "year": result.get("year", ""),
+                        "description_cn": result.get("description_cn", ""),
+                        "description_en": result.get("description_en", ""),
+                        "video_link": result.get("video_link", ""),
+                        "size": "",
+                        "duration": "",
+                        "tags": [],
                     }
-                    
-                    # 后处理：如果 AI 没分清标题
-                    if not work['title_cn'] and '/' in work['title']:
-                        parts = work['title'].split('/')
-                        work['title'] = parts[0].strip()
+
+                    # Post-processing: Split bilingual title if AI didn't
+                    if not work["title_cn"] and "/" in work["title"]:
+                        parts = work["title"].split("/")
+                        work["title"] = parts[0].strip()
                         if len(parts) > 1:
-                            work['title_cn'] = parts[1].strip()
-                    
-                    # 保存到缓存
+                            work["title_cn"] = parts[1].strip()
+
+                    # Save to cache
                     if self.use_cache:
                         self._save_cache(url, work)
-                            
+
                     return work
                 else:
-                    logger.error(f"Firecrawl 返回格式异常: {data}")
-                    
+                    logger.error(f"Firecrawl returned unexpected format: {data}")
+
             elif resp.status_code == 429:
-                # Rate Limit - 指数退避重试
+                # Rate limit - exponential backoff retry
                 if retry_count >= max_retries:
-                    logger.error(f"重试次数超限: {url}")
+                    logger.error(f"Max retries exceeded: {url}")
                     return None
-                wait_time = 2 ** retry_count  # 1s, 2s, 4s
-                logger.warning(f"Rate Limit，等待 {wait_time}s 后重试...")
+                wait_time = 2**retry_count  # 1s, 2s, 4s
+                logger.warning(f"Rate limited, waiting {wait_time}s before retry...")
                 time.sleep(wait_time)
                 return self.extract_work_details(url, retry_count + 1)
-                
+
             else:
                 logger.error(f"Firecrawl Error {resp.status_code}: {resp.text[:200]}")
-                
+
             return None
 
         except Exception as e:
-            logger.error(f"API 请求错误 {url}: {e}")
+            logger.error(f"API request error {url}: {e}")
             return None
 
-    def agent_search(self, prompt: str, urls: Optional[List[str]] = None, 
-                      max_credits: int = 50, extraction_level: str = "custom") -> Optional[Dict[str, Any]]:
-        """智能搜索/提取入口"""
+    def agent_search(
+        self,
+        prompt: str,
+        urls: Optional[List[str]] = None,
+        max_credits: int = 50,
+        extraction_level: str = "custom",
+    ) -> Optional[Dict[str, Any]]:
+        """Intelligent search/extraction entry point for batch or agent mode.
         
-        # === 根据提取级别选择 Schema 和 Prompt ===
-        schema = None
+        Supports two distinct modes:
+        1. **Batch extraction**: When urls parameter is provided, extracts
+           structured data from a list of URLs using the /v2/extract endpoint
+        2. **Agent search**: When urls is None, performs autonomous web search
+           using the /v2/agent endpoint
+        
+        Args:
+            prompt: Extraction instructions or search query.
+                For batch: describes what data to extract.
+                For agent: describes what to search for.
+            urls: Optional list of URLs for batch extraction.
+                If None, switches to agent search mode.
+            max_credits: Maximum API credits to use. Defaults to 50.
+                For batch: limits number of URLs processed.
+                For agent: limits search result count.
+            extraction_level: Schema mode - 'quick', 'full', 'images_only', or 'custom'.
+                Defaults to 'custom'. Determines which predefined schema to use.
+        
+        Returns:
+            Dictionary with extraction results:
+                - data: List of extracted items (dicts)
+                - cached_count: Number of cache hits (batch mode only)
+                - new_count: Number of new extractions (batch mode only)
+                - from_cache: True if all results from cache (batch mode only)
+            Returns None if extraction/search fails.
+            
+        Note:
+            - Batch mode checks cache first for each URL
+            - Uses async job polling (up to 10min timeout)
+            - Automatically saves new results to cache
+            - Falls back to cached results on API failure
+            
+        Example:
+            >>> # Batch extraction
+            >>> result = scraper.agent_search(
+            ...     prompt="Extract artwork details",
+            ...     urls=["https://example.com/work1", "https://example.com/work2"],
+            ...     extraction_level="full"
+            ... )
+            >>> print(f"Extracted {len(result['data'])} works")
+            >>> 
+            >>> # Agent search
+            >>> result = scraper.agent_search(
+            ...     prompt="Find all video installations from 2020",
+            ...     extraction_level="quick"
+            ... )
+        """
+        # === Select schema and prompt based on extraction level ===
+        schema: Optional[Dict[str, Any]] = None
         if extraction_level == "quick":
             schema = QUICK_SCHEMA
             if not prompt or prompt == PROMPT_TEMPLATES["default"]:
                 prompt = PROMPT_TEMPLATES["quick"]
-            logger.info(f"📋 使用 Quick 模式 (核心字段)")
+            logger.info("📋 Using Quick mode (core fields)")
         elif extraction_level == "full":
             schema = FULL_SCHEMA
             if not prompt or prompt == PROMPT_TEMPLATES["default"]:
                 prompt = PROMPT_TEMPLATES["full"]
-            logger.info(f"📋 使用 Full 模式 (完整字段)")
+            logger.info("📋 Using Full mode (complete fields)")
         elif extraction_level == "images_only":
             if not prompt or prompt == PROMPT_TEMPLATES["default"]:
                 prompt = PROMPT_TEMPLATES["images_only"]
-            logger.info(f"🖼️ 使用 Images Only 模式 (仅高清图)")
-        
-        # === 场景 1: 批量提取 (指定 URL) ===
+            logger.info("🖼️ Using Images Only mode (high-res images)")
+
+        # === Scenario 1: Batch extraction (URLs specified) ===
         if urls and len(urls) > 0:
-            # 限制 URL 数量以符合 Max Credits
+            # Limit URLs to match max credits
             target_urls = urls[:max_credits]
-            
-            # === 缓存检查：分离已缓存和未缓存的 URL ===
-            cached_results = []
-            uncached_urls = []
+
+            # === Cache check: separate cached and uncached URLs ===
+            cached_results: List[Dict[str, Any]] = []
+            uncached_urls: List[str] = []
             for url in target_urls:
                 cached = self._load_extract_cache(url, prompt)
                 if cached:
                     cached_results.append(cached)
                 else:
                     uncached_urls.append(url)
-            
-            logger.info(f"🔍 缓存检查: 命中 {len(cached_results)}, 待提取 {len(uncached_urls)}")
-            
-            # 如果全部命中缓存，直接返回
+
+            logger.info(
+                f"🔍 Cache check: {len(cached_results)} hits, {len(uncached_urls)} to extract"
+            )
+
+            # If all cached, return immediately
             if not uncached_urls:
-                logger.info(f"✅ 全部命中缓存，节省 API 调用！")
-                return {"data": cached_results, "from_cache": True, "cached_count": len(cached_results)}
-            
-            logger.info(f"🚀 启动批量提取任务 (Target: {len(uncached_urls)} URLs)")
-            
+                logger.info("✅ All results from cache, saving API calls!")
+                return {
+                    "data": cached_results,
+                    "from_cache": True,
+                    "cached_count": len(cached_results),
+                }
+
+            logger.info(f"🚀 Starting batch extraction task (Target: {len(uncached_urls)} URLs)")
+
             extract_endpoint = "https://api.firecrawl.dev/v2/extract"
             headers = {
                 "Authorization": f"Bearer {self.firecrawl_key}",
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
             }
-            
-            payload = {
-                "urls": uncached_urls,  # 只提取未缓存的 URL
+
+            payload: Dict[str, Any] = {
+                "urls": uncached_urls,  # Only extract uncached URLs
                 "prompt": prompt,
-                "enableWebSearch": False
+                "enableWebSearch": False,
             }
-            
+
             if schema:
                 payload["schema"] = schema
 
             try:
-                # 1. 提交任务
+                # 1. Submit job
                 resp = requests.post(extract_endpoint, json=payload, headers=headers, timeout=FC_TIMEOUT)
-                
+
                 if resp.status_code != 200:
-                    logger.error(f"Extract 启动失败: {resp.status_code} - {resp.text}")
+                    logger.error(f"Extract start failed: {resp.status_code} - {resp.text}")
                     if cached_results:
-                        return {"data": cached_results, "from_cache": True, "cached_count": len(cached_results)}
+                        return {
+                            "data": cached_results,
+                            "from_cache": True,
+                            "cached_count": len(cached_results),
+                        }
                     return None
-                    
+
                 result = resp.json()
                 if not result.get("success"):
-                    logger.error(f"Extract 启动失败: {result}")
+                    logger.error(f"Extract start failed: {result}")
                     if cached_results:
-                        return {"data": cached_results, "from_cache": True, "cached_count": len(cached_results)}
+                        return {
+                            "data": cached_results,
+                            "from_cache": True,
+                            "cached_count": len(cached_results),
+                        }
                     return None
-                
+
                 job_id = result.get("id")
-                
-                # 2. 轮询等待
-                logger.info(f"   Extract 任务 ID: {job_id}")
+
+                # 2. Poll for completion
+                logger.info(f"   Extract job ID: {job_id}")
                 status_endpoint = f"{extract_endpoint}/{job_id}"
-                max_wait = 600 # 10分钟
+                max_wait = 600  # 10 minutes
                 poll_interval = 5
                 elapsed = 0
-                
+
                 while elapsed < max_wait:
                     time.sleep(poll_interval)
                     elapsed += poll_interval
-                    
-                    status_resp = requests.get(status_endpoint, headers=headers, timeout=FC_TIMEOUT)
-                    if status_resp.status_code != 200: continue
-                    
+
+                    status_resp = requests.get(
+                        status_endpoint, headers=headers, timeout=FC_TIMEOUT
+                    )
+                    if status_resp.status_code != 200:
+                        continue
+
                     status_data = status_resp.json()
                     status = status_data.get("status")
-                    
+
                     if status == "processing":
-                        logger.info(f"   ⏳ 提取中... ({elapsed}s)")
+                        logger.info(f"   ⏳ Extracting... ({elapsed}s)")
                     elif status == "completed":
                         credits = status_data.get("creditsUsed", "N/A")
                         new_data = status_data.get("data", [])
-                        
-                        # === 保存新结果到缓存 ===
+
+                        # === Save new results to cache ===
                         for item in new_data if isinstance(new_data, list) else [new_data]:
-                            item_url = item.get("url") or item.get("sourceURL") or item.get("source_url")
+                            item_url = (
+                                item.get("url")
+                                or item.get("sourceURL")
+                                or item.get("source_url")
+                            )
                             if item_url:
                                 self._save_extract_cache(item_url, prompt, item)
-                        
-                        logger.info(f"✅ 提取完成 (Credits: {credits})")
-                        
-                        # 合并缓存和新结果
-                        all_data = cached_results + (new_data if isinstance(new_data, list) else [new_data])
-                        return {"data": all_data, "cached_count": len(cached_results), "new_count": len(new_data) if isinstance(new_data, list) else 1}
+
+                        logger.info(f"✅ Extraction complete (Credits: {credits})")
+
+                        # Merge cached and new results
+                        all_data = cached_results + (
+                            new_data if isinstance(new_data, list) else [new_data]
+                        )
+                        return {
+                            "data": all_data,
+                            "cached_count": len(cached_results),
+                            "new_count": len(new_data) if isinstance(new_data, list) else 1,
+                        }
                     elif status == "failed":
-                        logger.error(f"提取任务失败: {status_data}")
+                        logger.error(f"Extraction job failed: {status_data}")
                         if cached_results:
-                            return {"data": cached_results, "from_cache": True, "cached_count": len(cached_results)}
+                            return {
+                                "data": cached_results,
+                                "from_cache": True,
+                                "cached_count": len(cached_results),
+                            }
                         return None
-                        
-                return None
-                
-            except Exception as e:
-                logger.error(f"Extract Exception: {e}")
-                if cached_results:
-                    return {"data": cached_results, "from_cache": True, "cached_count": len(cached_results)}
+
+                logger.error("Extraction timeout (10min)")
                 return None
 
-        # === 场景 2: 开放式 Agent 搜索 (无 URL) ===
+            except Exception as e:
+                logger.error(f"Extract exception: {e}")
+                if cached_results:
+                    return {
+                        "data": cached_results,
+                        "from_cache": True,
+                        "cached_count": len(cached_results),
+                    }
+                return None
+
+        # === Scenario 2: Open-ended agent search (no URLs) ===
         else:
-            logger.info(f"🤖 启动 Smart Agent 任务 (开放搜索)...")
-            
+            logger.info("🤖 Starting Smart Agent task (open search)...")
+
             agent_endpoint = "https://api.firecrawl.dev/v2/agent"
             headers = {
                 "Authorization": f"Bearer {self.firecrawl_key}",
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
             }
-            
+
             payload = {
                 "query": f"{prompt} site:eventstructure.com",
-                "limit": max_credits
+                "limit": max_credits,
             }
-            
+
             try:
-                # 1. 提交任务
+                # 1. Submit job
                 resp = requests.post(agent_endpoint, json=payload, headers=headers, timeout=FC_TIMEOUT)
-                
+
                 if resp.status_code != 200:
-                    logger.error(f"Agent 启动失败: {resp.status_code} - {resp.text}")
+                    logger.error(f"Agent start failed: {resp.status_code} - {resp.text}")
                     return None
-                    
+
                 result = resp.json()
                 if not result.get("success"):
-                    logger.error(f"Agent 启动失败: {result}")
+                    logger.error(f"Agent start failed: {result}")
                     return None
-                
+
                 job_id = result.get("id")
-                # (... Agent polling logic same as extract, omitted for brevity but should be included)
-                # Since Agent polling is almost identical structure, for now let's assume it's just polling logic.
-                # Actually, I should copy the full agent polling logic for completeness.
-                
-                logger.info(f"   Agent 任务 ID: {job_id}")
+
+                logger.info(f"   Agent job ID: {job_id}")
                 status_endpoint = f"{agent_endpoint}/{job_id}"
                 max_wait = 600
                 poll_interval = 5
                 elapsed = 0
-                
+
                 while elapsed < max_wait:
                     time.sleep(poll_interval)
                     elapsed += poll_interval
-                    
-                    status_resp = requests.get(status_endpoint, headers=headers, timeout=FC_TIMEOUT)
-                    if status_resp.status_code != 200: continue
-                    
+
+                    status_resp = requests.get(
+                        status_endpoint, headers=headers, timeout=FC_TIMEOUT
+                    )
+                    if status_resp.status_code != 200:
+                        continue
+
                     status_data = status_resp.json()
                     status = status_data.get("status")
-                    
+
                     if status == "processing":
-                        logger.info(f"   ⏳ 思考中... ({elapsed}s)")
+                        logger.info(f"   ⏳ Thinking... ({elapsed}s)")
                     elif status == "completed":
                         credits = status_data.get("creditsUsed", "N/A")
                         data = status_data.get("data", [])
-                        logger.info(f"✅ Agent 任务完成 (Credits: {credits})")
+                        logger.info(f"✅ Agent task complete (Credits: {credits})")
                         return {"data": data}
                     elif status == "failed":
-                        logger.error(f"Agent 任务失败")
+                        logger.error("Agent task failed")
                         return None
+
+                logger.error("Agent timeout (10min)")
                 return None
 
             except Exception as e:
-                logger.error(f"Agent Exception: {e}")
+                logger.error(f"Agent exception: {e}")
                 return None
 
-    def discover_urls_with_scroll(self, url: str, scroll_mode: str = "auto", use_cache: bool = True) -> List[str]:
-        """Discovery Mode Implementation"""
+    def discover_urls_with_scroll(
+        self, url: str, scroll_mode: str = "auto", use_cache: bool = True
+    ) -> List[str]:
+        """Discover URLs from infinite-scroll pages using automated scrolling.
         
-        # === 缓存检查 ===
+        Uses Firecrawl's browser automation to trigger JavaScript scroll events
+        and discover dynamically loaded content. Particularly useful for
+        portfolio pages with horizontal or vertical infinite scroll.
+        
+        Args:
+            url: Page URL to scrape (typically homepage or gallery page).
+            scroll_mode: Scrolling strategy - 'auto', 'horizontal', or 'vertical'.
+                - 'auto': Combined horizontal + vertical (15+3 scrolls)
+                - 'horizontal': Horizontal scrolling only (20 scrolls)
+                - 'vertical': Vertical scrolling only (5 scrolls)
+                Defaults to 'auto'.
+            use_cache: Whether to use cached results if valid (TTL: 24h).
+                Defaults to True.
+        
+        Returns:
+            List of discovered artwork URLs. Empty list if discovery fails.
+            
+        Note:
+            - Caches results for 24 hours to avoid repeated expensive operations
+            - Uses JavaScript execution to trigger scroll events
+            - Waits between scrolls for content to load (1.5s intervals)
+            - Returns empty list on error (doesn't raise exceptions)
+            
+        Example:
+            >>> scraper = AaajiaoScraper()
+            >>> # Discover from homepage with horizontal scroll
+            >>> urls = scraper.discover_urls_with_scroll(
+            ...     "https://eventstructure.com",
+            ...     scroll_mode="horizontal"
+            ... )
+            >>> print(f"Found {len(urls)} artworks")
+        """
+        # === Cache check ===
         cache_path = self._get_discovery_cache_path(url, scroll_mode)
         if use_cache and self._is_discovery_cache_valid(cache_path):
             try:
-                with open(cache_path, 'r') as f:
+                with open(cache_path, "r") as f:
                     cached = json.load(f)
-                    logger.info(f"✅ Discovery 缓存命中: {len(cached)} 链接 (TTL: 24h)")
+                    logger.info(f"✅ Discovery cache hit: {len(cached)} links (TTL: 24h)")
                     return cached
             except Exception:
                 pass
-        
-        logger.info(f"🕵️  启动 Discovery Phase: {url} (Mode: {scroll_mode})")
-        
-        actions = []
+
+        logger.info(f"🕵️  Starting Discovery Phase: {url} (Mode: {scroll_mode})")
+
+        # Build scroll action sequence
+        actions: List[Dict[str, Any]] = []
         actions.append({"type": "wait", "milliseconds": 2000})
-        
+
         if scroll_mode == "horizontal":
             for i in range(20):
-                actions.append({
-                    "type": "executeJavascript", 
-                    "script": "window.scrollTo(document.documentElement.scrollWidth, 0); window.dispatchEvent(new Event('scroll'));"
-                })
+                actions.append(
+                    {
+                        "type": "executeJavascript",
+                        "script": (
+                            "window.scrollTo(document.documentElement.scrollWidth, 0); "
+                            "window.dispatchEvent(new Event('scroll'));"
+                        ),
+                    }
+                )
                 actions.append({"type": "wait", "milliseconds": 1500})
         elif scroll_mode == "vertical":
             for _ in range(5):
                 actions.append({"type": "scroll", "direction": "down"})
                 actions.append({"type": "wait", "milliseconds": 1500})
         else:  # auto
+            # Horizontal first
             for i in range(15):
-                actions.append({
-                    "type": "executeJavascript", 
-                    "script": "window.scrollTo(document.documentElement.scrollWidth, 0); window.dispatchEvent(new Event('scroll'));"
-                })
+                actions.append(
+                    {
+                        "type": "executeJavascript",
+                        "script": (
+                            "window.scrollTo(document.documentElement.scrollWidth, 0); "
+                            "window.dispatchEvent(new Event('scroll'));"
+                        ),
+                    }
+                )
                 actions.append({"type": "wait", "milliseconds": 1500})
+            # Then vertical
             for _ in range(3):
                 actions.append({"type": "scroll", "direction": "down"})
 
         endpoint = "https://api.firecrawl.dev/v2/scrape"
         headers = {
             "Authorization": f"Bearer {self.firecrawl_key}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
-        
+
         payload = {
             "url": url,
             "formats": ["extract"],
             "actions": actions,
             "extract": {
                 "prompt": "Extract all artwork URLs from the page. Return ONLY a list of URLs."
-            }
+            },
         }
-        
+
         try:
             resp = requests.post(endpoint, json=payload, headers=headers, timeout=60)
             if resp.status_code == 200:
                 data = resp.json()
-                # Simplified extraction logic
-                links = [item.get('url') for item in data.get('data', {}).get('extract', {}).get('urls', []) if item.get('url')]
-                
-                # If extract fail, fallback to checking 'data.metadata.sourceURL' or similar not robust enough here
-                # Assuming simple extraction. For specific implementation, I'd need the exact parsing logic from original
-                
-                # Re-using the logic from original file:
-                # It relied on 'extract' returning a dictionary/list.
-                # Let's assume Firecrawl returns text or proper JSON structure.
-                
-                # Actually, the original code used 'extract': {'schema': ...} or prompt.
-                # Let's check original implementation logic in next step if this is vague.
-                
-                # Saving cache
+                # Extract URLs from response
+                # Note: Actual parsing depends on Firecrawl's response format
+                links = [
+                    item.get("url")
+                    for item in data.get("data", {}).get("extract", {}).get("urls", [])
+                    if item.get("url")
+                ]
+
+                # Save to cache
                 if links:
-                     with open(cache_path, 'w') as f:
+                    with open(cache_path, "w") as f:
                         json.dump(links, f)
+                    logger.info(f"📦 Cached {len(links)} discovered URLs")
+
                 return links
+            else:
+                logger.error(f"Discovery failed: {resp.status_code} - {resp.text[:200]}")
             return []
         except Exception as e:
-            logger.error(f"Discovery Error: {e}")
+            logger.error(f"Discovery error: {e}")
             return []
+

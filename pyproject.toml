@@ -1,0 +1,213 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aaajiao-scraper"
+version = "5.3.0"
+description = "AI-powered portfolio scraper for aaajiao's works with multi-modal extraction"
+authors = [
+    {name = "aaajiao Scraper Contributors"}
+]
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+keywords = ["scraper", "web-scraping", "ai", "firecrawl", "portfolio"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "requests>=2.31.0",
+    "beautifulsoup4>=4.12.0",
+    "tqdm>=4.66.0",
+    "streamlit>=1.29.0",
+    "pandas>=2.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    # Testing
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+    "pytest-asyncio>=0.21.0",
+    
+    # Code Quality
+    "ruff>=0.1.0",
+    "black>=23.0.0",
+    "mypy>=1.7.0",
+    "isort>=5.12.0",
+    
+    # Type Stubs
+    "types-requests>=2.31.0",
+    "types-beautifulsoup4>=4.12.0",
+    "pandas-stubs>=2.0.0",
+]
+
+async = [
+    "aiohttp>=3.9.0",
+    "asyncio>=3.4.3",
+]
+
+config = [
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+]
+
+docs = [
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.4.0",
+    "mkdocstrings[python]>=0.24.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/aaajiao-scraper"
+Documentation = "https://github.com/yourusername/aaajiao-scraper#readme"
+Repository = "https://github.com/yourusername/aaajiao-scraper"
+Issues = "https://github.com/yourusername/aaajiao-scraper/issues"
+
+[project.scripts]
+aaajiao-scraper = "scraper.cli:main"
+
+# ==================
+# Tool Configurations
+# ==================
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["scraper*"]
+exclude = ["tests*", "scripts*"]
+
+[tool.setuptools.package-data]
+scraper = ["py.typed"]
+
+# ==================
+# Ruff Configuration
+# ==================
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+extend-exclude = [
+    ".cache",
+    ".venv",
+    "agent_discovery_output",
+    "xxx",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "N",      # pep8-naming
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "SIM",    # flake8-simplify
+    "RUF",    # ruff-specific rules
+]
+ignore = [
+    "E501",   # line too long (handled by black)
+    "B008",   # do not perform function calls in argument defaults
+    "B905",   # zip without explicit strict parameter
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # imported but unused
+"tests/**/*.py" = ["N802", "N803"]  # function/argument naming
+
+[tool.ruff.lint.isort]
+known-first-party = ["scraper"]
+
+# ==================
+# Black Configuration
+# ==================
+[tool.black]
+line-length = 100
+target-version = ['py39']
+extend-exclude = '''
+/(
+  | .cache
+  | .venv
+  | agent_discovery_output
+)/
+'''
+
+# ==================
+# MyPy Configuration
+# ==================
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false  # Start lenient, tighten over time
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = [
+    "streamlit.*",
+    "tqdm.*",
+]
+ignore_missing_imports = true
+
+# ==================
+# Pytest Configuration
+# ==================
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--cov=scraper",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-report=xml",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "requires_network: marks tests that require network access",
+    "requires_api_key: marks tests that require API key",
+]
+
+[tool.coverage.run]
+source = ["scraper"]
+omit = [
+    "*/tests/*",
+    "*/scripts/*",
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+precision = 2
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]

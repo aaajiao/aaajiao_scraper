@@ -1,21 +1,43 @@
+"""
+Configuration constants for the aaajiao portfolio scraper.
 
-# 提取 Schema 定义
+This module contains all configuration constants including:
+- JSON schemas for LLM extraction
+- Prompt templates for different extraction modes
+- URL and network configuration
+- Cache and API settings
+
+All constants are immutable and should not be modified at runtime.
+"""
+
+from typing import Any, Dict, Final
+
+# ====================
+# Extraction Schema Definitions
 # ====================
 
-# Quick 模式：仅提取核心字段，节省 credits
-QUICK_SCHEMA = {
+QUICK_SCHEMA: Final[Dict[str, Any]] = {
+    """JSON schema for quick extraction mode.
+    
+    Extracts only core fields to minimize API credits consumption (~20 credits per page).
+    Suitable for batch processing or initial discovery.
+    """
     "type": "object",
     "properties": {
         "title": {"type": "string", "description": "English title of the artwork"},
         "title_cn": {"type": "string", "description": "Chinese title if available"},
         "year": {"type": "string", "description": "Creation year or year range"},
         "category": {"type": "string", "description": "Art category (e.g. Video, Installation)"},
-        "has_images": {"type": "boolean", "description": "Whether the page contains images"}
-    }
+        "has_images": {"type": "boolean", "description": "Whether the page contains images"},
+    },
 }
 
-# Full 模式：完整字段提取
-FULL_SCHEMA = {
+FULL_SCHEMA: Final[Dict[str, Any]] = {
+    """JSON schema for full extraction mode.
+    
+    Extracts complete artwork details including descriptions, images, and metadata.
+    Higher API cost (~50 credits per page) but provides comprehensive data.
+    """
     "type": "object",
     "properties": {
         "title": {"type": "string", "description": "English title"},
@@ -27,32 +49,78 @@ FULL_SCHEMA = {
         "high_res_images": {
             "type": "array",
             "items": {"type": "string"},
-            "description": "High-res image URLs, prefer 'src_o' attribute"
+            "description": "High-res image URLs, prefer 'src_o' attribute",
         },
         "video_link": {"type": "string", "description": "Vimeo/YouTube URL if present"},
-        "materials": {"type": "string", "description": "Materials used in the artwork"}
-    }
+        "materials": {"type": "string", "description": "Materials used in the artwork"},
+    },
 }
 
-# Prompt 模板库
 # ====================
-PROMPT_TEMPLATES = {
-    "quick": "Extract basic artwork info: title (English and Chinese if available), year, and category. Return JSON only, no explanation.",
-    "full": "Extract complete artwork details including title, year, category, full descriptions in English and Chinese, materials, and all high-resolution image URLs (use 'src_o' attribute when available). Return JSON only.",
-    "images_only": "Extract all high-resolution image URLs from the page. Prioritize 'src_o' attributes for high-res versions. Exclude thumbnails and icons. Return as JSON array of URLs.",
-    "default": "Extract all text content from the page (title, description, metadata, full text). Also extract the URL of the first visible image (or main artwork image) and map it to the field 'image'. IMPORTANT: If the image has a 'src_o' attribute, extract that URL for high resolution."
-}
-
-# 通用配置
+# Prompt Templates
 # ====================
-BASE_URL = "https://eventstructure.com"
-SITEMAP_URL = "https://eventstructure.com/sitemap.xml"
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-}
-CACHE_DIR = ".cache"
 
-# API 配置
-MAX_WORKERS = 2
-TIMEOUT = 15
-FC_TIMEOUT = 30
+PROMPT_TEMPLATES: Final[Dict[str, str]] = {
+    """Pre-configured prompts for different extraction modes.
+    
+    Keys:
+        quick: Basic info extraction (title, year, category)
+        full: Complete details with descriptions and images
+        images_only: High-resolution image URLs only
+        default: General text content extraction
+    """
+    "quick": (
+        "Extract basic artwork info: title (English and Chinese if available), "
+        "year, and category. Return JSON only, no explanation."
+    ),
+    "full": (
+        "Extract complete artwork details including title, year, category, "
+        "full descriptions in English and Chinese, materials, and all high-resolution "
+        "image URLs (use 'src_o' attribute when available). Return JSON only."
+    ),
+    "images_only": (
+        "Extract all high-resolution image URLs from the page. "
+        "Prioritize 'src_o' attributes for high-res versions. "
+        "Exclude thumbnails and icons. Return as JSON array of URLs."
+    ),
+    "default": (
+        "Extract all text content from the page (title, description, metadata, full text). "
+        "Also extract the URL of the first visible image (or main artwork image) "
+        "and map it to the field 'image'. IMPORTANT: If the image has a 'src_o' attribute, "
+        "extract that URL for high resolution."
+    ),
+}
+
+# ====================
+# General Configuration
+# ====================
+
+BASE_URL: Final[str] = "https://eventstructure.com"
+"""Base URL for the aaajiao portfolio website."""
+
+SITEMAP_URL: Final[str] = "https://eventstructure.com/sitemap.xml"
+"""URL of the XML sitemap for discovering all artwork pages."""
+
+HEADERS: Final[Dict[str, str]] = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    )
+}
+"""HTTP headers for web requests to avoid bot detection."""
+
+CACHE_DIR: Final[str] = ".cache"
+"""Directory path for storing cached extraction results."""
+
+# ====================
+# API Configuration
+# ====================
+
+MAX_WORKERS: Final[int] = 2
+"""Maximum number of concurrent workers for parallel processing."""
+
+TIMEOUT: Final[int] = 15
+"""Default HTTP request timeout in seconds."""
+
+FC_TIMEOUT: Final[int] = 30
+"""Firecrawl API request timeout in seconds (longer due to LLM processing)."""

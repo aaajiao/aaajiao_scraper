@@ -1,32 +1,69 @@
+"""
+Core scraper components and utilities.
 
+This module provides the foundational classes for the aaajiao scraper:
+- RateLimiter: Thread-safe rate limiting for API calls
+- CoreScraper: Base scraper with session management and configuration
+
+All scraper mixins inherit from CoreScraper to share common functionality.
+"""
+
+import logging
 import os
 import time
-import logging
 from threading import Lock
-from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry
+from typing import Optional
+
 import requests
 from dotenv import load_dotenv
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
 
 from .constants import CACHE_DIR, HEADERS, MAX_WORKERS, TIMEOUT
 
-# 配置日志
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%H:%M:%S'
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
 
+
 class RateLimiter:
-    """线程安全的速率限制器"""
-    def __init__(self, calls_per_minute: int = 5):
-        self.interval = 60.0 / calls_per_minute
-        self.last_call = 0
-        self.lock = Lock()
+    """Thread-safe rate limiter for API calls.
     
-    def wait(self):
-        """等待直到允许下一次调用"""
+    Ensures that API calls respect rate limits by enforcing a minimum
+    time interval between consecutive calls.
+    
+    Attributes:
+        interval: Minimum time in seconds between calls.
+        last_call: Timestamp of the last API call.
+        lock: Thread lock for synchronization.
+        
+    Example:
+        >>> limiter = RateLimiter(calls_per_minute=10)
+        >>> limiter.wait()  # Blocks if called too soon
+        >>> # Make API call here
+    """
+
+    def __init__(self, calls_per_minute: int = 5) -> None:
+        """Initialize the rate limiter.
+        
+        Args:
+            calls_per_minute: Maximum number of calls allowed per minute.
+                Defaults to 5 calls/min (conservative).
+        """
+        self.interval: float = 60.0 / calls_per_minute
+        self.last_call: float = 0
+        self.lock: Lock = Lock()
+
+    def wait(self) -> None:
+        """Wait until the next call is allowed.
+        
+        This method blocks execution if insufficient time has passed
+        since the last call. Thread-safe for concurrent usage.
+        """
         with self.lock:
             elapsed = time.time() - self.last_call
             if elapsed < self.interval:
@@ -35,52 +72,110 @@ class RateLimiter:
                 time.sleep(sleep_time)
             self.last_call = time.time()
 
-class CoreScraper:
-    def __init__(self, use_cache: bool = True):
-        self.session = self._create_retry_session()
-        self.works = []
-        self.use_cache = use_cache
-        
-        # 加载 API Key
-        self.firecrawl_key = self._load_api_key()
-        
-        # 初始化速率限制器 (10 calls/min) - increased a bit
-        self.rate_limiter = RateLimiter(calls_per_minute=10)
-        
-        # 确保缓存目录存在
-        os.makedirs(CACHE_DIR, exist_ok=True)
-        
-        logger.info(f"Scraper 初始化完成 (缓存: {'开启' if use_cache else '关闭'})")
 
-    def _load_api_key(self) -> str:
-        """从环境变量或 .env 文件加载 API Key"""
+class CoreScraper:
+    """Base scraper class with session management and configuration.
+    
+    Provides core functionality shared by all scraper mixins:
+    - HTTP session with automatic retries
+    - API key management from environment variables
+    - Rate limiting for API calls
+    - Cache directory initialization
+    
+    Attributes:
+        session: Configured requests.Session with retry logic.
+        works: List of scraped artwork data.
+        use_cache: Whether to use cache for API responses.
+        firecrawl_key: Firecrawl API key from environment.
+        rate_limiter: RateLimiter instance for API calls.
+        
+    Example:
+        >>> scraper = CoreScraper(use_cache=True)
+        >>> scraper.session.get("https://example.com")
+    """
+
+    def __init__(self, use_cache: bool = True) -> None:
+        """Initialize the core scraper.
+        
+        Args:
+            use_cache: Enable caching of API responses. Defaults to True.
+                Set to False for fresh data without cache lookup.
+        """
+        self.session: requests.Session = self._create_retry_session()
+        self.works: list = []
+        self.use_cache: bool = use_cache
+
+        # Load API key from environment
+        self.firecrawl_key: Optional[str] = self._load_api_key()
+
+        # Initialize rate limiter (10 calls/min)
+        self.rate_limiter: RateLimiter = RateLimiter(calls_per_minute=10)
+
+        # Ensure cache directory exists
+        os.makedirs(CACHE_DIR, exist_ok=True)
+
+        logger.info(f"Scraper initialized (cache: {'enabled' if use_cache else 'disabled'})")
+
+    def _load_api_key(self) -> Optional[str]:
+        """Load Firecrawl API key from environment variables.
+        
+        Searches for FIRECRAWL_API_KEY in the following order:
+        1. Current environment variables
+        2. .env file in project root
+        
+        Returns:
+            API key string if found, None otherwise.
+            
+        Note:
+            Logs a warning if API key is not found. AI features
+            will be unavailable without a valid key.
+        """
         load_dotenv()
         key = os.getenv("FIRECRAWL_API_KEY")
+        
         if not key:
-            # 向上级目录查找 .env (兼容包结构)
-            env_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+            # Search for .env in parent directory (package compatibility)
+            env_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
             if os.path.exists(env_file):
                 load_dotenv(env_file)
                 key = os.getenv("FIRECRAWL_API_KEY")
-        
+
         if not key:
-            logger.warning("未找到 FIRECRAWL_API_KEY，AI 功能将不可用")
+            logger.warning("FIRECRAWL_API_KEY not found, AI features will be unavailable")
         else:
-            logger.info(f"API Key 加载成功 (长度: {len(key)})")
+            logger.info(f"API key loaded successfully (length: {len(key)})")
+        
         return key
 
-    def _create_retry_session(self, retries: int = 3, backoff_factor: float = 0.5):
-        """创建带重试机制的 Session"""
+    def _create_retry_session(
+        self, retries: int = 3, backoff_factor: float = 0.5
+    ) -> requests.Session:
+        """Create an HTTP session with automatic retry logic.
+        
+        Args:
+            retries: Maximum number of retry attempts for failed requests.
+                Defaults to 3.
+            backoff_factor: Multiplier for exponential backoff between retries.
+                Defaults to 0.5. Wait time is {backoff factor} * (2 ** retry_count).
+        
+        Returns:
+            Configured requests.Session with retry adapter and default headers.
+            
+        Note:
+            Retries are triggered for network errors and 5xx server errors.
+            The session includes a User-Agent header to avoid bot detection.
+        """
         session = requests.Session()
         retry = Retry(
             total=retries,
             read=retries,
             connect=retries,
             backoff_factor=backoff_factor,
-            status_forcelist=[500, 502, 503, 504]
+            status_forcelist=[500, 502, 503, 504],
         )
         adapter = HTTPAdapter(max_retries=retry)
-        session.mount('http://', adapter)
-        session.mount('https://', adapter)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
         session.headers.update(HEADERS)
         return session
+
