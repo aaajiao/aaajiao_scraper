@@ -65,6 +65,49 @@ class AaajiaoScraper:
     MAX_WORKERS = 2  # 降低并发数，配合速率控制
     TIMEOUT = 15
     FC_TIMEOUT = 30  # Firecrawl 专用超时
+    CACHE_DIR = ".cache"
+    
+    # ==================== 提取 Schema 定义 ====================
+    # Quick 模式：仅提取核心字段，节省 credits
+    QUICK_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string", "description": "English title of the artwork"},
+            "title_cn": {"type": "string", "description": "Chinese title if available"},
+            "year": {"type": "string", "description": "Creation year or year range"},
+            "type": {"type": "string", "description": "Art category (e.g. Video, Installation)"},
+            "has_images": {"type": "boolean", "description": "Whether the page contains images"}
+        }
+    }
+    
+    # Full 模式：完整字段提取
+    FULL_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string", "description": "English title"},
+            "title_cn": {"type": "string", "description": "Chinese title"},
+            "year": {"type": "string", "description": "Creation year"},
+            "type": {"type": "string", "description": "Art category"},
+            "description_en": {"type": "string", "description": "Full English description"},
+            "description_cn": {"type": "string", "description": "Full Chinese description"},
+            "high_res_images": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "High-res image URLs, prefer 'src_o' attribute"
+            },
+            "video_link": {"type": "string", "description": "Vimeo/YouTube URL if present"},
+            "materials": {"type": "string", "description": "Materials used in the artwork"}
+        }
+    }
+    
+    # ==================== Prompt 模板库 ====================
+    PROMPT_TEMPLATES = {
+        "quick": "Extract basic artwork info: title (English and Chinese if available), year, and type. Return JSON only, no explanation.",
+        "full": "Extract complete artwork details including title, year, type, full descriptions in English and Chinese, materials, and all high-resolution image URLs (use 'src_o' attribute when available). Return JSON only.",
+        "images_only": "Extract all high-resolution image URLs from the page. Prioritize 'src_o' attributes for high-res versions. Exclude thumbnails and icons. Return as JSON array of URLs.",
+        "default": "Extract all text content from the page (title, description, metadata, full text). Also extract the URL of the first visible image (or main artwork image) and map it to the field 'image'. IMPORTANT: If the image has a 'src_o' attribute, extract that URL for high resolution."
+    }
+
 
     def __init__(self, use_cache: bool = True):
         self.session = self._create_retry_session()
@@ -119,31 +162,91 @@ class AaajiaoScraper:
         session.headers.update(self.HEADERS)
         return session
 
-    def get_all_work_links(self) -> List[str]:
-        """从 Sitemap 获取所有作品链接"""
+    def get_all_work_links(self, incremental: bool = False) -> List[str]:
+        """
+        从 Sitemap 获取所有作品链接
+        
+        Args:
+            incremental: 是否只返回更新/新增的链接
+        
+        Returns:
+            有效作品链接列表
+        """
         logger.info(f"正在读取 Sitemap: {self.SITEMAP_URL}")
         try:
             response = self.session.get(self.SITEMAP_URL, timeout=self.TIMEOUT)
             response.raise_for_status()
             
-            # 简单的 XML 解析 (避免引入 lxml 依赖)
-            soup = BeautifulSoup(response.content, 'html.parser') # xml parser needs lxml usually, html.parser handles basic tags ok
+            soup = BeautifulSoup(response.content, 'html.parser')
             
-            links = []
-            for loc in soup.find_all('loc'):
-                url = loc.get_text().strip()
-                if self._is_valid_work_link(url):
-                    links.append(url)
+            # 解析 URL 和 lastmod
+            current_sitemap = {}  # {url: lastmod}
+            raw_urls = soup.find_all('url')
+            logger.info(f"Sitemap raw url tags found: {len(raw_urls)}")
             
-            # 去重
-            links = sorted(list(set(links)))
-            logger.info(f"Sitemap 中找到 {len(links)} 个有效作品链接")
-            return links
+            for url_tag in raw_urls:
+                loc = url_tag.find('loc')
+                lastmod = url_tag.find('lastmod')
+                if loc:
+                    url = loc.get_text().strip()
+                    if self._is_valid_work_link(url):
+                        current_sitemap[url] = lastmod.get_text().strip() if lastmod else ""
+                    else:
+                        # logger.debug(f"Filtered: {url}") # Optional: log filtered
+                        pass
+            
+            logger.info(f"Sitemap 中找到 {len(current_sitemap)} 个有效作品链接 (Filtered from {len(raw_urls)})")
+            
+            if not incremental:
+                # 全量模式：保存缓存后返回所有链接
+                self._save_sitemap_cache(current_sitemap)
+                return sorted(list(current_sitemap.keys()))
+            
+            # 增量模式：比较缓存
+            cached_sitemap = self._load_sitemap_cache()
+            changed_urls = []
+            
+            for url, lastmod in current_sitemap.items():
+                if url not in cached_sitemap:
+                    # 新增 URL
+                    changed_urls.append(url)
+                    logger.info(f"🆕 新增: {url}")
+                elif lastmod and lastmod != cached_sitemap.get(url, ""):
+                    # lastmod 变化
+                    changed_urls.append(url)
+                    logger.info(f"🔄 更新: {url} ({cached_sitemap.get(url)} → {lastmod})")
+            
+            if changed_urls:
+                logger.info(f"📊 增量检测: {len(changed_urls)} 个更新/新增")
+            else:
+                logger.info("✅ 没有检测到更新")
+            
+            # 保存新缓存
+            self._save_sitemap_cache(current_sitemap)
+            
+            return sorted(changed_urls)
             
         except Exception as e:
             logger.error(f"Sitemap 读取失败: {e}")
-            # Fallback to main page scan if sitemap fails
             return self._fallback_scan_main_page()
+    
+    def _load_sitemap_cache(self) -> Dict[str, str]:
+        """加载 sitemap lastmod 缓存"""
+        cache_path = os.path.join(self.CACHE_DIR, "sitemap_lastmod.json")
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except:
+                pass
+        return {}
+    
+    def _save_sitemap_cache(self, sitemap: Dict[str, str]):
+        """保存 sitemap lastmod 缓存"""
+        cache_path = os.path.join(self.CACHE_DIR, "sitemap_lastmod.json")
+        os.makedirs(self.CACHE_DIR, exist_ok=True)
+        with open(cache_path, 'w', encoding='utf-8') as f:
+            json.dump(sitemap, f, ensure_ascii=False, indent=2)
 
     def _fallback_scan_main_page(self):
         """备用方案：从主页扫描链接"""
@@ -323,6 +426,56 @@ class AaajiaoScraper:
         except Exception as e:
             logger.debug(f"缓存保存失败: {e}")
     
+    # ==================== Extract 缓存（v2/extract 专用）====================
+    
+    @property
+    def cache_dir(self) -> str:
+        """缓存目录路径"""
+        return os.path.join(os.path.dirname(__file__), '.cache')
+    
+    def _get_extract_cache_path(self, url: str, prompt_hash: str) -> str:
+        """生成 Extract 缓存路径（包含 prompt hash 防止不同 prompt 冲突）"""
+        url_hash = hashlib.md5(url.encode()).hexdigest()
+        return os.path.join(self.cache_dir, f"extract_{url_hash}_{prompt_hash[:8]}.pkl")
+    
+    def _load_extract_cache(self, url: str, prompt: str) -> Optional[Dict]:
+        """加载 Extract 缓存"""
+        prompt_hash = hashlib.md5(prompt.encode()).hexdigest()
+        cache_path = self._get_extract_cache_path(url, prompt_hash)
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, 'rb') as f:
+                    logger.debug(f"Extract 缓存命中: {url[:50]}...")
+                    return pickle.load(f)
+            except Exception:
+                pass
+        return None
+    
+    def _save_extract_cache(self, url: str, prompt: str, data: Dict):
+        """保存 Extract 缓存"""
+        prompt_hash = hashlib.md5(prompt.encode()).hexdigest()
+        cache_path = self._get_extract_cache_path(url, prompt_hash)
+        os.makedirs(self.cache_dir, exist_ok=True)
+        try:
+            with open(cache_path, 'wb') as f:
+                pickle.dump(data, f)
+        except Exception as e:
+            logger.debug(f"Extract 缓存保存失败: {e}")
+    
+    # ==================== Discovery 缓存（扫描结果持久化）====================
+    
+    def _get_discovery_cache_path(self, url: str, scroll_mode: str) -> str:
+        """生成 Discovery 缓存路径"""
+        url_hash = hashlib.md5(url.encode()).hexdigest()
+        return os.path.join(self.cache_dir, f"discovery_{url_hash}_{scroll_mode}.json")
+    
+    def _is_discovery_cache_valid(self, cache_path: str, ttl_hours: int = 24) -> bool:
+        """检查 Discovery 缓存是否有效（默认 24h TTL）"""
+        if not os.path.exists(cache_path):
+            return False
+        mtime = os.path.getmtime(cache_path)
+        return (time.time() - mtime) < (ttl_hours * 3600)
+    
     # ==================== 数据验证 ====================
     
     def validate_work(self, work: Dict) -> bool:
@@ -332,22 +485,32 @@ class AaajiaoScraper:
             return False
         return True
 
-    def scrape_all(self):
-        """抓取所有作品（带进度条和验证）"""
-        work_links = self.get_all_work_links()
+    def scrape_all(self, incremental: bool = False):
+        """
+        抓取所有作品（带进度条和验证）
+        
+        Args:
+            incremental: 增量模式，只抓取更新/新增的页面
+        """
+        work_links = self.get_all_work_links(incremental=incremental)
+        
+        if incremental and not work_links:
+            logger.info("✅ 增量模式：没有检测到更新，跳过抓取")
+            return 0, 0  # (valid_count, failed_count)
+        
         total = len(work_links)
         valid_count = 0
         failed_count = 0
         
-        logger.info(f"开始抓取 {total} 个作品...")
+        mode_label = "增量抓取" if incremental else "全量抓取"
+        logger.info(f"开始{mode_label} {total} 个作品...")
         
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.MAX_WORKERS) as executor:
             future_to_url = {executor.submit(self.extract_work_details, url): url for url in work_links}
             
-            # 使用 tqdm 进度条
             for future in tqdm(concurrent.futures.as_completed(future_to_url), 
                                total=total, 
-                               desc="抓取进度",
+                               desc=mode_label,
                                unit="作品"):
                 url = future_to_url[future]
                 try:
@@ -362,7 +525,7 @@ class AaajiaoScraper:
                     failed_count += 1
 
         logger.info(f"抓取完成！有效: {valid_count}/{total}, 失败: {failed_count}")
-        return self.works
+        return valid_count, failed_count
 
     def save_to_json(self, filename: str = 'aaajiao_works.json'):
         with open(filename, 'w', encoding='utf-8') as f:
@@ -417,17 +580,30 @@ class AaajiaoScraper:
 
     # ==================== Discovery Mode ====================
 
-    def discover_urls_with_scroll(self, url: str, scroll_mode: str = "auto") -> List[str]:
+    def discover_urls_with_scroll(self, url: str, scroll_mode: str = "auto", use_cache: bool = True) -> List[str]:
         """
         Phase 1: 使用 Scrape 模式 + 滚动动作去发现作品链接
         
         Args:
             url: 目标列表页 URL
             scroll_mode: 滚动模式 ("auto", "horizontal", "vertical")
+            use_cache: 是否使用缓存（默认 True，24h TTL）
             
         Returns:
             发现的作品 URL 列表
         """
+        
+        # === 缓存检查 ===
+        cache_path = self._get_discovery_cache_path(url, scroll_mode)
+        if use_cache and self._is_discovery_cache_valid(cache_path):
+            try:
+                with open(cache_path, 'r') as f:
+                    cached = json.load(f)
+                    logger.info(f"✅ Discovery 缓存命中: {len(cached)} 链接 (TTL: 24h)")
+                    return cached
+            except Exception:
+                pass
+        
         logger.info(f"🕵️  启动 Discovery Phase: {url} (Mode: {scroll_mode})")
         
         # 1. 配置滚动动作 (按照 Firecrawl 官方文档格式)
@@ -509,7 +685,19 @@ class AaajiaoScraper:
                 
             # 2. 从 HTML 提取链接
             logger.info(f"   获取到 HTML ({len(html_content)} chars)，正在提取链接...")
-            return self._extract_links_from_html(html_content, url)
+            found_links = self._extract_links_from_html(html_content, url)
+            
+            # === 保存到缓存 ===
+            if found_links and use_cache:
+                try:
+                    os.makedirs(self.cache_dir, exist_ok=True)
+                    with open(cache_path, 'w') as f:
+                        json.dump(found_links, f)
+                    logger.info(f"📝 Discovery 结果已缓存 ({len(found_links)} 链接)")
+                except Exception as e:
+                    logger.debug(f"Discovery 缓存保存失败: {e}")
+            
+            return found_links
             
         except Exception as e:
             logger.error(f"Discovery 异常: {e}")
@@ -557,21 +745,64 @@ class AaajiaoScraper:
 
     # ==================== Agent 模式 ====================
     
-    def agent_search(self, prompt: str, urls: Optional[List[str]] = None, max_credits: int = 50) -> Optional[Dict[str, Any]]:
+    def agent_search(self, prompt: str, urls: Optional[List[str]] = None, 
+                      max_credits: int = 50, extraction_level: str = "custom") -> Optional[Dict[str, Any]]:
         """
         智能搜索/提取入口
+        
+        Args:
+            prompt: 提取指令
+            urls: 要提取的 URL 列表（可选）
+            max_credits: 最大处理数量 / Agent 预算
+            extraction_level: 提取级别 - "quick"(核心字段), "full"(完整), "custom"(用户自定义)
         
         策略分离:
         1. 指定 URLs -> 使用 v2/extract 批量提取 -> 针对已知页面进行结构化/内容提取
         2. 无 URLs (开放查询) -> 使用 v2/agent -> 成本高 (自主调研)
         """
         
+        # === 根据提取级别选择 Schema 和 Prompt ===
+        schema = None
+        if extraction_level == "quick":
+            schema = self.QUICK_SCHEMA
+            if not prompt or prompt == self.PROMPT_TEMPLATES["default"]:
+                prompt = self.PROMPT_TEMPLATES["quick"]
+            logger.info(f"📋 使用 Quick 模式 (核心字段)")
+        elif extraction_level == "full":
+            schema = self.FULL_SCHEMA
+            if not prompt or prompt == self.PROMPT_TEMPLATES["default"]:
+                prompt = self.PROMPT_TEMPLATES["full"]
+            logger.info(f"📋 使用 Full 模式 (完整字段)")
+        elif extraction_level == "images_only":
+            if not prompt or prompt == self.PROMPT_TEMPLATES["default"]:
+                prompt = self.PROMPT_TEMPLATES["images_only"]
+            logger.info(f"🖼️ 使用 Images Only 模式 (仅高清图)")
+        # custom 模式使用用户提供的 prompt，不添加 schema
+        
         # === 场景 1: 批量提取 (指定 URL) ===
         if urls and len(urls) > 0:
             # 限制 URL 数量以符合 Max Credits
             target_urls = urls[:max_credits]
-            logger.info(f"🚀 启动批量提取任务 (Target: {len(target_urls)} URLs)")
-            logger.info(f"   Prompt: {prompt}")
+            
+            # === 缓存检查：分离已缓存和未缓存的 URL ===
+            cached_results = []
+            uncached_urls = []
+            for url in target_urls:
+                cached = self._load_extract_cache(url, prompt)
+                if cached:
+                    cached_results.append(cached)
+                else:
+                    uncached_urls.append(url)
+            
+            logger.info(f"🔍 缓存检查: 命中 {len(cached_results)}, 待提取 {len(uncached_urls)}")
+            
+            # 如果全部命中缓存，直接返回
+            if not uncached_urls:
+                logger.info(f"✅ 全部命中缓存，节省 API 调用！")
+                return {"data": cached_results, "from_cache": True, "cached_count": len(cached_results)}
+            
+            logger.info(f"🚀 启动批量提取任务 (Target: {len(uncached_urls)} URLs)")
+            logger.info(f"   Prompt: {prompt[:100]}...")
             
             extract_endpoint = "https://api.firecrawl.dev/v2/extract"
             headers = {
@@ -580,14 +811,14 @@ class AaajiaoScraper:
             }
             
             payload = {
-                "urls": target_urls,
+                "urls": uncached_urls,  # 只提取未缓存的 URL
                 "prompt": prompt,
                 "enableWebSearch": False
             }
             
-            # Check for high-res instruction
-            if "src_o" in prompt:
-                 pass
+            # 如果指定了 Schema，添加到 payload
+            if schema:
+                payload["schema"] = schema
 
             try:
                 # 1. 提交任务
@@ -595,17 +826,28 @@ class AaajiaoScraper:
                 
                 if resp.status_code != 200:
                     logger.error(f"Extract 启动失败: {resp.status_code} - {resp.text}")
+                    # 如果 API 调用失败但有缓存结果，返回缓存部分
+                    if cached_results:
+                        return {"data": cached_results, "from_cache": True, "cached_count": len(cached_results)}
                     return None
                     
                 result = resp.json()
                 if not result.get("success"):
                     logger.error(f"Extract 启动失败: {result}")
+                    if cached_results:
+                        return {"data": cached_results, "from_cache": True, "cached_count": len(cached_results)}
                     return None
                 
                 job_id = result.get("id")
                 if not job_id:
                      if result.get("status") == "completed":
-                         return result.get("data")
+                         new_data = result.get("data", [])
+                         # 保存新结果到缓存
+                         for item in new_data if isinstance(new_data, list) else [new_data]:
+                             item_url = item.get("url") or item.get("sourceURL") or item.get("source_url")
+                             if item_url:
+                                 self._save_extract_cache(item_url, prompt, item)
+                         return {"data": cached_results + (new_data if isinstance(new_data, list) else [new_data])}
                      return None
 
                 # 2. 轮询等待
@@ -629,17 +871,32 @@ class AaajiaoScraper:
                         logger.info(f"   ⏳ 提取中... ({elapsed}s)")
                     elif status == "completed":
                         credits = status_data.get("creditsUsed", "N/A")
-                        logger.info(f"✅ 提取完成 (Credits: {credits})")
-                        # Return 'data' field directly (which is a list of results for extract endpoint)
-                        return {"data": status_data.get("data")}
+                        new_data = status_data.get("data", [])
+                        
+                        # === 保存新结果到缓存 ===
+                        for item in new_data if isinstance(new_data, list) else [new_data]:
+                            item_url = item.get("url") or item.get("sourceURL") or item.get("source_url")
+                            if item_url:
+                                self._save_extract_cache(item_url, prompt, item)
+                                logger.debug(f"   💾 已缓存: {item_url[:50]}...")
+                        
+                        logger.info(f"✅ 提取完成 (Credits: {credits}, 新增缓存: {len(new_data) if isinstance(new_data, list) else 1})")
+                        
+                        # 合并缓存和新结果
+                        all_data = cached_results + (new_data if isinstance(new_data, list) else [new_data])
+                        return {"data": all_data, "cached_count": len(cached_results), "new_count": len(new_data) if isinstance(new_data, list) else 1}
                     elif status == "failed":
                         logger.error(f"提取任务失败: {status_data}")
+                        if cached_results:
+                            return {"data": cached_results, "from_cache": True, "cached_count": len(cached_results)}
                         return None
                         
                 return None
                 
             except Exception as e:
                 logger.error(f"Extract Exception: {e}")
+                if cached_results:
+                    return {"data": cached_results, "from_cache": True, "cached_count": len(cached_results)}
                 return None
 
         # === 场景 2: 开放式 Agent 搜索 (无 URL) ===
@@ -768,7 +1025,7 @@ class AaajiaoScraper:
                 
         return local_paths
     
-    def generate_agent_report(self, data: Dict[str, Any], output_dir: str, prompt: str = ""):
+    def generate_agent_report(self, data: Dict[str, Any], output_dir: str, prompt: str = "", extraction_level: str = "custom"):
         """
         根据 Agent 返回的数据生成 Markdown 报告和下载图片
         
@@ -776,96 +1033,115 @@ class AaajiaoScraper:
             data: Agent 返回的数据
             output_dir: 输出目录
             prompt: 用户输入的查询 prompt
+            extraction_level: 提取级别
         """
         from datetime import datetime
         
         os.makedirs(output_dir, exist_ok=True)
-        
-        # 生成时间戳
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         logger.info(f"📁 生成报告到: {output_dir}")
         
-        # 1. 提取图片 URL 并下载
-        image_urls = self._extract_image_urls(data)
-        local_images = []
+        # 解析数据列表
+        data_list = data.get("data", [data]) if isinstance(data, dict) else [data]
+        if not isinstance(data_list, list):
+            data_list = [data_list]
         
-        if image_urls:
-            logger.info(f"🖼️  找到 {len(image_urls)} 张图片，开始下载...")
-            local_images = self.download_images(image_urls, output_dir, timestamp=timestamp)
-            logger.info(f"✅ 成功下载 {len(local_images)} 张图片")
+        # 1. 创建图片目录并下载所有图片，建立 URL -> 本地路径映射
+        images_dir = f"images_{timestamp}"
+        images_path = os.path.join(output_dir, images_dir)
+        os.makedirs(images_path, exist_ok=True)
         
-        # 2. 生成 Markdown 报告（带时间戳文件名）
+        url_to_local = {}  # URL -> 相对路径映射
+        img_counter = 0
+        
+        for item in data_list:
+            if not isinstance(item, dict):
+                continue
+            images = item.get("high_res_images") or item.get("images") or []
+            for img_url in images:
+                if img_url in url_to_local:
+                    continue  # 已下载
+                img_counter += 1
+                try:
+                    ext = os.path.splitext(img_url.split("?")[0])[-1] or ".jpg"
+                    if not ext.startswith("."):
+                        ext = ".jpg"
+                    local_filename = f"{img_counter:02d}{ext}"
+                    local_path = os.path.join(images_path, local_filename)
+                    
+                    resp = requests.get(img_url, timeout=30)
+                    if resp.status_code == 200:
+                        with open(local_path, "wb") as f:
+                            f.write(resp.content)
+                        url_to_local[img_url] = f"{images_dir}/{local_filename}"
+                        logger.info(f"📥 下载图片 [{img_counter}]: {local_filename}")
+                except Exception as e:
+                    logger.warning(f"图片下载失败: {img_url[:50]}... - {e}")
+        
+        logger.info(f"✅ 成功下载 {len(url_to_local)} 张图片")
+        
+        # 2. 生成 Markdown 报告
         report_filename = f"report_{timestamp}.md"
         report_path = os.path.join(output_dir, report_filename)
         
         lines = []
         
-        # 标题
-        title = data.get('title', data.get('artwork_title', 'Untitled'))
-        if isinstance(title, str):
-            lines.append(f"# {title}\n\n")
-        
-        # 查询信息
-        lines.append(f"> **查询时间:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        if prompt:
-            lines.append(f"> **Prompt:** {prompt}\n")
+        # 报告头部
+        lines.append("# 作品提取报告\n\n")
+        lines.append(f"> **提取时间:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
+        lines.append(f"> **提取模式:** {extraction_level.upper()}\n")
+        lines.append(f"> **作品数量:** {len(data_list)}\n")
         lines.append("\n---\n\n")
         
-        # 元数据表格
-        metadata_fields = [
-            ('artist', '艺术家'),
-            ('year', '年份'),
-            ('artwork_type', '类型'),
-            ('type', '类型'),
-            ('materials', '材料'),
-            ('dimensions', '尺寸'),
-            ('duration', '时长'),
-        ]
-        
-        metadata_lines = []
-        for key, label in metadata_fields:
-            value = data.get(key)
-            if value and key != 'title':
-                metadata_lines.append(f"**{label}:** {value}")
-        
-        if metadata_lines:
-            lines.append("\n".join(metadata_lines))
-            lines.append("\n\n")
-        
-        # 图片
-        if local_images:
-            lines.append("## 图片\n\n")
-            for img_path in local_images:
-                lines.append(f"![{img_path}]({img_path})\n\n")
-        
-        # 描述/概念
-        for field in ['description', 'summary', 'concept', 'description_en', 'description_cn']:
-            value = data.get(field)
-            if value and isinstance(value, str):
-                lines.append(f"## 描述\n\n{value}\n\n")
-                break
-        
-        # 展览信息
-        exhibition = data.get('exhibition')
-        if exhibition and isinstance(exhibition, dict):
-            lines.append("## 展览信息\n\n")
-            for key, value in exhibition.items():
-                if value:
-                    lines.append(f"- **{key}:** {value}\n")
+        # 每个作品一个章节
+        for i, item in enumerate(data_list, 1):
+            if not isinstance(item, dict):
+                continue
+            
+            title = item.get("title", f"作品 {i}")
+            title_cn = item.get("title_cn", "")
+            year = item.get("year", "")
+            
+            if title_cn and title_cn != title:
+                lines.append(f"## {i}. {title} / {title_cn}\n\n")
+            else:
+                lines.append(f"## {i}. {title}\n\n")
+            
+            # 属性列表
+            if year:
+                lines.append(f"| 年份 | {year} |\n")
+            if item.get("type"):
+                lines.append(f"| 类型 | {item['type']} |\n")
+            if item.get("video_link"):
+                lines.append(f"| 视频 | [{item['video_link']}]({item['video_link']}) |\n")
+            if item.get("materials"):
+                lines.append(f"| 材料 | {item['materials']} |\n")
             lines.append("\n")
-        
-        # 其他字段（JSON 格式）
-        excluded = {'title', 'artist', 'year', 'artwork_type', 'type', 'materials', 
-                   'dimensions', 'duration', 'description', 'summary', 'concept',
-                   'description_en', 'description_cn', 'exhibition', 'image_urls', 'images'}
-        
-        other_data = {k: v for k, v in data.items() if k not in excluded and v}
-        if other_data:
-            lines.append("## 其他信息\n\n")
-            lines.append("```json\n")
-            lines.append(json.dumps(other_data, indent=2, ensure_ascii=False))
-            lines.append("\n```\n")
+            
+            # 描述
+            desc_en = item.get("description_en") or item.get("description", "")
+            desc_cn = item.get("description_cn", "")
+            
+            if desc_en or desc_cn:
+                lines.append("### Description / 描述\n\n")
+                if desc_en:
+                    lines.append(f"**English:**\n\n{desc_en}\n\n")
+                if desc_cn:
+                    lines.append(f"**中文:**\n\n{desc_cn}\n\n")
+            
+            # 图片（使用本地相对路径）
+            images = item.get("high_res_images") or item.get("images") or []
+            if images:
+                lines.append("### 图片\n\n")
+                for img_url in images[:6]:
+                    local_rel_path = url_to_local.get(img_url)
+                    if local_rel_path:
+                        lines.append(f"![]({local_rel_path})\n\n")
+                    else:
+                        lines.append(f"![]({img_url})\n\n")  # fallback to URL
+            
+            lines.append("---\n\n")
         
         # 写入文件
         with open(report_path, 'w', encoding='utf-8') as f:
@@ -873,14 +1149,14 @@ class AaajiaoScraper:
         
         logger.info(f"📄 Markdown 报告已生成: {report_path}")
         
-        # 同时保存原始 JSON（带时间戳）
+        # 同时保存原始 JSON
         json_filename = f"data_{timestamp}.json"
         json_path = os.path.join(output_dir, json_filename)
         
-        # 在 JSON 中也保存 prompt 信息
         output_data = {
             "_meta": {
                 "prompt": prompt,
+                "extraction_level": extraction_level,
                 "timestamp": datetime.now().isoformat(),
             },
             **data
