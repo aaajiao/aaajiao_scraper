@@ -416,6 +416,9 @@ with tab3:
             st.markdown(f"**预计消耗:** `{est_cost} credits`")
             
             disc_credits = st.slider("Batch Limit", 1, max(50, len(selected_urls)), len(selected_urls), key="disc_slider")
+            if disc_credits < len(selected_urls):
+                st.warning(f"⚠️ Limit ({disc_credits}) < Selected ({len(selected_urls)}). Only first {disc_credits} items will be processed.")
+
             disc_download = st.checkbox("Download Images / 下载图片", value=True, key="disc_img")
             
         if st.button("🤖 Batch Extract / 开始批量提取", disabled=len(selected_urls)==0, type="primary"):
@@ -426,17 +429,21 @@ with tab3:
                 final_prompt = disc_prompt
                 # 对于非 custom 模式，使用模板
                 if extraction_level != "custom":
-                    final_prompt = ""  # agent_search 会自动使用模板
+                    final_prompt = scraper.PROMPT_TEMPLATES.get(extraction_level, "")
                 elif disc_download and "image" not in disc_prompt.lower():
                     final_prompt += ". Also extract all image URLs."
                 
                 scraper = AaajiaoScraper()
-                result = scraper.agent_search(
-                    final_prompt, 
-                    urls=selected_urls, 
-                    max_credits=disc_credits,
-                    extraction_level=extraction_level
-                )
+                try:
+                    result = scraper.agent_search(
+                        final_prompt, 
+                        urls=selected_urls, 
+                        max_credits=disc_credits,
+                        extraction_level=extraction_level
+                    )
+                except Exception as e:
+                    st.error(f"❌ Task Failed: {str(e)}")
+                    result = None
                 
                 if result:
                     # 显示缓存统计

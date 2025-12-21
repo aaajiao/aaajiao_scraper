@@ -321,25 +321,27 @@ class FirecrawlMixin:
                 resp = requests.post(extract_endpoint, json=payload, headers=headers, timeout=FC_TIMEOUT)
 
                 if resp.status_code != 200:
-                    logger.error(f"Extract start failed: {resp.status_code} - {resp.text}")
+                    error_msg = f"Extract start failed: {resp.status_code} - {resp.text}"
+                    logger.error(error_msg)
                     if cached_results:
                         return {
                             "data": cached_results,
                             "from_cache": True,
                             "cached_count": len(cached_results),
                         }
-                    return None
+                    raise RuntimeError(error_msg)
 
                 result = resp.json()
                 if not result.get("success"):
-                    logger.error(f"Extract start failed: {result}")
+                    error_msg = f"Extract start failed: {result}"
+                    logger.error(error_msg)
                     if cached_results:
                         return {
                             "data": cached_results,
                             "from_cache": True,
                             "cached_count": len(cached_results),
                         }
-                    return None
+                    raise RuntimeError(error_msg)
 
                 job_id = result.get("id")
 
@@ -391,17 +393,25 @@ class FirecrawlMixin:
                             "new_count": len(new_data) if isinstance(new_data, list) else 1,
                         }
                     elif status == "failed":
-                        logger.error(f"Extraction job failed: {status_data}")
+                        error_msg = f"Extraction job failed: {status_data}"
+                        logger.error(error_msg)
                         if cached_results:
                             return {
                                 "data": cached_results,
                                 "from_cache": True,
                                 "cached_count": len(cached_results),
                             }
-                        return None
+                        raise RuntimeError(error_msg)
 
-                logger.error("Extraction timeout (10min)")
-                return None
+                error_msg = "Extraction timeout (10min)"
+                logger.error(error_msg)
+                if cached_results:
+                    return {
+                        "data": cached_results,
+                        "from_cache": True,
+                        "cached_count": len(cached_results),
+                    }
+                raise TimeoutError(error_msg)
 
             except Exception as e:
                 logger.error(f"Extract exception: {e}")
@@ -411,7 +421,7 @@ class FirecrawlMixin:
                         "from_cache": True,
                         "cached_count": len(cached_results),
                     }
-                return None
+                raise e
 
         # === Scenario 2: Open-ended agent search (no URLs) ===
         else:
@@ -433,13 +443,11 @@ class FirecrawlMixin:
                 resp = requests.post(agent_endpoint, json=payload, headers=headers, timeout=FC_TIMEOUT)
 
                 if resp.status_code != 200:
-                    logger.error(f"Agent start failed: {resp.status_code} - {resp.text}")
-                    return None
+                    raise RuntimeError(f"Agent start failed: {resp.status_code} - {resp.text}")
 
                 result = resp.json()
                 if not result.get("success"):
-                    logger.error(f"Agent start failed: {result}")
-                    return None
+                    raise RuntimeError(f"Agent start failed: {result}")
 
                 job_id = result.get("id")
 
@@ -470,15 +478,13 @@ class FirecrawlMixin:
                         logger.info(f"✅ Agent task complete (Credits: {credits})")
                         return {"data": data}
                     elif status == "failed":
-                        logger.error("Agent task failed")
-                        return None
+                        raise RuntimeError("Agent task failed")
 
-                logger.error("Agent timeout (10min)")
-                return None
+                raise TimeoutError("Agent timeout (10min)")
 
             except Exception as e:
                 logger.error(f"Agent exception: {e}")
-                return None
+                raise e
 
     def discover_urls_with_scroll(
         self, url: str, scroll_mode: str = "auto", use_cache: bool = True
