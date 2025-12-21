@@ -94,3 +94,4 @@ coverage.xml
 *.cover
 *.py,cover
 .hypothesis/
+firecrawl_test.py
