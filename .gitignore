@@ -41,6 +41,7 @@ env/
 # ====================
 .idea/
 .vscode/
+.cursorrules
 *.swp
 *.swo
 *~
