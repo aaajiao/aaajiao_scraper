@@ -1,8 +1,19 @@
+import os
 import requests
 import json
 import time
+from dotenv import load_dotenv
 
-API_KEY = "fc-c1f489eac53c4c149923c5f4ef6b3586"
+# Load env variables
+load_dotenv()
+
+API_KEY = os.getenv("FIRECRAWL_API_KEY")
+if not API_KEY:
+    print("Error: FIRECRAWL_API_KEY not found in environment variables.")
+    # Fallback for testing if env not set, but better to enforce env
+    # API_KEY = "..." 
+    pass
+
 URL = "https://eventstructure.com/Absurd-Reality-Check"
 
 headers = {
@@ -37,14 +48,17 @@ payload = {
 print(f"Testing Firecrawl on {URL}...")
 start = time.time()
 try:
-    response = requests.post("https://api.firecrawl.dev/v2/scrape", headers=headers, json=payload)
-    print(f"Status Code: {response.status_code}")
-    
-    if response.status_code == 200:
-        data = response.json()
-        print(json.dumps(data, indent=2, ensure_ascii=False))
+    if not API_KEY:
+         print("Skipping request due to missing API Key")
     else:
-        print("Error:", response.text)
+        response = requests.post("https://api.firecrawl.dev/v2/scrape", headers=headers, json=payload)
+        print(f"Status Code: {response.status_code}")
+        
+        if response.status_code == 200:
+            data = response.json()
+            print(json.dumps(data, indent=2, ensure_ascii=False))
+        else:
+            print("Error:", response.text)
 
 except Exception as e:
     print(f"Exception: {e}")
