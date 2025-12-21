@@ -127,15 +127,17 @@ class FirecrawlMixin:
 
             payload = {
                 "url": url,
-                "formats": ["extract"],
-                "extract": {
-                    "schema": schema,
-                    "systemPrompt": (
-                        "You are an art archivist. Extract the artwork metadata from the portfolio page. "
-                        "Ignore navigation links like 'Previous/Next project'. "
-                        "The title usually appears as 'English Title / Chinese Title'. Separate them."
-                    ),
-                },
+                "formats": [
+                    {
+                        "type": "json",
+                        "schema": schema,
+                        "prompt": (
+                            "You are an art archivist. Extract the artwork metadata from the portfolio page. "
+                            "Ignore navigation links like 'Previous/Next project'. "
+                            "The title usually appears as 'English Title / Chinese Title'. Separate them."
+                        ),
+                    }
+                ],
             }
 
             headers = {
@@ -147,8 +149,10 @@ class FirecrawlMixin:
 
             if resp.status_code == 200:
                 data = resp.json()
-                if "data" in data and "extract" in data["data"]:
-                    result = data["data"]["extract"]
+                # v2 API with formats: [{type: "json", ...}] returns data in data["data"]["json"]
+                json_data = data.get("data", {}).get("json")
+                if json_data:
+                    result = json_data
 
                     work = {
                         "url": url,
