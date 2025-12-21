@@ -450,7 +450,8 @@ with tab2:
     """)
     
     # Standardized Prompt
-    default_prompt = "Extract all text content from the page (title, description, metadata, full text). Also extract the URL of the first visible image (or main artwork image) and map it to the field 'image'. IMPORTANT: If the image has a 'src_o' attribute, extract that URL for high resolution."
+
+    default_prompt = ""
 
     # Input Area
     prompt = st.text_area(
