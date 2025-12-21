@@ -125,6 +125,7 @@ class ReportMixin:
         output_dir: str,
         prompt: str = "",
         extraction_level: str = "custom",
+        output_mode: str = "merged",  # "merged" | "split"
     ) -> str:
         """Generate detailed report from AI extraction results with image downloads.
         
@@ -142,9 +143,11 @@ class ReportMixin:
                 Created if doesn't exist.
             prompt: The extraction prompt used (for metadata). Defaults to "".
             extraction_level: Extraction mode (quick/full/custom). Defaults to "custom".
+            output_mode: Output format - 'merged' (one combined MD) or 'split' 
+                (one MD per artwork). Defaults to "merged".
         
         Returns:
-            Absolute path to the generated Markdown report file.
+            Absolute path to the generated Markdown report file (or directory for split mode).
             
         Note:
             - Downloads all high-resolution images to timestamped subdirectory
@@ -158,25 +161,103 @@ class ReportMixin:
             ...     result,
             ...     "output/extraction_20250121",
             ...     prompt="Extract artwork details",
-            ...     extraction_level="full"
+            ...     extraction_level="full",
+            ...     output_mode="split"
             ... )
         """
         os.makedirs(output_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        logger.info(f"📁 Generating report to: {output_dir}")
+        logger.info(f"📁 Generating report to: {output_dir} (mode: {output_mode})")
 
         # Parse data list
         data_list = data.get("data", [data]) if isinstance(data, dict) else [data]
         if not isinstance(data_list, list):
             data_list = [data_list]
 
-        # 1. Create image directory and download all images, build URL -> local path mapping
+        # === SPLIT MODE: One MD file per artwork ===
+        if output_mode == "split":
+            reports_generated = []
+            
+            for i, item in enumerate(data_list, 1):
+                if not isinstance(item, dict):
+                    continue
+                
+                title = item.get("title", f"artwork_{i}")
+                # Sanitize title for filename
+                safe_title = "".join(c if c.isalnum() or c in "-_ " else "_" for c in title)[:50]
+                item_dir = os.path.join(output_dir, f"{i:02d}_{safe_title}")
+                os.makedirs(item_dir, exist_ok=True)
+                
+                # Download images for this item
+                images_dir = "images"
+                images_path = os.path.join(item_dir, images_dir)
+                os.makedirs(images_path, exist_ok=True)
+                
+                url_to_local: Dict[str, str] = {}
+                images = item.get("high_res_images") or item.get("images") or []
+                for j, img_url in enumerate(images, 1):
+                    if img_url in url_to_local:
+                        continue
+                    try:
+                        ext = os.path.splitext(img_url.split("?")[0])[-1] or ".jpg"
+                        if not ext.startswith("."):
+                            ext = ".jpg"
+                        local_filename = f"{j:02d}{ext}"
+                        local_path = os.path.join(images_path, local_filename)
+                        
+                        resp = requests.get(img_url, timeout=30)
+                        if resp.status_code == 200:
+                            with open(local_path, "wb") as f:
+                                f.write(resp.content)
+                            url_to_local[img_url] = f"{images_dir}/{local_filename}"
+                            logger.info(f"📥 [{title[:20]}...] Downloaded: {local_filename}")
+                    except Exception as e:
+                        logger.warning(f"Image download failed: {img_url[:50]}... - {e}")
+                
+                # Generate individual MD file
+                report_path = os.path.join(item_dir, "report.md")
+                lines = self._generate_single_item_report(item, i, url_to_local, extraction_level)
+                
+                with open(report_path, "w", encoding="utf-8") as f:
+                    f.write("".join(lines))
+                
+                # Save item JSON
+                json_path = os.path.join(item_dir, "data.json")
+                with open(json_path, "w", encoding="utf-8") as f:
+                    json.dump(item, f, ensure_ascii=False, indent=2)
+                
+                reports_generated.append(report_path)
+                logger.info(f"📄 Generated: {report_path}")
+            
+            # Create index file
+            index_path = os.path.join(output_dir, f"index_{timestamp}.md")
+            index_lines = [
+                "# Artwork Extraction Report / 作品提取报告 (Split Mode)\n\n",
+                f"> **Extracted At / 提取时间:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n",
+                f"> **Mode / 提取模式:** {extraction_level.upper()}\n",
+                f"> **Total / 作品数量:** {len(data_list)}\n\n",
+                "## Contents / 目录\n\n",
+            ]
+            for i, item in enumerate(data_list, 1):
+                if isinstance(item, dict):
+                    title = item.get("title", f"作品 {i}")
+                    safe_title = "".join(c if c.isalnum() or c in "-_ " else "_" for c in title)[:50]
+                    index_lines.append(f"{i}. [{title}](./{i:02d}_{safe_title}/report.md)\n")
+            
+            with open(index_path, "w", encoding="utf-8") as f:
+                f.write("".join(index_lines))
+            
+            logger.info(f"✅ Split mode complete: {len(reports_generated)} files generated")
+            return index_path
+
+        # === MERGED MODE: One combined MD file (original behavior) ===
+        # 1. Create image directory and download all images
         images_dir = f"images_{timestamp}"
         images_path = os.path.join(output_dir, images_dir)
         os.makedirs(images_path, exist_ok=True)
 
-        url_to_local: Dict[str, str] = {}  # URL -> relative path mapping
+        url_to_local: Dict[str, str] = {}
         img_counter = 0
 
         for item in data_list:
@@ -185,10 +266,9 @@ class ReportMixin:
             images = item.get("high_res_images") or item.get("images") or []
             for img_url in images:
                 if img_url in url_to_local:
-                    continue  # Already downloaded
+                    continue
                 img_counter += 1
                 try:
-                    # Extract file extension
                     ext = os.path.splitext(img_url.split("?")[0])[-1] or ".jpg"
                     if not ext.startswith("."):
                         ext = ".jpg"
@@ -213,60 +293,17 @@ class ReportMixin:
         lines: List[str] = []
 
         # Report header
-        lines.append("# 作品提取报告\n\n")
-        lines.append(f"> **提取时间:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
-        lines.append(f"> **提取模式:** {extraction_level.upper()}\n")
-        lines.append(f"> **作品数量:** {len(data_list)}\n")
+        lines.append("# Artwork Extraction Report / 作品提取报告\n\n")
+        lines.append(f"> **Extracted At / 提取时间:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
+        lines.append(f"> **Mode / 提取模式:** {extraction_level.upper()}\n")
+        lines.append(f"> **Total / 作品数量:** {len(data_list)}\n")
         lines.append("\n---\n\n")
 
         # One section per artwork
         for i, item in enumerate(data_list, 1):
             if not isinstance(item, dict):
                 continue
-
-            title = item.get("title", f"作品 {i}")
-            title_cn = item.get("title_cn", "")
-            year = item.get("year", "")
-
-            if title_cn and title_cn != title:
-                lines.append(f"## {i}. {title} / {title_cn}\n\n")
-            else:
-                lines.append(f"## {i}. {title}\n\n")
-
-            # Metadata table
-            if year:
-                lines.append(f"| 年份 | {year} |\n")
-            if item.get("category") or item.get("type"):
-                lines.append(f"| 类型 | {item.get('category') or item.get('type')} |\n")
-            if item.get("video_link"):
-                lines.append(f"| 视频 | [{item['video_link']}]({item['video_link']}) |\n")
-            if item.get("materials"):
-                lines.append(f"| 材料 | {item['materials']} |\n")
-            lines.append("\n")
-
-            # Descriptions
-            desc_en = item.get("description_en") or item.get("description", "")
-            desc_cn = item.get("description_cn", "")
-
-            if desc_en or desc_cn:
-                lines.append("### Description / 描述\n\n")
-                if desc_en:
-                    lines.append(f"**English:**\n\n{desc_en}\n\n")
-                if desc_cn:
-                    lines.append(f"**中文:**\n\n{desc_cn}\n\n")
-
-            # Images (use local relative paths)
-            images = item.get("high_res_images") or item.get("images") or []
-            if images:
-                lines.append("### 图片\n\n")
-                for img_url in images[:6]:  # Limit to 6 images
-                    local_rel_path = url_to_local.get(img_url)
-                    if local_rel_path:
-                        lines.append(f"![]({local_rel_path})\n\n")
-                    else:
-                        lines.append(f"![]({img_url})\n\n")  # fallback to URL
-
-            lines.append("---\n\n")
+            lines.extend(self._generate_single_item_report(item, i, url_to_local, extraction_level))
 
         # Write to file
         with open(report_path, "w", encoding="utf-8") as f:
@@ -282,10 +319,10 @@ class ReportMixin:
             "_meta": {
                 "prompt": prompt,
                 "extraction_level": extraction_level,
+                "output_mode": output_mode,
                 "timestamp": datetime.now().isoformat(),
             },
             "data": data_list,
-            # Pass through stats if available in data
             "cached_count": data.get("cached_count", 0) if isinstance(data, dict) else 0,
             "new_count": data.get("new_count", 0) if isinstance(data, dict) else 0,
         }
@@ -296,4 +333,79 @@ class ReportMixin:
         logger.info(f"💾 JSON data saved: {json_path}")
 
         return report_path
+
+    def _generate_single_item_report(
+        self, 
+        item: Dict[str, Any], 
+        index: int, 
+        url_to_local: Dict[str, str],
+        extraction_level: str
+    ) -> List[str]:
+        """Generate report lines for a single artwork item.
+        
+        Args:
+            item: Artwork data dictionary.
+            index: Item index (1-based).
+            url_to_local: Mapping of remote image URLs to local paths.
+            extraction_level: The extraction mode used.
+            
+        Returns:
+            List of Markdown lines for this item.
+        """
+        lines: List[str] = []
+        
+        title = item.get("title", f"作品 {index}")
+        title_cn = item.get("title_cn", "")
+        year = item.get("year", "")
+
+        # Check for error items
+        if item.get("error"):
+            lines.append(f"## {index}. ❌ Extraction Failed / 提取失败: {title}\n\n")
+            lines.append(f"> **Error / 错误:** {item.get('error')}\n")
+            lines.append(f"> **URL / 链接:** [{item.get('url')}]({item.get('url')})\n\n")
+            lines.append("---\n\n")
+            return lines
+
+        if title_cn and title_cn != title:
+            lines.append(f"## {index}. {title} / {title_cn}\n\n")
+        else:
+            lines.append(f"## {index}. {title}\n\n")
+
+        # Metadata table
+        if year:
+            lines.append(f"| Year / 年份 | {year} |\n")
+        if item.get("category") or item.get("type"):
+            lines.append(f"| Type / 类型 | {item.get('category') or item.get('type')} |\n")
+        if item.get("video_link"):
+            lines.append(f"| Video / 视频 | [{item['video_link']}]({item['video_link']}) |\n")
+        if item.get("materials"):
+            lines.append(f"| Materials / 材料 | {item['materials']} |\n")
+        lines.append("\n")
+
+        # Descriptions
+        desc_en = item.get("description_en") or item.get("description", "")
+        desc_cn = item.get("description_cn", "")
+
+        if desc_en or desc_cn:
+            lines.append("### Description / 描述\n\n")
+            if desc_en:
+                lines.append(f"**English:**\n\n{desc_en}\n\n")
+            if desc_cn:
+                lines.append(f"**中文:**\n\n{desc_cn}\n\n")
+
+        # Images (use local relative paths)
+        images = item.get("high_res_images") or item.get("images") or []
+        if images:
+            lines.append("### Images / 图片\n\n")
+            for img_url in images[:6]:  # Limit to 6 images
+                local_rel_path = url_to_local.get(img_url)
+                if local_rel_path:
+                    if not local_rel_path.startswith("./"):
+                        local_rel_path = f"./{local_rel_path}"
+                    lines.append(f"![]({local_rel_path})\n\n")
+                else:
+                    lines.append(f"![]({img_url})\n\n")
+
+        lines.append("---\n\n")
+        return lines
 

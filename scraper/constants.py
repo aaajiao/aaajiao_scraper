@@ -16,30 +16,33 @@ from typing import Any, Dict, Final
 # Extraction Schema Definitions
 # ====================
 
+"""JSON schema for quick extraction mode.
+
+Extracts only core fields to minimize API credits consumption (~20 credits per page).
+Suitable for batch processing or initial discovery.
+"""
 QUICK_SCHEMA: Final[Dict[str, Any]] = {
-    """JSON schema for quick extraction mode.
-    
-    Extracts only core fields to minimize API credits consumption (~20 credits per page).
-    Suitable for batch processing or initial discovery.
-    """
     "type": "object",
     "properties": {
+        "url": {"type": "string", "description": "The URL of the page being scraped"},
         "title": {"type": "string", "description": "English title of the artwork"},
         "title_cn": {"type": "string", "description": "Chinese title if available"},
         "year": {"type": "string", "description": "Creation year or year range"},
         "category": {"type": "string", "description": "Art category (e.g. Video, Installation)"},
         "has_images": {"type": "boolean", "description": "Whether the page contains images"},
     },
+    "required": ["url", "title"],
 }
 
+"""JSON schema for full extraction mode.
+
+Extracts complete artwork details including descriptions, images, and metadata.
+Higher API cost (~50 credits per page) but provides comprehensive data.
+"""
 FULL_SCHEMA: Final[Dict[str, Any]] = {
-    """JSON schema for full extraction mode.
-    
-    Extracts complete artwork details including descriptions, images, and metadata.
-    Higher API cost (~50 credits per page) but provides comprehensive data.
-    """
     "type": "object",
     "properties": {
+        "url": {"type": "string", "description": "The URL of the page being scraped"},
         "title": {"type": "string", "description": "English title"},
         "title_cn": {"type": "string", "description": "Chinese title"},
         "year": {"type": "string", "description": "Creation year"},
@@ -54,29 +57,29 @@ FULL_SCHEMA: Final[Dict[str, Any]] = {
         "video_link": {"type": "string", "description": "Vimeo/YouTube URL if present"},
         "materials": {"type": "string", "description": "Materials used in the artwork"},
     },
+    "required": ["url", "title"],
 }
 
 # ====================
 # Prompt Templates
 # ====================
 
+"""Pre-configured prompts for different extraction modes.
+
+Keys:
+    quick: Basic info extraction (title, year, category)
+    full: Complete details with descriptions and images
+    images_only: High-resolution image URLs only
+    default: General text content extraction
+"""
 PROMPT_TEMPLATES: Final[Dict[str, str]] = {
-    """Pre-configured prompts for different extraction modes.
-    
-    Keys:
-        quick: Basic info extraction (title, year, category)
-        full: Complete details with descriptions and images
-        images_only: High-resolution image URLs only
-        default: General text content extraction
-    """
     "quick": (
-        "Extract basic artwork info: title (English and Chinese if available), "
-        "year, and category. Return JSON only, no explanation."
+        "Extract basic artwork info including THE URL OF THE PAGE, title (English/Chinese), "
+        "year, and category. Return JSON."
     ),
     "full": (
-        "Extract complete artwork details including title, year, category, "
-        "full descriptions in English and Chinese, materials, and all high-resolution "
-        "image URLs (use 'src_o' attribute when available). Return JSON only."
+        "Extract complete artwork details including THE URL, title, year, category, "
+        "full descriptions, materials, and high-res images (src_o). Return JSON."
     ),
     "images_only": (
         "Extract all high-resolution image URLs from the page. "

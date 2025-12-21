@@ -415,25 +415,37 @@ with tab3:
             est_cost = uncached_count * cost_per_url
             st.markdown(f"**预计消耗:** `{est_cost} credits`")
             
-            disc_credits = st.slider("Batch Limit", 1, max(50, len(selected_urls)), len(selected_urls), key="disc_slider")
+            disc_credits = st.slider("Batch Limit", 1, max(50, len(selected_urls)), len(selected_urls), key=f"disc_slider_{len(selected_urls)}")
             if disc_credits < len(selected_urls):
                 st.warning(f"⚠️ Limit ({disc_credits}) < Selected ({len(selected_urls)}). Only first {disc_credits} items will be processed.")
 
             disc_download = st.checkbox("Download Images / 下载图片", value=True, key="disc_img")
+            
+            # Output format selection
+            output_mode = st.radio(
+                "Output Format / 输出格式",
+                ["merged", "split"],
+                format_func=lambda x: {
+                    "merged": "📄 合并报告 (一个 MD 文件)",
+                    "split": "📁 独立文件 (每个 URL 一个 MD)"
+                }[x],
+                horizontal=True,
+                key="output_mode"
+            )
             
         if st.button("🤖 Batch Extract / 开始批量提取", disabled=len(selected_urls)==0, type="primary"):
             status_box = st.empty()
             with status_box.container():
                 st.info("🚀 Submitting Agent Task... / 正在提交 Agent 任务...")
                 
+                scraper = AaajiaoScraper()
+
                 final_prompt = disc_prompt
                 # 对于非 custom 模式，使用模板
                 if extraction_level != "custom":
                     final_prompt = scraper.PROMPT_TEMPLATES.get(extraction_level, "")
                 elif disc_download and "image" not in disc_prompt.lower():
                     final_prompt += ". Also extract all image URLs."
-                
-                scraper = AaajiaoScraper()
                 try:
                     result = scraper.agent_search(
                         final_prompt, 
@@ -500,8 +512,17 @@ with tab3:
                             st.json(result)
                     
                     if disc_download:
-                        scraper.generate_agent_report(result, "agent_discovery_output", prompt=final_prompt, extraction_level=extraction_level)
-                        st.info("📄 Report generated at: `agent_discovery_output/`")
+                        scraper.generate_agent_report(
+                            result, 
+                            "agent_discovery_output", 
+                            prompt=final_prompt, 
+                            extraction_level=extraction_level,
+                            output_mode=output_mode
+                        )
+                        if output_mode == "split":
+                            st.info("📁 Reports generated: `agent_discovery_output/` (每个作品一个目录)")
+                        else:
+                            st.info("📄 Report generated at: `agent_discovery_output/`")
                 else:
                     st.error("❌ Task Failed / 任务失败")
 

@@ -13,7 +13,8 @@ All methods integrate with the caching system to reduce API costs.
 import json
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
@@ -299,7 +300,7 @@ class FirecrawlMixin:
                     "cached_count": len(cached_results),
                 }
 
-            logger.info(f"🚀 Starting batch extraction task (Target: {len(uncached_urls)} URLs)")
+            logger.info(f"🚀 Starting concurrent extraction (Target: {len(uncached_urls)} URLs, Workers: 3)")
 
             extract_endpoint = "https://api.firecrawl.dev/v2/extract"
             headers = {
@@ -307,114 +308,108 @@ class FirecrawlMixin:
                 "Content-Type": "application/json",
             }
 
-            payload: Dict[str, Any] = {
-                "urls": uncached_urls,  # Only extract uncached URLs
-                "prompt": prompt,
-                "enableWebSearch": False,
-            }
+            def extract_single_url(url: str) -> Tuple[str, Optional[Dict[str, Any]]]:
+                """Extract data from a single URL with job polling."""
+                payload: Dict[str, Any] = {
+                    "urls": [url],  # Single URL
+                    "prompt": prompt,
+                    "enableWebSearch": False,
+                }
+                if schema:
+                    payload["schema"] = schema
 
-            if schema:
-                payload["schema"] = schema
+                try:
+                    # 1. Submit job
+                    resp = requests.post(extract_endpoint, json=payload, headers=headers, timeout=FC_TIMEOUT)
+                    
+                    if resp.status_code != 200:
+                        logger.error(f"❌ [{url[:50]}...] Submit failed: {resp.status_code}")
+                        return url, {"url": url, "title": "[Error: Submit Failed]", "error": f"HTTP {resp.status_code}"}
 
+                    result = resp.json()
+                    if not result.get("success"):
+                        logger.error(f"❌ [{url[:50]}...] API error: {result}")
+                        return url, {"url": url, "title": "[Error: API Failed]", "error": str(result)}
+
+                    job_id = result.get("id")
+                    status_endpoint = f"{extract_endpoint}/{job_id}"
+
+                    # 2. Poll for completion (max 3 min per URL)
+                    max_wait = 180
+                    poll_interval = 3
+                    elapsed = 0
+
+                    while elapsed < max_wait:
+                        time.sleep(poll_interval)
+                        elapsed += poll_interval
+
+                        status_resp = requests.get(status_endpoint, headers=headers, timeout=FC_TIMEOUT)
+                        if status_resp.status_code != 200:
+                            continue
+
+                        status_data = status_resp.json()
+                        status = status_data.get("status")
+
+                        if status == "completed":
+                            data = status_data.get("data", {})
+                            # Handle list or single object
+                            if isinstance(data, list):
+                                item = data[0] if data else {}
+                            else:
+                                item = data
+                            
+                            # Ensure URL is set
+                            if not item.get("url"):
+                                item["url"] = url
+                            
+                            # Validate: must have title or meaningful content
+                            if not item.get("title") and not item.get("description_en") and not item.get("images"):
+                                logger.warning(f"⚠️ [{url[:40]}...] Empty extraction result")
+                                item["title"] = "[Error: Empty Content]"
+                                item["error"] = "Extraction returned empty data"
+                            
+                            logger.info(f"✅ [{item.get('title', url)[:30]}...] Extracted")
+                            return url, item
+
+                        elif status == "failed":
+                            logger.error(f"❌ [{url[:50]}...] Job failed")
+                            return url, {"url": url, "title": "[Error: Job Failed]", "error": "Extraction job failed"}
+
+                    # Timeout
+                    logger.error(f"⏰ [{url[:50]}...] Timeout (3min)")
+                    return url, {"url": url, "title": "[Error: Timeout]", "error": "Extraction timeout"}
+
+                except Exception as e:
+                    logger.error(f"❌ [{url[:50]}...] Exception: {e}")
+                    return url, {"url": url, "title": "[Error: Exception]", "error": str(e)}
+
+            # === Concurrent execution with ThreadPoolExecutor ===
             try:
-                # 1. Submit job
-                resp = requests.post(extract_endpoint, json=payload, headers=headers, timeout=FC_TIMEOUT)
+                new_results: List[Dict[str, Any]] = []
+                
+                with ThreadPoolExecutor(max_workers=3) as executor:
+                    future_to_url = {executor.submit(extract_single_url, url): url for url in uncached_urls}
+                    
+                    for future in as_completed(future_to_url):
+                        url, result = future.result()
+                        if result:
+                            new_results.append(result)
+                            # Save to cache (only successful extractions)
+                            if not result.get("error"):
+                                self._save_extract_cache(url, prompt, result)
 
-                if resp.status_code != 200:
-                    error_msg = f"Extract start failed: {resp.status_code} - {resp.text}"
-                    logger.error(error_msg)
-                    if cached_results:
-                        return {
-                            "data": cached_results,
-                            "from_cache": True,
-                            "cached_count": len(cached_results),
-                        }
-                    raise RuntimeError(error_msg)
+                logger.info(f"✅ Concurrent extraction complete. Total: {len(new_results)} results")
 
-                result = resp.json()
-                if not result.get("success"):
-                    error_msg = f"Extract start failed: {result}"
-                    logger.error(error_msg)
-                    if cached_results:
-                        return {
-                            "data": cached_results,
-                            "from_cache": True,
-                            "cached_count": len(cached_results),
-                        }
-                    raise RuntimeError(error_msg)
-
-                job_id = result.get("id")
-
-                # 2. Poll for completion
-                logger.info(f"   Extract job ID: {job_id}")
-                status_endpoint = f"{extract_endpoint}/{job_id}"
-                max_wait = 600  # 10 minutes
-                poll_interval = 5
-                elapsed = 0
-
-                while elapsed < max_wait:
-                    time.sleep(poll_interval)
-                    elapsed += poll_interval
-
-                    status_resp = requests.get(
-                        status_endpoint, headers=headers, timeout=FC_TIMEOUT
-                    )
-                    if status_resp.status_code != 200:
-                        continue
-
-                    status_data = status_resp.json()
-                    status = status_data.get("status")
-
-                    if status == "processing":
-                        logger.info(f"   ⏳ Extracting... ({elapsed}s)")
-                    elif status == "completed":
-                        credits = status_data.get("creditsUsed", "N/A")
-                        new_data = status_data.get("data", [])
-
-                        # === Save new results to cache ===
-                        for item in new_data if isinstance(new_data, list) else [new_data]:
-                            item_url = (
-                                item.get("url")
-                                or item.get("sourceURL")
-                                or item.get("source_url")
-                            )
-                            if item_url:
-                                self._save_extract_cache(item_url, prompt, item)
-
-                        logger.info(f"✅ Extraction complete (Credits: {credits})")
-
-                        # Merge cached and new results
-                        all_data = cached_results + (
-                            new_data if isinstance(new_data, list) else [new_data]
-                        )
-                        return {
-                            "data": all_data,
-                            "cached_count": len(cached_results),
-                            "new_count": len(new_data) if isinstance(new_data, list) else 1,
-                        }
-                    elif status == "failed":
-                        error_msg = f"Extraction job failed: {status_data}"
-                        logger.error(error_msg)
-                        if cached_results:
-                            return {
-                                "data": cached_results,
-                                "from_cache": True,
-                                "cached_count": len(cached_results),
-                            }
-                        raise RuntimeError(error_msg)
-
-                error_msg = "Extraction timeout (10min)"
-                logger.error(error_msg)
-                if cached_results:
-                    return {
-                        "data": cached_results,
-                        "from_cache": True,
-                        "cached_count": len(cached_results),
-                    }
-                raise TimeoutError(error_msg)
+                # Merge cached and new results
+                all_data = cached_results + new_results
+                return {
+                    "data": all_data,
+                    "cached_count": len(cached_results),
+                    "new_count": len(new_results),
+                }
 
             except Exception as e:
-                logger.error(f"Extract exception: {e}")
+                logger.error(f"Concurrent extraction exception: {e}")
                 if cached_results:
                     return {
                         "data": cached_results,
@@ -422,6 +417,7 @@ class FirecrawlMixin:
                         "cached_count": len(cached_results),
                     }
                 raise e
+
 
         # === Scenario 2: Open-ended agent search (no URLs) ===
         else:

@@ -4,31 +4,25 @@ import os
 
 sys.path.append(os.getcwd())
 
-from scraper.constants import QUICK_SCHEMA, FULL_SCHEMA, PROMPT_TEMPLATES
+from scraper.constants import QUICK_SCHEMA, FULL_SCHEMA
 
 def verify():
     print("Verifying Fixes...")
     
     # Check QUICK_SCHEMA
-    if "url" in QUICK_SCHEMA["properties"]:
-        print("✅ QUICK_SCHEMA has 'url' field.")
+    if "required" in QUICK_SCHEMA and "url" in QUICK_SCHEMA["required"] and "title" in QUICK_SCHEMA["required"]:
+        print("✅ QUICK_SCHEMA has required fields ['url', 'title'].")
     else:
-        print("❌ QUICK_SCHEMA missing 'url'!")
+        print(f"❌ QUICK_SCHEMA missing required fields! Found: {QUICK_SCHEMA.get('required')}")
         return False
 
     # Check FULL_SCHEMA
-    if "url" in FULL_SCHEMA["properties"]:
-        print("✅ FULL_SCHEMA has 'url' field.")
+    if "required" in FULL_SCHEMA and "url" in FULL_SCHEMA["required"] and "title" in FULL_SCHEMA["required"]:
+        print("✅ FULL_SCHEMA has required fields ['url', 'title'].")
     else:
-        print("❌ FULL_SCHEMA missing 'url'!")
+        print(f"❌ FULL_SCHEMA missing required fields! Found: {FULL_SCHEMA.get('required')}")
         return False
-        
-    # Check Prompts
-    if "THE URL" in PROMPT_TEMPLATES["full"]:
-        print("✅ PROMPT_TEMPLATES['full'] asks for URL.")
-    else:
-        print("❌ PROMPT_TEMPLATES['full'] does not explicitly ask for URL.")
-        
+
     print("Verification Complete.")
     return True
 
