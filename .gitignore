@@ -41,6 +41,8 @@ env/
 # ====================
 .idea/
 .vscode/
+.claude/
+.opencode/
 .cursorrules
 *.swp
 *.swo
