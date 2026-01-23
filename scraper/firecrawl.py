@@ -124,15 +124,15 @@ class FirecrawlMixin:
                     },
                     "materials": {
                         "type": "string",
-                        "description": "Materials list (e.g. LED screen, 3D printing)",
+                        "description": "Materials list ONLY (e.g. LED screen, 3D printing, acrylic). Do NOT include dimensions or duration here.",
                     },
-                    "description_en": {
+                    "size": {
                         "type": "string",
-                        "description": "Detailed work description in English. Exclude navigation text.",
+                        "description": "Physical dimensions (e.g. '180 x 180 cm', 'Dimension variable', '30cm × 45cm × 25cm'). Leave empty if not specified.",
                     },
-                    "description_cn": {
+                    "duration": {
                         "type": "string",
-                        "description": "Detailed work description in Chinese. Exclude navigation text.",
+                        "description": "Video duration for video/film works (e.g. '4:30', '2′47′', '10 min'). Leave empty for non-video works.",
                     },
                     "video_link": {"type": "string", "description": "Vimeo URL if present"},
                 },
@@ -180,12 +180,12 @@ class FirecrawlMixin:
                         "title_cn": result.get("title_cn", ""),
                         "type": result.get("category", "") or result.get("type", ""),
                         "materials": result.get("materials", ""),
+                        "size": result.get("size", ""),
+                        "duration": result.get("duration", ""),
                         "year": result.get("year", ""),
                         "description_cn": result.get("description_cn", ""),
                         "description_en": result.get("description_en", ""),
                         "video_link": result.get("video_link", ""),
-                        "size": "",
-                        "duration": "",
                         "tags": [],
                     }
 

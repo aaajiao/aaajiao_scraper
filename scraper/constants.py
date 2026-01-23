@@ -55,7 +55,9 @@ FULL_SCHEMA: Final[Dict[str, Any]] = {
             "description": "High-res image URLs, prefer 'src_o' attribute",
         },
         "video_link": {"type": "string", "description": "Vimeo/YouTube URL if present"},
-        "materials": {"type": "string", "description": "Materials used in the artwork"},
+        "materials": {"type": "string", "description": "Materials used in the artwork (NOT dimensions or duration)"},
+        "size": {"type": "string", "description": "Physical dimensions (e.g. '180 x 180 cm', 'Dimension variable')"},
+        "duration": {"type": "string", "description": "Video duration for video works (e.g. '4:30', '2′47′')"},
     },
     "required": ["url", "title"],
 }
@@ -79,7 +81,12 @@ PROMPT_TEMPLATES: Final[Dict[str, str]] = {
     ),
     "full": (
         "Extract complete artwork details including THE URL, title, year, category, "
-        "full descriptions, materials, and high-res images (src_o). Return JSON."
+        "full descriptions, materials, size, duration, and high-res images (src_o). "
+        "IMPORTANT: Separate fields correctly - "
+        "'materials' = what it's made of (LED, acrylic, wood); "
+        "'size' = physical dimensions (180x180cm, variable); "
+        "'duration' = video length for video works (4'30'', 10:25). "
+        "Return JSON."
     ),
     "images_only": (
         "Extract all high-resolution image URLs from the page. "

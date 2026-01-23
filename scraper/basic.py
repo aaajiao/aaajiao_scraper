@@ -257,6 +257,8 @@ class BasicScraperMixin:
             year = ""
             category = ""
             materials = ""
+            size = ""
+            duration = ""
             desc_en = ""
             desc_cn = ""
             
@@ -292,6 +294,37 @@ class BasicScraperMixin:
                         if any(c.lower() in line.lower() for c in common_cats):
                             category = line
                             break
+                
+                # B2. Find Size (尺寸)
+                size_patterns = [
+                    r'(Dimension[s]?\s+variable\s*/?\s*尺寸可变)',
+                    r'(Dimension[s]?\s+variable)',
+                    r'(尺寸可变)',
+                    r'(\d+\s*[×x]\s*\d+\s*(?:[×x]\s*\d+\s*)?(?:cm|mm|m)?)',  # 180 x 180 cm
+                ]
+                for line in candidates:
+                    if size:
+                        break
+                    for pattern in size_patterns:
+                        match = re.search(pattern, line, re.IGNORECASE)
+                        if match:
+                            size = match.group(1).strip()
+                            break
+                
+                # B3. Find Duration (时长) for video works
+                duration_patterns = [
+                    r"(\d+['′]\d+['′'\"]+)",  # 4'30'' 或 2′47′'
+                    r"(\d+:\d+(?::\d+)?)",     # 4:30 或 1:23:45
+                    r"(\d+\s*(?:min|minutes?|sec|seconds?))",  # 10 min
+                ]
+                for line in candidates:
+                    if duration:
+                        break
+                    for pattern in duration_patterns:
+                        match = re.search(pattern, line, re.IGNORECASE)
+                        if match:
+                            duration = match.group(1).strip()
+                            break
                             
                 # C. Descriptions (Longer lines)
                 long_lines = [l for l in lines if len(l) > 100]
@@ -314,6 +347,8 @@ class BasicScraperMixin:
                 "year": year,
                 "category": category,
                 "materials": materials,  # Hard to separate from category without LLM
+                "size": size,
+                "duration": duration,
                 "description_en": desc_en.strip(),
                 "description_cn": desc_cn.strip(),
                 "images": images,

@@ -3,6 +3,8 @@ import time
 import pandas as pd
 import json
 import os
+import re
+import requests
 from scraper import AaajiaoScraper
 import concurrent.futures
 
@@ -24,12 +26,6 @@ if 'scraping' not in st.session_state:
     st.session_state.scraping = False
 if 'log_messages' not in st.session_state:
     st.session_state.log_messages = []
-if 'agent_result' not in st.session_state:
-    st.session_state.agent_result = None
-if 'discovery_found_urls' not in st.session_state:
-    st.session_state.discovery_found_urls = []
-if 'discovery_urls' not in st.session_state:
-    st.session_state.discovery_urls = []
 
 def run_scraper(incremental: bool = False):
     st.session_state.scraping = True
@@ -141,51 +137,12 @@ def run_scraper(incremental: bool = False):
         st.session_state.scraping = False
 
 
-def run_agent(prompt: str, urls: str, max_credits: int, download_images: bool = False):
-    """Run Agent Search"""
-    st.session_state.agent_result = None
-    
-    status_area = st.empty()
-    result_area = st.empty()
-    
-    try:
-        scraper = AaajiaoScraper()
-        
-        status_area.info("🤖 Starting Agent Task... / 启动 Agent 任务...")
-        
-        # Parse URLs if list of strings, or keep if already list
-        url_list = urls
-        if isinstance(urls, str) and urls.strip():
-            url_list = [u.strip() for u in urls.split(",") if u.strip()]
-        
-        # Enhanced prompt for images
-        enhanced_prompt = prompt
-        if download_images and "image" not in prompt.lower():
-            enhanced_prompt = f"{prompt}. IMPORTANT: For images, extract the 'src_o' attribute which contains the high-resolution URL. Do not mistakenly extract thumbnails from the sidebar gallery."
-        
-        # Call Agent
-        result = scraper.agent_search(enhanced_prompt, urls=url_list, max_credits=max_credits)
-        
-        if result:
-            st.session_state.agent_result = result
-            status_area.success("✅ Agent Task Completed! / Agent 查询完成!")
-            result_area.json(result)
-            
-            # Generate Report
-            if download_images:
-                status_area.info("📥 Downloading images & generating report... / 正在下载图片并生成报告...")
-                scraper.generate_agent_report(result, "agent_output", prompt=enhanced_prompt)
-                status_area.success("✅ Report Generated! / 报告生成完成!")
-        else:
-            status_area.error("❌ Agent Task Failed / Agent 查询失败")
-            
-    except Exception as e:
-        status_area.error(f"Error: {str(e)}")
-
-
 # ============ Main Interface with Tabs ============
 
-tab1, tab2, tab3 = st.tabs(["🏗️ Basic Scraper / 基础爬虫", "⚡️ Quick Extract / 快速提取", "🚀 Batch Discovery / 批量发现"])
+tab1, tab2 = st.tabs([
+    "🏗️ Basic Scraper / 基础爬虫", 
+    "🔄 Batch Update / 批量更新"
+])
 
 # ============ Tab 1: Basic Scraper (Original) ============
 with tab1:
@@ -205,7 +162,7 @@ with tab1:
         st.subheader("📊 Preview / 结果预览")
         
         df = pd.DataFrame(st.session_state.works)
-        display_cols = ['title', 'title_cn', 'year', 'type', 'url']
+        display_cols = ['title', 'title_cn', 'year', 'type', 'size', 'duration', 'url']
         cols_to_show = [c for c in display_cols if c in df.columns]
         st.dataframe(df[cols_to_show], use_container_width=True)
         
@@ -439,319 +396,267 @@ with tab1:
         st.warning("⚠️ No cached works found. Run 'Start Scraping' first to cache artwork data.")
 
 
-# ============ Tab 2: Quick Extract / AI Search (The Agent) ============
+# ============ Tab 2: Batch Update (Size & Duration) ============
 with tab2:
     st.markdown("""
-    **两种模式 / Two Modes**:
-    - **🎯 单页提取**: 填写 URL → 使用 `Extract API` (~50 credits) → 快速提取指定页面
-    - **🤖 开放搜索**: 不填 URL → 使用 `Agent API` (高成本) → AI 自主浏览和搜索
+    **批量更新作品的尺寸和时长信息 / Batch Update Size & Duration**
     
-    > 💡 **提示**: 如果你知道要提取哪个页面，请填写 URL，这样更便宜、更快！
+    使用低成本的 Firecrawl scrape 模式（约 1 Credit/页）获取渲染后的页面内容，
+    然后本地解析提取尺寸（size）和时长（duration）信息。
+    
+    > 💡 比 AI Extract 便宜 **50 倍**！（1 Credit vs 50 Credits）
     """)
     
-    # Standardized Prompt
-
-    default_prompt = ""
-
-    # Input Area
-    prompt = st.text_area(
-        "Prompt / 提取指令",
-        value=default_prompt,
-        height=120,
-        help="描述你想要提取的内容"
-    )
+    # Load current data
+    try:
+        with open("aaajiao_works.json", "r", encoding="utf-8") as f:
+            all_works = json.load(f)
+    except FileNotFoundError:
+        all_works = []
     
-    urls = st.text_input(
-        "Specific URL (Optional) / 指定 URL (可选)",
-        placeholder="https://eventstructure.com/Absurd-Reality-Check",
-        help="Paste a single URL here in Quick Mode. / 在此粘贴单个 URL。",
-        key="quick_url_input"
-    )
-    
-    # Determine mode based on input
-    has_url = bool(urls and urls.strip())
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if has_url:
-            st.info("🎯 **Mode: Single Page Extraction**\n(Cost: ~50-80 credits per page)")
-            # In URL mode, slider sets the COUNT of pages (if multiple comma-separated)
-            max_credits = st.slider("Limit (Pages) / 数量限制 (页数)", min_value=1, max_value=10, value=1, help="Number of URLs to process.")
-        else:
-            st.info("🤖 **Mode: Open AI Research**\n(Cost: Variable)")
-            # In Agent mode, slider sets the Credit Budget
-            max_credits = st.slider("Max Budget (Credits) / 预算上限 (积分)", min_value=10, max_value=200, value=50, help="Max credits the agent can spend.")
-            
-    with col2:
-        download_images = st.checkbox("📥 Download Images & Report / 下载图片并生成报告", value=True)
-    
-    if st.button("🔍 Start / 开始执行", type="primary", key="agent_btn", disabled=not prompt.strip()):
-        # Handle single URL as list
-        url_list = urls.split(",") if urls else None
-        if url_list:
-             url_list = [u.strip() for u in url_list if u.strip()]
-             
-        # Debug feedback
-        if has_url:
-            st.toast(f"Processing {len(url_list)} URL(s)...", icon="🚀")
-        else:
-            st.toast("Starting Open Agent Search...", icon="🤖")
-            
-        run_agent(prompt, url_list, max_credits, download_images)
-
-    # Show Results
-    if st.session_state.agent_result:
+    if not all_works:
+        st.warning("⚠️ 没有找到作品数据，请先在 Tab 1 运行基础爬虫")
+    else:
+        # Stats
+        total = len(all_works)
+        has_size = sum(1 for w in all_works if w.get('size'))
+        has_duration = sum(1 for w in all_works if w.get('duration'))
+        missing_size = total - has_size
+        missing_duration = total - has_duration
+        
+        # Video works
+        video_types = ['video', 'Video', 'video installation', 'Video Installation']
+        video_works = [w for w in all_works if any(vt.lower() in (w.get('type', '') or '').lower() for vt in video_types)]
+        video_with_duration = sum(1 for w in video_works if w.get('duration'))
+        
+        st.subheader("📊 数据统计 / Data Statistics")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("总作品数", total)
+        with col2:
+            st.metric("有尺寸信息", f"{has_size} ({has_size*100/total:.0f}%)", delta=f"-{missing_size} 缺失")
+        with col3:
+            st.metric("有时长信息", f"{has_duration}", delta=f"视频作品: {len(video_works)}")
+        
         st.divider()
-        st.subheader("📋 Results / 查询结果")
         
-        c1, c2 = st.columns(2)
-        with c1:
-            result_json = json.dumps(st.session_state.agent_result, ensure_ascii=False, indent=2)
-            st.download_button(
-                label="Download JSON / 下载结果 JSON",
-                data=result_json,
-                file_name="agent_result.json",
-                mime="application/json"
+        # ---- Feature 1: Batch Update ----
+        st.subheader("🔄 批量更新 / Batch Update")
+        st.markdown("使用 Firecrawl scrape 获取渲染后的页面内容，提取尺寸和时长信息")
+        
+        # Options
+        col_opt1, col_opt2 = st.columns(2)
+        with col_opt1:
+            update_limit = st.slider(
+                "处理数量 / Limit", 
+                min_value=1, 
+                max_value=min(200, missing_size + missing_duration), 
+                value=min(50, missing_size + missing_duration),
+                help="每个作品消耗约 1 Credit"
             )
+        with col_opt2:
+            st.info(f"💰 预计消耗: ~{update_limit} Credits")
         
-        with c2:
-            report_path = "agent_output/artwork_report.md"
-            if os.path.exists(report_path):
-                with open(report_path, "rb") as f:
-                    st.download_button(
-                        label="Download Report / 下载 Markdown 报告",
-                        data=f,
-                        file_name="artwork_report.md",
-                        mime="text/markdown"
-                    )
+        # Helper functions
+        def load_api_key():
+            try:
+                with open('.env', 'r') as f:
+                    for line in f:
+                        if line.startswith('FIRECRAWL_API_KEY'):
+                            return line.split('=')[1].strip()
+            except:
+                pass
+            return os.getenv("FIRECRAWL_API_KEY", "")
         
-        # Show Images
-        images_dir = "agent_output/images"
-        if os.path.exists(images_dir):
-            images = [f for f in os.listdir(images_dir) if f.endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp'))]
-            if images:
-                st.subheader("🖼️ Downloaded Images / 下载的图片")
-                cols = st.columns(min(len(images), 3))
-                for i, img in enumerate(sorted(images)[:6]):
-                    with cols[i % 3]:
-                        st.image(os.path.join(images_dir, img), caption=img, use_container_width=True)
-
-
-# ============ Tab 3: Batch Discovery (The Factory) ============
-with tab3:
-    st.markdown("""
-    **Solve Infinite/Horizontal Scroll Issues / 解决滚动加载问题**:
-    1. **Scan / 扫描**: Auto-scroll page to discover links.
-    2. **Filter / 筛选**: Select artworks to extract.
-    3. **Extract / 提取**: Batch process with selected mode.
-    """)
-    
-    # Session State Init
-    if 'discovery_urls' not in st.session_state:
-        st.session_state.discovery_urls = []
-    
-    # --- Step 1: Scan ---
-    st.subheader("1. Scan Page / 扫描页面")
-    
-    col_url, col_mode = st.columns([3, 1])
-    with col_url:
-        discovery_url = st.text_input("Target URL / 目标网址", value="https://eventstructure.com")
-    with col_mode:
-        scroll_mode = st.selectbox(
-            "Scroll Strategy", 
-            ["auto", "horizontal", "vertical"],
-            index=0,
-            help="Auto: Hybrid\nHorizontal: Gallery\nVertical: Standard"
-        )
-    
-    if st.button("🔭 Start Scanning / 开始扫描", type="primary"):
-        with st.spinner(f"Scanning ({scroll_mode} mode)..."):
-            scraper = AaajiaoScraper()
-            found = scraper.discover_urls_with_scroll(discovery_url, scroll_mode=scroll_mode)
-            st.session_state.discovery_urls = found
+        def scrape_markdown(url, api_key):
+            payload = {"url": url, "formats": ["markdown"]}
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            try:
+                resp = requests.post("https://api.firecrawl.dev/v2/scrape", json=payload, headers=headers, timeout=30)
+                if resp.status_code == 200:
+                    return resp.json().get("data", {}).get("markdown", "")
+                elif resp.status_code == 429:
+                    time.sleep(3)
+                    return scrape_markdown(url, api_key)
+            except:
+                pass
+            return None
+        
+        def parse_size_duration(md):
+            result = {"size": "", "duration": ""}
+            if not md:
+                return result
             
-            if found:
-                st.success(f"✅ Found {len(found)} links / 发现 {len(found)} 个链接")
+            lines = md[:2000].split('\n')
+            
+            # Size patterns
+            for line in lines:
+                line = line.strip()
+                if result["size"]:
+                    break
+                for pattern in [
+                    r'size\s+(\d+\s*[×xX]\s*\d+(?:\s*[×xX]\s*\d+)?\s*(?:cm|mm|m)?)',
+                    r'(Dimension[s]?\s+variable\s*/\s*尺寸可变)',
+                    r'(Dimension[s]?\s+variable)',
+                    r'^(尺寸可变)$',
+                ]:
+                    match = re.search(pattern, line, re.IGNORECASE)
+                    if match:
+                        result["size"] = match.group(1).strip()
+                        break
+            
+            # Duration patterns
+            for line in lines:
+                line = line.strip()
+                if result["duration"]:
+                    break
+                for pattern in [
+                    r"^(\d+['′]\d+['′''\"]*)\s*$",
+                    r"^(\d+['′''\"]+)\s*$",
+                    r"video\s+(\d+['′''\"]+)",
+                    r"^(\d+:\d+(?::\d+)?)\s*$",
+                ]:
+                    match = re.search(pattern, line, re.IGNORECASE)
+                    if match:
+                        result["duration"] = match.group(1).strip()
+                        break
+            
+            return result
+        
+        if st.button("🚀 开始批量更新 / Start Batch Update", type="primary", key="batch_update_btn"):
+            api_key = load_api_key()
+            if not api_key:
+                st.error("❌ 未找到 FIRECRAWL_API_KEY，请检查 .env 文件")
             else:
-                st.error("❌ No links found / 未发现链接")
-
-    # --- Step 2 & 3: Select & Extract (显示在扫描结果之后) ---
-    if st.session_state.discovery_urls:
-        st.divider()
-        st.subheader("2. Filter & Extract / 筛选与提取")
-        
-        # Callback for Select All
-        def toggle_all():
-            new_state = st.session_state.select_all_chk
-            for url in st.session_state.discovery_urls:
-                st.session_state[f"chk_{url}"] = new_state
-
-        # Select All Checkbox
-        st.checkbox("Select All / 全选", value=False, key="select_all_chk", on_change=toggle_all)
-        
-        # Link List
-        selected_urls = []
-        with st.expander("View Links / 查看链接列表", expanded=True):
-            for url in st.session_state.discovery_urls:
-                key = f"chk_{url}"
-                if key not in st.session_state:
-                    st.session_state[key] = False
+                # Filter works that need updating
+                to_update = [w for w in all_works if not w.get('size') or not w.get('duration')][:update_limit]
                 
-                if st.checkbox(url, key=key):
-                    selected_urls.append(url)
-        
-        st.write(f"Selected / 已选择: **{len(selected_urls)}** items")
-        
-        # --- 提取模式选择（放在选择链接之后）---
-        st.markdown("---")
-        st.markdown("**Extraction Mode / 提取模式**")
-        
-        mode_col, config_col = st.columns([1, 1])
-        with mode_col:
-            extraction_level = st.radio(
-                "Select Mode",
-                ["quick", "full", "images_only", "custom"],
-                format_func=lambda x: {
-                    "quick": "⚡ Quick (~20 credits)",
-                    "full": "📋 Full (~50 credits)",
-                    "images_only": "🖼️ Images (~30 credits)",
-                    "custom": "🔧 Custom"
-                }[x],
-                horizontal=True,
-                key="disc_level"
-            )
-            
-            if extraction_level == "custom":
-                disc_prompt = st.text_area("Custom Prompt", value="Extract all text content and high-res images (src_o attribute).", height=80, key="disc_custom_prompt")
-            else:
-                disc_prompt = ""
-                mode_info = {"quick": "标题、年份、类型", "full": "完整描述+高清图", "images_only": "仅图片URL", "custom": ""}
-                st.caption(f"📌 {mode_info.get(extraction_level, '')}")
-        
-        with config_col:
-            # 缓存统计
-            scraper_check = AaajiaoScraper()
-            prompt_for_cache = disc_prompt if extraction_level == "custom" else scraper_check.PROMPT_TEMPLATES.get(extraction_level, "")
-            cached_count = sum(1 for url in selected_urls if scraper_check._load_extract_cache(url, prompt_for_cache))
-            uncached_count = len(selected_urls) - cached_count
-            
-            if cached_count > 0:
-                st.success(f"💾 缓存命中: {cached_count}/{len(selected_urls)}")
-            
-            cost_per_url = {"quick": 20, "full": 50, "images_only": 30, "custom": 50}.get(extraction_level, 50)
-            est_cost = uncached_count * cost_per_url
-            st.markdown(f"**预计消耗:** `{est_cost} credits`")
-            
-            disc_credits = st.slider("Batch Limit", 1, max(50, len(selected_urls)), len(selected_urls), key=f"disc_slider_{len(selected_urls)}")
-            if disc_credits < len(selected_urls):
-                st.warning(f"⚠️ Limit ({disc_credits}) < Selected ({len(selected_urls)}). Only first {disc_credits} items will be processed.")
-
-            disc_download = st.checkbox("Download Images / 下载图片", value=True, key="disc_img")
-            
-            # Output format selection
-            output_mode = st.radio(
-                "Output Format / 输出格式",
-                ["merged", "split"],
-                format_func=lambda x: {
-                    "merged": "📄 合并报告 (一个 MD 文件)",
-                    "split": "📁 独立文件 (每个 URL 一个 MD)"
-                }[x],
-                horizontal=True,
-                key="output_mode"
-            )
-            
-        if st.button("🤖 Batch Extract / 开始批量提取", disabled=len(selected_urls)==0, type="primary"):
-            status_box = st.empty()
-            with status_box.container():
-                st.info("🚀 Submitting Agent Task... / 正在提交 Agent 任务...")
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                log_area = st.empty()
                 
-                scraper = AaajiaoScraper()
-
-                final_prompt = disc_prompt
-                # 对于非 custom 模式，使用模板
-                if extraction_level != "custom":
-                    final_prompt = scraper.PROMPT_TEMPLATES.get(extraction_level, "")
-                elif disc_download and "image" not in disc_prompt.lower():
-                    final_prompt += ". Also extract all image URLs."
-                try:
-                    result = scraper.agent_search(
-                        final_prompt, 
-                        urls=selected_urls, 
-                        max_credits=disc_credits,
-                        extraction_level=extraction_level
-                    )
-                except Exception as e:
-                    st.error(f"❌ Task Failed: {str(e)}")
-                    result = None
+                url_to_work = {w['url']: w for w in all_works}
+                updated = 0
+                logs = []
                 
-                if result:
-                    # 显示缓存统计
-                    cached = result.get("cached_count", 0)
-                    new = result.get("new_count", len(result.get("data", [])) - cached)
-                    if result.get("from_cache"):
-                        st.success(f"✅ 全部从缓存获取！节省 API 调用")
-                    else:
-                        st.success(f"✅ 提取完成！(缓存: {cached}, 新增: {new})")
+                for i, work in enumerate(to_update):
+                    url = work.get('url')
+                    title = work.get('title', 'Unknown')[:25]
                     
-                    # === 组合视图 ===
-                    data_list = result.get("data", [])
-                    if data_list:
-                        # 1. 表格概览
-                        st.subheader("📊 结果概览")
-                        table_data = []
-                        for item in data_list:
-                            table_data.append({
-                                "标题": item.get("title", "N/A"),
-                                "年份": item.get("year", "N/A"),
-                                "类型": item.get("category") or item.get("type", "N/A"),
-                                "图片数": len(item.get("high_res_images", item.get("images", [])) or [])
-                            })
-                        st.dataframe(table_data, use_container_width=True)
-                        
-                        # 2. 详细预览（可展开）
-                        st.subheader("🖼️ 详细信息")
-                        for i, item in enumerate(data_list):
-                            title = item.get("title", f"Item {i+1}")
-                            year = item.get("year", "")
-                            with st.expander(f"**{title}** ({year})" if year else f"**{title}**"):
-                                # 描述
-                                desc = item.get("description_cn") or item.get("description_en") or item.get("description", "")
-                                if desc:
-                                    st.markdown(desc[:500] + ("..." if len(desc) > 500 else ""))
-                                
-                                # 图片缩略图
-                                images = item.get("high_res_images") or item.get("images") or []
-                                if images:
-                                    img_cols = st.columns(min(4, len(images)))
-                                    for j, img_url in enumerate(images[:4]):
-                                        try:
-                                            img_cols[j].image(img_url, width=120)
-                                        except:
-                                            img_cols[j].markdown(f"[图片{j+1}]({img_url})")
-                                
-                                # 视频链接
-                                video = item.get("video_link")
-                                if video:
-                                    st.markdown(f"🎬 **视频:** [{video}]({video})")
-                        
-                        # 3. JSON 下载（折叠）
-                        with st.expander("📥 查看原始 JSON"):
-                            st.json(result)
+                    status_text.text(f"[{i+1}/{len(to_update)}] 处理: {title}...")
                     
-                    if disc_download:
-                        scraper.generate_agent_report(
-                            result, 
-                            "agent_discovery_output", 
-                            prompt=final_prompt, 
-                            extraction_level=extraction_level,
-                            output_mode=output_mode
-                        )
-                        if output_mode == "split":
-                            st.info("📁 Reports generated: `agent_discovery_output/` (每个作品一个目录)")
+                    md = scrape_markdown(url, api_key)
+                    if md:
+                        extracted = parse_size_duration(md)
+                        changes = []
+                        
+                        if extracted['size'] and not work.get('size'):
+                            url_to_work[url]['size'] = extracted['size']
+                            changes.append(f"size='{extracted['size']}'")
+                        
+                        if extracted['duration'] and not work.get('duration'):
+                            url_to_work[url]['duration'] = extracted['duration']
+                            changes.append(f"duration='{extracted['duration']}'")
+                        
+                        if changes:
+                            updated += 1
+                            logs.append(f"✅ {title}: {', '.join(changes)}")
                         else:
-                            st.info("📄 Report generated at: `agent_discovery_output/`")
-                else:
-                    st.error("❌ Task Failed / 任务失败")
+                            logs.append(f"⚪ {title}: 无新数据")
+                    else:
+                        logs.append(f"❌ {title}: 抓取失败")
+                    
+                    progress_bar.progress((i + 1) / len(to_update))
+                    log_area.code("\n".join(logs[-8:]))
+                    time.sleep(0.3)
+                
+                # Save
+                with open("aaajiao_works.json", "w", encoding="utf-8") as f:
+                    json.dump(all_works, f, ensure_ascii=False, indent=2)
+                
+                st.success(f"✅ 完成！更新了 {updated}/{len(to_update)} 个作品")
+                st.balloons()
+                
+                # Regenerate markdown
+                scraper = AaajiaoScraper()
+                scraper.works = all_works
+                scraper.generate_markdown()
+                st.info("📄 Markdown 报告已重新生成")
+        
+        st.divider()
+        
+        # ---- Feature 2: Data Cleaning ----
+        st.subheader("🧹 数据清洗 / Data Cleaning")
+        st.markdown("从 `materials` 字段中分离出混杂的尺寸和时长信息")
+        
+        # Preview
+        mixed_materials = [w for w in all_works if w.get('materials') and 
+                          any(kw in w.get('materials', '').lower() for kw in ['dimension', 'size', 'cm', '×', 'variable', '尺寸'])]
+        
+        if mixed_materials:
+            st.warning(f"⚠️ 发现 {len(mixed_materials)} 个作品的 materials 字段可能包含尺寸信息")
+            
+            with st.expander("查看可能需要清洗的数据"):
+                for w in mixed_materials[:10]:
+                    st.markdown(f"- **{w.get('title', 'Unknown')[:30]}**: `{w.get('materials', '')[:60]}...`")
+            
+            if st.button("🧹 运行数据清洗 / Run Cleaning", key="clean_btn"):
+                cleaned = 0
+                for work in all_works:
+                    old_materials = work.get('materials', '')
+                    if not old_materials:
+                        continue
+                    
+                    # Check if pure size
+                    if re.match(r'^Dimension[s]?\s+variable\s*/?\s*尺寸可变$', old_materials, re.IGNORECASE):
+                        work['materials'] = ''
+                        work['size'] = old_materials
+                        cleaned += 1
+                    elif re.match(r'^Dimension[s]?\s+variable$', old_materials, re.IGNORECASE):
+                        work['materials'] = ''
+                        work['size'] = old_materials
+                        cleaned += 1
+                    elif re.match(r'^尺寸可变$', old_materials):
+                        work['materials'] = ''
+                        work['size'] = old_materials
+                        cleaned += 1
+                
+                # Save
+                with open("aaajiao_works.json", "w", encoding="utf-8") as f:
+                    json.dump(all_works, f, ensure_ascii=False, indent=2)
+                
+                st.success(f"✅ 清洗完成！修改了 {cleaned} 个作品")
+        else:
+            st.success("✅ 数据已清洁，无需清洗")
+        
+        st.divider()
+        
+        # ---- Preview Updated Data ----
+        st.subheader("📋 数据预览 / Data Preview")
+        
+        filter_option = st.radio(
+            "筛选 / Filter",
+            ["全部", "有尺寸", "有时长", "缺失尺寸", "视频作品"],
+            horizontal=True
+        )
+        
+        filtered = all_works
+        if filter_option == "有尺寸":
+            filtered = [w for w in all_works if w.get('size')]
+        elif filter_option == "有时长":
+            filtered = [w for w in all_works if w.get('duration')]
+        elif filter_option == "缺失尺寸":
+            filtered = [w for w in all_works if not w.get('size')]
+        elif filter_option == "视频作品":
+            filtered = video_works
+        
+        if filtered:
+            df = pd.DataFrame(filtered)
+            display_cols = ['title', 'year', 'type', 'size', 'duration', 'materials']
+            cols_to_show = [c for c in display_cols if c in df.columns]
+            st.dataframe(df[cols_to_show].head(50), use_container_width=True)
+            st.caption(f"显示 {min(50, len(filtered))}/{len(filtered)} 条")
 
 
 # Sidebar
@@ -760,10 +665,10 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("**Modes / 模式说明：**")
     st.markdown("- **Basic**: Scrape Sitemap / 抓取站点地图")
-    st.markdown("- **Quick**: Single URL or AI / 快速提取")
-    st.markdown("- **Batch**: Discovery -> Extract / 批量发现")
+    st.markdown("- **Update**: Size & Duration / 更新尺寸时长")
     st.markdown("---")
     if st.button("❌ Exit App / 退出程序"):
         st.warning("Exiting... / 程序退出...")
         time.sleep(1)
         os._exit(0)
+

@@ -111,6 +111,10 @@ class ReportMixin:
                 lines.append(f"**Type**: {work['type']}\n\n")
             if work.get("materials"):
                 lines.append(f"**Materials**: {work['materials']}\n\n")
+            if work.get("size"):
+                lines.append(f"**Size**: {work['size']}\n\n")
+            if work.get("duration"):
+                lines.append(f"**Duration**: {work['duration']}\n\n")
             if work.get("video_link"):
                 lines.append(f"**Video**: {work['video_link']}\n\n")
 
@@ -388,6 +392,10 @@ class ReportMixin:
             lines.append(f"| Video / 视频 | [{item['video_link']}]({item['video_link']}) |\n")
         if item.get("materials"):
             lines.append(f"| Materials / 材料 | {item['materials']} |\n")
+        if item.get("size"):
+            lines.append(f"| Size / 尺寸 | {item['size']} |\n")
+        if item.get("duration"):
+            lines.append(f"| Duration / 时长 | {item['duration']} |\n")
         lines.append("\n")
 
         # Descriptions
