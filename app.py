@@ -436,7 +436,15 @@ if cached_works:
             with open("output/portfolio_with_images.md", "w", encoding="utf-8") as f:
                 f.write(report_content)
 
-            st.success("✅ 图片整合完成！")
+            # 保存到 reports 文件夹（带时间戳）
+            os.makedirs("reports", exist_ok=True)
+            timestamp = time.strftime('%Y%m%d_%H%M%S')
+            report_filename = f"portfolio_images_{timestamp}.md"
+            report_path = os.path.join("reports", report_filename)
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write(report_content)
+
+            st.success(f"✅ 图片整合完成！报告已保存到 `{report_path}`")
             st.download_button(
                 label="📥 下载报告",
                 data=report_content,
@@ -526,7 +534,15 @@ if cached_works:
 
             report = "".join(lines)
 
-            st.success(f"✅ 已为 {len(sorted_works)} 个作品生成报告！")
+            # 保存到 reports 文件夹（带时间戳）
+            os.makedirs("reports", exist_ok=True)
+            timestamp = time.strftime('%Y%m%d_%H%M%S')
+            report_filename = f"web_report_{timestamp}.md"
+            report_path = os.path.join("reports", report_filename)
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write(report)
+
+            st.success(f"✅ 已为 {len(sorted_works)} 个作品生成报告！保存到 `{report_path}`")
             st.download_button(
                 label="📥 下载网络报告",
                 data=report,

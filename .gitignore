@@ -78,6 +78,9 @@ aaajiao_portfolio_with_web_images.md
 *.html
 *.csv
 
+# User-generated reports
+reports/
+
 # Temporary files
 *.tmp
 *.temp
