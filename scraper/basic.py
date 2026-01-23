@@ -216,15 +216,68 @@ class BasicScraperMixin:
 
         return True
 
+    def _split_bilingual_title(self, raw_title: str) -> Tuple[str, str]:
+        """Split 'English / 中文' format title with Chinese validation.
+
+        Args:
+            raw_title: Raw title string that may contain bilingual format.
+
+        Returns:
+            Tuple of (english_title, chinese_title). Chinese title may be empty.
+        """
+        if "/" not in raw_title:
+            return raw_title, ""
+
+        parts = raw_title.split("/", 1)
+        en_part = parts[0].strip()
+        cn_part = parts[1].strip() if len(parts) > 1 else ""
+
+        # Verify cn_part contains Chinese characters
+        if cn_part and any('\u4e00' <= c <= '\u9fff' for c in cn_part):
+            return en_part, cn_part
+
+        # No Chinese chars found, return original title
+        return raw_title, ""
+
+    def _extract_video_link(self, soup) -> str:
+        """Extract video link (Vimeo, YouTube, Bilibili) from page.
+
+        Args:
+            soup: BeautifulSoup object of the page.
+
+        Returns:
+            Video URL string, or empty string if not found.
+        """
+        video_domains = ["vimeo.com", "youtube.com", "youtu.be", "bilibili.com"]
+
+        # 1. Direct links in <a href>
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if any(domain in href for domain in video_domains):
+                return href
+
+        # 2. iframe src
+        for iframe in soup.find_all("iframe", src=True):
+            src = iframe["src"]
+            if any(domain in src for domain in video_domains):
+                return src
+
+        # 3. data-vimeo-id attribute
+        for elem in soup.find_all(attrs={"data-vimeo-id": True}):
+            vid = elem["data-vimeo-id"]
+            return f"https://vimeo.com/{vid}"
+
+        return ""
+
     def extract_metadata_bs4(self, url: str) -> Optional[Dict[str, Any]]:
         """Extract artwork metadata using local HTML parsing (No API cost).
-        
+
         Attempts to parse the page structure to find title, year, description,
-        materials, and category.
-        
+        materials, and type.
+
         Args:
             url: The artwork page URL.
-            
+
         Returns:
             Dictionary with extracted fields if successful, None otherwise.
             Includes 'source': 'local' to indicate origin.
@@ -241,39 +294,46 @@ class BasicScraperMixin:
             raw_title = title_div.get_text().strip() if title_div else ""
             if not raw_title:
                 return None  # Minimum requirement
-                
+
             title = raw_title
             title_cn = ""
-            
-            # Split "English / Chinese"
-            if "/" in raw_title:
-                parts = raw_title.split("/", 1)
-                title = parts[0].strip()
-                title_cn = parts[1].strip()
-                
+
+            # Try to split from project_title first
+            title, title_cn = self._split_bilingual_title(raw_title)
+
             # --- 2. Content Analysis ---
             content_div = soup.find("div", class_="project_content")
-            
+
             year = ""
-            category = ""
+            work_type = ""
             materials = ""
             size = ""
             duration = ""
+            video_link = ""
             desc_en = ""
             desc_cn = ""
-            
+
             if content_div:
                 # Cleanup
                 for s in content_div(["script", "style"]):
                     s.decompose()
-                
+
                 # Extract text lines
                 text = content_div.get_text(separator="\n")
                 lines = [line.strip() for line in text.split("\n") if line.strip()]
-                
+
                 # Heuristic Parsing
                 import re
-                
+
+                # A0. Try to get bilingual title from content (format: "Title / 中文标题")
+                if not title_cn:
+                    for line in lines[:10]:  # Check first 10 lines
+                        if "/" in line and title.lower() in line.lower():
+                            _, cn = self._split_bilingual_title(line)
+                            if cn:
+                                title_cn = cn
+                                break
+
                 # A. Find Year (Priority: Standalone year specific regex)
                 for line in lines:
                     # Match 2018 or 2018-2022
@@ -286,13 +346,17 @@ class BasicScraperMixin:
                 # This is tricky without NLP, so we look for short lines that aren't the year
                 candidates = [l for l in lines if len(l) < 100 and l != year]
                 
-                # Heuristic: Category often comes early
+                # Heuristic: Type often comes early
                 if candidates:
                     # Try to guess based on keywords
-                    common_cats = ["Video", "Installation", "Website", "Software", "Print", "Data", "Performance", "装置", "录像"]
+                    common_types = [
+                        "Video", "Installation", "Website", "Software", "Print",
+                        "Data", "Performance", "Sculpture", "Media", "Photo",
+                        "装置", "录像", "雕塑", "摄影"
+                    ]
                     for line in candidates:
-                        if any(c.lower() in line.lower() for c in common_cats):
-                            category = line
+                        if any(t.lower() in line.lower() for t in common_types):
+                            work_type = line
                             break
                 
                 # B2. Find Size (尺寸)
@@ -300,7 +364,8 @@ class BasicScraperMixin:
                     r'(Dimension[s]?\s+variable\s*/?\s*尺寸可变)',
                     r'(Dimension[s]?\s+variable)',
                     r'(尺寸可变)',
-                    r'(\d+\s*[×x]\s*\d+\s*(?:[×x]\s*\d+\s*)?(?:cm|mm|m)?)',  # 180 x 180 cm
+                    # Match: 180cm x 130 cm, 180 x 180 cm, 180×180×50cm
+                    r'(\d+\s*(?:cm|mm|m)?\s*[×xX]\s*\d+\s*(?:cm|mm|m)?(?:\s*[×xX]\s*\d+\s*(?:cm|mm|m)?)?)',
                 ]
                 for line in candidates:
                     if size:
@@ -312,9 +377,11 @@ class BasicScraperMixin:
                             break
                 
                 # B3. Find Duration (时长) for video works
+                # Unicode quotes: ' (\u2018), ' (\u2019), ′ (\u2032), " (\u201c\u201d)
                 duration_patterns = [
-                    r"(\d+['′]\d+['′'\"]+)",  # 4'30'' 或 2′47′'
-                    r"(\d+:\d+(?::\d+)?)",     # 4:30 或 1:23:45
+                    r"(\d+['\u2018\u2019\u2032′']\d+['\u2018\u2019\u2032′''\"]{1,2})",  # 12'00''
+                    r"^(\d+['\u2018\u2019\u2032′''\"]+)$",  # 单独一行的 12'
+                    r"(\d+:\d+(?::\d+)?)",           # 4:30 或 1:23:45
                     r"(\d+\s*(?:min|minutes?|sec|seconds?))",  # 10 min
                 ]
                 for line in candidates:
@@ -339,22 +406,25 @@ class BasicScraperMixin:
                             
             # --- 3. Images ---
             images = self.extract_images_from_page(url)
-            
+
+            # --- 4. Video Link ---
+            video_link = self._extract_video_link(soup)
+
             return {
                 "url": url,
                 "title": title,
                 "title_cn": title_cn,
                 "year": year,
-                "category": category,
-                "materials": materials,  # Hard to separate from category without LLM
+                "type": work_type,
+                "materials": materials,  # Hard to separate from type without LLM
                 "size": size,
                 "duration": duration,
                 "description_en": desc_en.strip(),
                 "description_cn": desc_cn.strip(),
                 "images": images,
-                "high_res_images": images, # Alias for compatibility
+                "high_res_images": images,  # Alias for compatibility
                 "source": "local",  # Marker for UI
-                "video_link": "", # Hard to extract without JS sometimes
+                "video_link": video_link,
             }
             
         except Exception as e:
@@ -630,3 +700,173 @@ class BasicScraperMixin:
         # Update work
         work["local_images"] = local_images
         return work
+
+
+# ====================
+# Utility Functions (Module-level)
+# ====================
+
+# Types to exclude (exhibitions, catalogs)
+EXCLUDED_TYPES = ['exhibition', 'catalog']
+
+
+def is_artwork(data: Dict[str, Any]) -> bool:
+    """Check if the data represents an artwork (not an exhibition or catalog).
+
+    Args:
+        data: Dictionary containing work metadata with 'type' or 'category' field.
+
+    Returns:
+        True if the data is an artwork, False if it's an exhibition or catalog.
+
+    Example:
+        >>> is_artwork({'type': 'Installation'})
+        True
+        >>> is_artwork({'type': 'Exhibition'})
+        False
+    """
+    type_val = (data.get('type') or data.get('category') or '').lower()
+    return not any(excluded in type_val for excluded in EXCLUDED_TYPES)
+
+
+def normalize_year(year_str: str) -> str:
+    """Normalize year string to standard format (YYYY or YYYY-YYYY).
+
+    Handles various date formats commonly found in exhibition dates and converts
+    them to a simple year or year range format.
+
+    Args:
+        year_str: Raw year string that may contain month names, date ranges, etc.
+
+    Returns:
+        Normalized year string in format 'YYYY' or 'YYYY-YYYY'.
+        Returns original string if no years found.
+
+    Examples:
+        >>> normalize_year('April 26, 2024 — May 25, 2024')
+        '2024'
+        >>> normalize_year('September 2019')
+        '2019'
+        >>> normalize_year('2018-2021')
+        '2018-2021'
+        >>> normalize_year('2018 - 2022')
+        '2018-2022'
+    """
+    if not year_str:
+        return year_str
+
+    # Find all 4-digit years (1900-2099)
+    years = re.findall(r'\b(19\d{2}|20\d{2})\b', year_str)
+
+    if not years:
+        return year_str
+
+    # Remove duplicates while preserving order
+    unique_years = list(dict.fromkeys(years))
+
+    if len(unique_years) == 1:
+        return unique_years[0]
+
+    # Return first and last year as range
+    return f"{unique_years[0]}-{unique_years[-1]}"
+
+
+def parse_size_duration(text: str) -> Dict[str, str]:
+    """Extract size and duration from text using regex patterns.
+
+    Args:
+        text: Text content (usually markdown or plain text from a page).
+
+    Returns:
+        Dictionary with 'size' and 'duration' keys (may be empty strings).
+
+    Example:
+        >>> parse_size_duration('Installation 180 x 180 cm, video 4\\'30\\'\\'')
+        {'size': '180 x 180 cm', 'duration': "4'30''"}
+    """
+    result = {"size": "", "duration": ""}
+
+    if not text:
+        return result
+
+    # Process line by line for better accuracy
+    lines = text[:3000].split('\n')  # Limit to first 3000 chars
+
+    # Size patterns (from most specific to general)
+    size_patterns = [
+        r'[Ss]ize\s+(\d+\s*[×xX]\s*\d+(?:\s*[×xX]\s*\d+)?\s*(?:cm|mm|m)?)',
+        r'(\d+\s*[×xX]\s*\d+\s*[×xX]\s*\d+\s*(?:cm|mm|m)?)',  # 3D dimensions
+        r'(\d+\s*[×xX]\s*\d+\s*(?:cm|mm|m)?)',  # 2D dimensions
+        r'(Dimension[s]?\s+variable\s*/\s*尺寸可变)',
+        r'(Dimension[s]?\s+variable)',
+        r'^(尺寸可变)$',
+    ]
+
+    # Duration patterns (include Unicode quotes: ' \u2018, ' \u2019, ′ \u2032)
+    duration_patterns = [
+        r"(\d+['\u2018\u2019\u2032′']\d+['\u2018\u2019\u2032′''\"]+)",  # 4'30''
+        r"(\d+['\u2018\u2019\u2032′''\"]+)",  # 4' or 4''
+        r"video\s+(\d+['\u2018\u2019\u2032′''\"]+)",
+        r"(\d+:\d+(?::\d+)?)",  # 4:30 or 1:23:45
+        r"(\d+\s*(?:min|minutes?|sec|seconds?))",  # 10 min
+    ]
+
+    for line in lines:
+        line = line.strip()
+
+        # Find size
+        if not result["size"]:
+            for pattern in size_patterns:
+                match = re.search(pattern, line, re.IGNORECASE)
+                if match:
+                    result["size"] = match.group(1).strip()
+                    break
+
+        # Find duration
+        if not result["duration"]:
+            for pattern in duration_patterns:
+                match = re.search(pattern, line, re.IGNORECASE)
+                if match:
+                    result["duration"] = match.group(1).strip()
+                    break
+
+        # Early exit if both found
+        if result["size"] and result["duration"]:
+            break
+
+    return result
+
+
+def is_extraction_complete(data: Dict[str, Any]) -> bool:
+    """Check if extracted data has all essential fields.
+
+    Used to determine whether to proceed to more expensive extraction methods.
+
+    Args:
+        data: Dictionary with extracted work metadata.
+
+    Returns:
+        True if extraction is complete, False otherwise.
+    """
+    if not data:
+        return False
+
+    # Must have title
+    if not data.get('title'):
+        return False
+
+    # Must have year
+    if not data.get('year'):
+        return False
+
+    # Must have type (unified field name)
+    if not data.get('type'):
+        return False
+
+    # Video works should have duration or video_link
+    type_val = data.get('type', '').lower()
+    if 'video' in type_val:
+        if not (data.get('duration') or data.get('video_link')):
+            return False
+
+    return True

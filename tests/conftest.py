@@ -59,13 +59,12 @@ def sample_artwork_data() -> Dict[str, Any]:
         "title_cn": "测试作品",
         "year": "2024",
         "type": "Video Installation",
-        "category": "Video Installation",
         "materials": "LED, Computer",
         "description_en": "A test artwork for unit testing",
         "description_cn": "用于单元测试的测试作品",
         "video_link": "https://vimeo.com/123456",
         "size": "",
-        "duration": "",
+        "duration": "4'30''",
         "tags": [],
     }
 
@@ -87,11 +86,12 @@ def mock_firecrawl_response(sample_artwork_data):
                 "title": sample_artwork_data["title"],
                 "title_cn": sample_artwork_data["title_cn"],
                 "year": sample_artwork_data["year"],
-                "category": sample_artwork_data["category"],
+                "type": sample_artwork_data["type"],
                 "materials": sample_artwork_data["materials"],
                 "description_en": sample_artwork_data["description_en"],
                 "description_cn": sample_artwork_data["description_cn"],
                 "video_link": sample_artwork_data["video_link"],
+                "duration": sample_artwork_data["duration"],
             }
         },
     }

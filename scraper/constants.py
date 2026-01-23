@@ -28,7 +28,7 @@ QUICK_SCHEMA: Final[Dict[str, Any]] = {
         "title": {"type": "string", "description": "English title of the artwork"},
         "title_cn": {"type": "string", "description": "Chinese title if available"},
         "year": {"type": "string", "description": "Creation year or year range"},
-        "category": {"type": "string", "description": "Art category (e.g. Video, Installation)"},
+        "type": {"type": "string", "description": "Art type/category (e.g. Video, Installation)"},
         "has_images": {"type": "boolean", "description": "Whether the page contains images"},
     },
     "required": ["url", "title"],
@@ -46,7 +46,7 @@ FULL_SCHEMA: Final[Dict[str, Any]] = {
         "title": {"type": "string", "description": "English title"},
         "title_cn": {"type": "string", "description": "Chinese title"},
         "year": {"type": "string", "description": "Creation year"},
-        "category": {"type": "string", "description": "Art category"},
+        "type": {"type": "string", "description": "Art type/category"},
         "description_en": {"type": "string", "description": "Full English description"},
         "description_cn": {"type": "string", "description": "Full Chinese description"},
         "high_res_images": {

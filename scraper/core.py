@@ -12,7 +12,7 @@ import logging
 import os
 import time
 from threading import Lock
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 from dotenv import load_dotenv
@@ -178,4 +178,36 @@ class CoreScraper:
         session.mount("https://", adapter)
         session.headers.update(HEADERS)
         return session
+
+
+def deduplicate_works(works: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Remove duplicate works based on URL.
+
+    Keeps the first occurrence of each URL. This is useful after
+    concurrent scraping where duplicates may occur.
+
+    Args:
+        works: List of work dictionaries, each containing at least a 'url' key.
+
+    Returns:
+        Deduplicated list of works, preserving original order.
+
+    Example:
+        >>> works = [{'url': 'a', 'title': '1'}, {'url': 'a', 'title': '2'}]
+        >>> deduplicate_works(works)
+        [{'url': 'a', 'title': '1'}]
+    """
+    seen_urls: set = set()
+    unique_works: List[Dict[str, Any]] = []
+
+    for work in works:
+        url = work.get("url", "")
+        if url and url not in seen_urls:
+            seen_urls.add(url)
+            unique_works.append(work)
+
+    if len(works) != len(unique_works):
+        logger.info(f"Deduplicated: {len(works)} → {len(unique_works)} works")
+
+    return unique_works
 

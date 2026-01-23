@@ -12,6 +12,7 @@ All methods integrate with the caching system to reduce API costs.
 
 import json
 import logging
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple
@@ -19,6 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 from .constants import FC_TIMEOUT, FULL_SCHEMA, PROMPT_TEMPLATES, QUICK_SCHEMA
+from .basic import is_artwork, normalize_year, parse_size_duration, is_extraction_complete
 
 logger = logging.getLogger(__name__)
 
@@ -40,72 +42,256 @@ class FirecrawlMixin:
     """
 
     def extract_work_details(self, url: str, retry_count: int = 0) -> Optional[Dict[str, Any]]:
-        """Extract artwork details using Firecrawl AI with caching and retries.
-        
-        Uses structured LLM extraction to parse artwork metadata from HTML.
-        Implements exponential backoff for rate limit errors and automatic
-        cache management.
-        
+        """Extract artwork details using three-tier strategy to minimize API costs.
+
+        Strategy (cost from low to high):
+        1. Layer 1: Local BeautifulSoup parsing (0 credits)
+        2. Layer 2: Firecrawl Scrape + regex enrichment (1 credit)
+        3. Layer 3: Firecrawl LLM Extract (2 credits) - last resort
+
+        Automatically filters out exhibitions and catalogs, returning None for those.
+
         Args:
             url: Artwork page URL to extract from.
             retry_count: Current retry attempt (for internal recursion).
                 Defaults to 0. Max 3 retries.
-        
+
         Returns:
-            Dictionary with extracted artwork fields:
-                - url: Original URL
-                - title: English title
-                - title_cn: Chinese title (if found)
-                - type/category: Art category
-                - materials: Materials description
-                - year: Creation year
-                - description_en/cn: Descriptions
-                - video_link: Vimeo URL if present
-            Returns None if extraction fails after retries.
-            
+            Dictionary with extracted artwork fields, or None if:
+            - Extraction fails after all layers
+            - The content is an exhibition or catalog (not an artwork)
+
         Note:
             - Checks cache first to save API credits
-            - Automatically splits bilingual titles (format: "English / Chinese")
-            - Rate limited to prevent API quota exhaustion
-            - Retries with exponential backoff on 429 errors
-            
-        Example:
-            >>> scraper = AaajiaoScraper()
-            >>> details = scraper.extract_work_details("https://eventstructure.com/work/title")
-            >>> print(details['title'], details['year'])
+            - Normalizes year format automatically
+            - Filters out exhibitions and catalogs
         """
         max_retries = 3
 
-        # 1. Cache priority
+        # ===== Layer 0: Cache Check =====
         if self.use_cache:
             cached = self._load_cache(url)
             if cached:
+                # Check if cached item is an exhibition (skip it)
+                if not is_artwork(cached):
+                    logger.debug(f"Cache hit (exhibition, skipped): {url}")
+                    return None
                 logger.debug(f"Cache hit: {url}")
                 return cached
 
-        # 2. Local Extraction Heuristic (Cost Saving)
-        # Try to parse with simple rules first
+        # ===== Layer 1: Local BS4 Extraction (0 credits) =====
+        local_data = None
         if hasattr(self, "extract_metadata_bs4"):
             local_data = self.extract_metadata_bs4(url)
-            if local_data and local_data.get("title") and local_data.get("year"):
-                logger.info(f"✅ Local extraction successful: {local_data['title']}")
-                # Save to cache so next run is fast
+            if local_data:
+                # Check if it's an exhibition - skip early
+                if not is_artwork(local_data):
+                    logger.info(f"⏭️ Skipping exhibition (local): {local_data.get('title', url)}")
+                    if self.use_cache:
+                        self._save_cache(url, local_data)  # Cache so we skip next time
+                    return None
+
+                # Normalize year
+                if local_data.get("year"):
+                    local_data["year"] = normalize_year(local_data["year"])
+
+                # Check if extraction is complete
+                if is_extraction_complete(local_data):
+                    logger.info(f"✅ Layer 1 success (0 credits): {local_data['title']}")
+                    if self.use_cache:
+                        self._save_cache(url, local_data)
+                    return local_data
+
+                logger.info(f"📝 Layer 1 partial: {local_data.get('title', 'Unknown')} - missing fields")
+
+        # ===== Layer 2: Markdown Scrape + Regex (1 credit) =====
+        markdown = self.scrape_markdown(url)
+        if markdown:
+            # Try to detect exhibition from markdown
+            type_hint = self._extract_type_from_markdown(markdown)
+            if type_hint and not is_artwork({"type": type_hint}):
+                logger.info(f"⏭️ Skipping exhibition (markdown): {url}")
+                # Create minimal data for cache
+                skip_data = {"url": url, "type": type_hint, "title": url.split("/")[-1]}
                 if self.use_cache:
-                    self._save_cache(url, local_data)
-                return local_data
+                    self._save_cache(url, skip_data)
+                return None
 
-        # 3. Rate limiting
+            # Enrich local_data with regex parsing
+            if local_data:
+                enriched = self._enrich_with_regex(local_data, markdown)
+                if is_extraction_complete(enriched):
+                    logger.info(f"✅ Layer 2 success (1 credit): {enriched['title']}")
+                    if self.use_cache:
+                        self._save_cache(url, enriched)
+                    return enriched
 
+        # ===== Layer 3: LLM Extract (2 credits) - Last Resort =====
+        logger.info(f"🔥 Layer 3: Using LLM extraction for {url}")
+        return self._extract_with_llm(url, retry_count)
 
-        # 2. Rate limiting
+    def scrape_markdown(self, url: str) -> Optional[str]:
+        """Scrape a URL and return markdown content (1 credit).
+
+        Uses Firecrawl's scrape endpoint with markdown format only,
+        which is much cheaper than LLM extraction.
+
+        Args:
+            url: URL to scrape.
+
+        Returns:
+            Markdown content string, or None if scraping fails.
+        """
+        if not self.firecrawl_key:
+            logger.warning("No Firecrawl API key, skipping markdown scrape")
+            return None
+
         self.rate_limiter.wait()
 
         try:
-            logger.info(f"[{retry_count+1}/{max_retries}] Scraping: {url}")
+            payload = {
+                "url": url,
+                "formats": ["markdown"],
+                "onlyMainContent": True,
+            }
+            headers = {
+                "Authorization": f"Bearer {self.firecrawl_key}",
+                "Content-Type": "application/json",
+            }
+
+            resp = requests.post(
+                "https://api.firecrawl.dev/v2/scrape",
+                json=payload,
+                headers=headers,
+                timeout=FC_TIMEOUT,
+            )
+
+            if resp.status_code == 200:
+                data = resp.json()
+                markdown = data.get("data", {}).get("markdown", "")
+                if markdown:
+                    logger.debug(f"Scraped markdown: {len(markdown)} chars")
+                    return markdown
+            elif resp.status_code == 429:
+                logger.warning("Rate limited on markdown scrape")
+                time.sleep(2)
+                return self.scrape_markdown(url)  # Simple retry
+            else:
+                logger.warning(f"Markdown scrape failed: {resp.status_code}")
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Markdown scrape error: {e}")
+            return None
+
+    def _extract_type_from_markdown(self, markdown: str) -> Optional[str]:
+        """Extract type/category hint from markdown content.
+
+        Args:
+            markdown: Markdown content from scrape.
+
+        Returns:
+            Type string if found (e.g., "Exhibition", "Installation"), None otherwise.
+        """
+        # Look for type indicators in first 1000 chars
+        text = markdown[:1000]
+        lines = [l.strip().lower() for l in text.split('\n') if l.strip()]
+
+        # Check first 10 lines for standalone type indicators
+        for line in lines[:10]:
+            # Exhibition page: type line is just "exhibition" or "solo exhibition"
+            if line in ['exhibition', 'solo exhibition', 'group exhibition']:
+                return "Exhibition"
+            # Catalog page
+            if line in ['catalog', 'catalogue']:
+                return "Catalog"
+
+        # Try to find type line (common patterns) - must be standalone or near start
+        type_patterns = [
+            r"^(video\s*installation|installation|video|performance|website|software|media\s*sculpture)",
+            r"\n(video\s*installation|installation|video|performance|website|software|media\s*sculpture)\n",
+        ]
+        for pattern in type_patterns:
+            match = re.search(pattern, text.lower(), re.IGNORECASE | re.MULTILINE)
+            if match:
+                return match.group(1).strip().title()
+
+        return None
+
+    def _enrich_with_regex(
+        self, data: Dict[str, Any], markdown: str
+    ) -> Dict[str, Any]:
+        """Enrich extracted data with additional fields from markdown using regex.
+
+        Args:
+            data: Existing extracted data dictionary.
+            markdown: Markdown content to parse.
+
+        Returns:
+            Enriched data dictionary with size/duration/video_link/title_cn filled.
+        """
+        result = data.copy()
+
+        # Use parse_size_duration to extract missing fields
+        parsed = parse_size_duration(markdown)
+
+        if not result.get("size") and parsed.get("size"):
+            result["size"] = parsed["size"]
+            logger.debug(f"Enriched size: {parsed['size']}")
+
+        if not result.get("duration") and parsed.get("duration"):
+            result["duration"] = parsed["duration"]
+            logger.debug(f"Enriched duration: {parsed['duration']}")
+
+        # Extract video_link from markdown
+        if not result.get("video_link"):
+            video_match = re.search(
+                r'(https?://(?:www\.)?(?:vimeo\.com|youtube\.com|youtu\.be|bilibili\.com)[^\s\)\]]+)',
+                markdown
+            )
+            if video_match:
+                result["video_link"] = video_match.group(1)
+                logger.debug(f"Enriched video_link: {result['video_link']}")
+
+        # Extract title_cn from markdown (format: **Title / 中文标题**)
+        if not result.get("title_cn"):
+            title_match = re.search(r'\*\*([^*]+)\s*/\s*([^*]+)\*\*', markdown)
+            if title_match:
+                cn_part = title_match.group(2).strip()
+                # Verify Chinese characters exist
+                if any('\u4e00' <= c <= '\u9fff' for c in cn_part):
+                    result["title_cn"] = cn_part
+                    logger.debug(f"Enriched title_cn: {cn_part}")
+
+        # Normalize year if present
+        if result.get("year"):
+            result["year"] = normalize_year(result["year"])
+
+        return result
+
+    def _extract_with_llm(self, url: str, retry_count: int = 0) -> Optional[Dict[str, Any]]:
+        """Extract data using Firecrawl LLM (2 credits).
+
+        This is the most expensive extraction method, used as last resort.
+
+        Args:
+            url: URL to extract from.
+            retry_count: Current retry attempt for rate limiting.
+
+        Returns:
+            Extracted work dictionary, or None if extraction fails.
+        """
+        max_retries = 3
+
+        self.rate_limiter.wait()
+
+        try:
+            logger.info(f"[{retry_count+1}/{max_retries}] LLM Extract: {url}")
 
             fc_endpoint = "https://api.firecrawl.dev/v2/scrape"
 
-            # Use inline schema for compatibility
+            # Schema for LLM extraction
             schema: Dict[str, Any] = {
                 "type": "object",
                 "properties": {
@@ -120,28 +306,27 @@ class FirecrawlMixin:
                     },
                     "category": {
                         "type": "string",
-                        "description": "The art category (e.g. Video Installation, Software, Website)",
+                        "description": "The art category (e.g. Video Installation, Software, Website, Exhibition)",
                     },
                     "materials": {
                         "type": "string",
-                        "description": "Materials list ONLY (e.g. LED screen, 3D printing, acrylic). Do NOT include dimensions or duration here.",
+                        "description": "Materials list ONLY. Do NOT include dimensions or duration here.",
                     },
                     "size": {
                         "type": "string",
-                        "description": "Physical dimensions (e.g. '180 x 180 cm', 'Dimension variable', '30cm × 45cm × 25cm'). Leave empty if not specified.",
+                        "description": "Physical dimensions (e.g. '180 x 180 cm', 'Dimension variable'). Leave empty if not specified.",
                     },
                     "duration": {
                         "type": "string",
-                        "description": "Video duration for video/film works (e.g. '4:30', '2′47′', '10 min'). Leave empty for non-video works.",
+                        "description": "Video duration for video/film works (e.g. '4:30', '2′47′'). Leave empty for non-video works.",
                     },
                     "video_link": {"type": "string", "description": "Vimeo URL if present"},
                 },
                 "required": ["title"],
             }
 
-            # Extract URL slug for targeted extraction
-            url_slug = url.rstrip('/').split('/')[-1].replace('-', ' ').replace('_', ' ')
-            
+            url_slug = url.rstrip("/").split("/")[-1].replace("-", " ").replace("_", " ")
+
             payload = {
                 "url": url,
                 "formats": [
@@ -169,43 +354,40 @@ class FirecrawlMixin:
 
             if resp.status_code == 200:
                 data = resp.json()
-                # v2 API with formats: [{type: "json", ...}] returns data in data["data"]["json"]
                 json_data = data.get("data", {}).get("json")
                 if json_data:
-                    result = json_data
-
                     work = {
                         "url": url,
-                        "title": result.get("title", ""),
-                        "title_cn": result.get("title_cn", ""),
-                        "type": result.get("category", "") or result.get("type", ""),
-                        "materials": result.get("materials", ""),
-                        "size": result.get("size", ""),
-                        "duration": result.get("duration", ""),
-                        "year": result.get("year", ""),
-                        "description_cn": result.get("description_cn", ""),
-                        "description_en": result.get("description_en", ""),
-                        "video_link": result.get("video_link", ""),
+                        "title": json_data.get("title", ""),
+                        "title_cn": json_data.get("title_cn", ""),
+                        "type": json_data.get("category", "") or json_data.get("type", ""),
+                        "materials": json_data.get("materials", ""),
+                        "size": json_data.get("size", ""),
+                        "duration": json_data.get("duration", ""),
+                        "year": json_data.get("year", ""),
+                        "description_cn": json_data.get("description_cn", ""),
+                        "description_en": json_data.get("description_en", ""),
+                        "video_link": json_data.get("video_link", ""),
                         "tags": [],
                     }
 
-                    # Post-processing: Split bilingual title if AI didn't
+                    # Post-processing: Split bilingual title
                     if not work["title_cn"] and "/" in work["title"]:
                         parts = work["title"].split("/")
                         work["title"] = parts[0].strip()
                         if len(parts) > 1:
                             work["title_cn"] = parts[1].strip()
 
-                    # Post-processing: Normalize year field (remove month names)
+                    # Normalize year
                     if work["year"]:
-                        import re
-                        # Extract year(s) like "2024", "2018-2022", "2024 - 2025"
-                        years = re.findall(r'\d{4}', work["year"])
-                        if years:
-                            if len(years) == 1:
-                                work["year"] = years[0]
-                            elif len(years) >= 2:
-                                work["year"] = f"{years[0]}-{years[-1]}"
+                        work["year"] = normalize_year(work["year"])
+
+                    # Check if it's an exhibition
+                    if not is_artwork(work):
+                        logger.info(f"⏭️ Skipping exhibition (LLM): {work.get('title', url)}")
+                        if self.use_cache:
+                            self._save_cache(url, work)
+                        return None
 
                     # Save to cache
                     if self.use_cache:
@@ -216,14 +398,13 @@ class FirecrawlMixin:
                     logger.error(f"Firecrawl returned unexpected format: {data}")
 
             elif resp.status_code == 429:
-                # Rate limit - exponential backoff retry
                 if retry_count >= max_retries:
                     logger.error(f"Max retries exceeded: {url}")
                     return None
-                wait_time = 2**retry_count  # 1s, 2s, 4s
+                wait_time = 2 ** retry_count
                 logger.warning(f"Rate limited, waiting {wait_time}s before retry...")
                 time.sleep(wait_time)
-                return self.extract_work_details(url, retry_count + 1)
+                return self._extract_with_llm(url, retry_count + 1)
 
             else:
                 logger.error(f"Firecrawl Error {resp.status_code}: {resp.text[:200]}")
@@ -231,7 +412,7 @@ class FirecrawlMixin:
             return None
 
         except Exception as e:
-            logger.error(f"API request error {url}: {e}")
+            logger.error(f"LLM extraction error {url}: {e}")
             return None
 
     def agent_search(
