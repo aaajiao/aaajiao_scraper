@@ -81,6 +81,9 @@ aaajiao_portfolio_with_web_images.md
 # User-generated reports
 reports/
 
+# Output directory (images and generated files)
+output/
+
 # Temporary files
 *.tmp
 *.temp
