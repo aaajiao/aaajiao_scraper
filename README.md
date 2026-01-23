@@ -111,8 +111,12 @@ aaajiao_scraper/
 ├── scripts/                     # 实用脚本
 │   ├── batch_update_works.py   # 批量 Markdown 抓取（1 credit/页）
 │   ├── clean_size_materials.py # 从 materials 提取 size/duration
+│   ├── clean_materials_credits.py # 清理 materials 和 credits 字段
 │   ├── generate_web_report.py  # 生成 Web 报告
+│   ├── firecrawl_test.py       # Firecrawl API 测试
+│   ├── update_scraper.py       # 爬虫更新工具
 │   └── verify_portfolio.py     # 数据验证
+├── reports/                     # 生成的 Markdown 报告
 ├── examples/                    # 使用示例
 │   ├── quick_start.py          # 快速开始
 │   ├── batch_extraction.py     # 批量提取
@@ -244,10 +248,11 @@ Firecrawl V2 计费机制：
 
 ```
 aaajiao_scraper/
-├── output/                      # 基础爬虫输出
-│   ├── aaajiao_works.json      # 结构化数据
-│   ├── aaajiao_portfolio.md    # Markdown 报告
+├── aaajiao_works.json          # 结构化数据（根目录）
+├── aaajiao_portfolio.md        # Markdown 作品集文档
+├── output/                     # 基础爬虫输出
 │   └── images/                 # 下载的图片
+├── reports/                    # 生成的 Markdown 报告
 └── .cache/                     # 缓存目录
     ├── {url_hash}.pkl          # 通用缓存
     ├── sitemap_lastmod.json    # Sitemap 时间戳

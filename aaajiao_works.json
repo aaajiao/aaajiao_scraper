@@ -19,7 +19,8 @@
       "https://payload.cargocollective.com/1/0/8955/14294823/4B5A2727_1333.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/404404404",
@@ -59,7 +60,8 @@
       "https://payload.cargocollective.com/1/0/8955/12885091/20170523-029_800.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/A-Dead-Innovative-Company",
@@ -85,14 +87,15 @@
       "https://payload.cargocollective.com/1/0/8955/11761409/_DSC4495_5000.JPG"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/A-bit-A-prompt",
     "title": "A bit, A prompt",
     "title_cn": "",
     "year": "2024",
-    "type": "Photo: Trevor Good",
+    "type": "",
     "materials": "",
     "size": "",
     "duration": "",
@@ -131,7 +134,8 @@
       "https://payload.cargocollective.com/1/0/8955/14530022/TGood-install-SETAREH_240425_0436_2048.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": "Photo: Trevor Good"
   },
   {
     "url": "https://eventstructure.com/AAAJIAO-Deep-Simulator",
@@ -165,7 +169,8 @@
       "https://payload.cargocollective.com/1/0/8955/14291754/02-_5000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/A-I-Goooooooooogle-infiltration",
@@ -193,7 +198,8 @@
       "https://payload.cargocollective.com/1/0/8955/13919262/EF_2860_5000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Agent",
@@ -215,21 +221,23 @@
       "https://payload.cargocollective.com/1/0/8955/14529099/TGood-install-SETAREH_240425_5301-Edit_1536.jpg"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/942741037?badge=0&autopause=0&player_id=0&app_id=58479"
+    "video_link": "https://player.vimeo.com/video/942741037?badge=0&autopause=0&player_id=0&app_id=58479",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/010000-org",
     "title": "010000.org",
     "title_cn": "零壹零零零零",
     "type": "Website",
-    "materials": "Web software: Shyi",
+    "materials": "",
     "size": "",
     "duration": "",
     "year": "2008",
     "description_cn": "",
     "description_en": "",
     "video_link": "https://010000.org/",
-    "tags": []
+    "tags": [],
+    "credits": "Web software: Shyi"
   },
   {
     "url": "https://eventstructure.com/BDSQ",
@@ -257,7 +265,8 @@
       "https://payload.cargocollective.com/1/0/8955/1821120/BDSQ_out_Aug 5- 2011 1.41.32 AM_o.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Absurd-Reality-Check",
@@ -279,7 +288,8 @@
       "https://payload.cargocollective.com/1/0/8955/14611984/aaajiao-pinky-fingers-21_5000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/BDSQ-III",
@@ -307,7 +317,8 @@
       "https://payload.cargocollective.com/1/0/8955/2489257/DSC_0662_o.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/0x027a3704071f268443",
@@ -321,7 +332,8 @@
     "description_cn": "",
     "description_en": "",
     "video_link": "https://etherscan.io/tx/0x027a3704071f26844350e09920e005ac7023ef6b923f56387cdb678e4feebdc0",
-    "tags": []
+    "tags": [],
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Blog-Archaeology",
@@ -351,7 +363,8 @@
       "https://payload.cargocollective.com/1/0/8955/627737/IMG_7138_4032.JPG"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Body-Shadow",
@@ -425,7 +438,8 @@
       "https://payload.cargocollective.com/1/0/8955/8304518/GitHub-Mark-120px-plus_120.png"
     ],
     "source": "local",
-    "video_link": "https://vimeo.com/118777940"
+    "video_link": "https://vimeo.com/118777940",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/BDSQ-II",
@@ -471,7 +485,8 @@
       "https://payload.cargocollective.com/1/0/8955/2488777/DSC_0634_o.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Candy-Wrappers",
@@ -507,7 +522,8 @@
       "https://payload.cargocollective.com/1/0/8955/12884455/Inbox__aaajiao_gmail_com_3_2488.jpg"
     ],
     "source": "local",
-    "video_link": "https://vimeo.com/226034565"
+    "video_link": "https://vimeo.com/226034565",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Cave",
@@ -563,7 +579,8 @@
       "https://payload.cargocollective.com/1/0/8955/14091550/DSCF9988-mid-res_2339.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Berlin-Wall-sound-collection-project",
@@ -577,7 +594,8 @@
     "description_cn": "",
     "description_en": "",
     "video_link": "",
-    "tags": []
+    "tags": [],
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Climate-Bits",
@@ -597,7 +615,8 @@
       "https://payload.cargocollective.com/1/0/8955/14252534/cbbg_1254.png"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Cloud-data",
@@ -641,7 +660,8 @@
       "https://payload.cargocollective.com/1/0/8955/193901/DSC_0100_o.JPG"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/11923207"
+    "video_link": "https://player.vimeo.com/video/11923207",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Cloud-data-1",
@@ -669,7 +689,8 @@
       "https://payload.cargocollective.com/1/0/8955/630371/DSC_0196_o.JPG"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Collective-Behavior",
@@ -693,7 +714,8 @@
       "https://payload.cargocollective.com/1/0/8955/12884883/20170523-024_800.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Column",
@@ -719,7 +741,8 @@
       "https://payload.cargocollective.com/1/0/8955/12884521/033_2424.jpg"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/225895805"
+    "video_link": "https://player.vimeo.com/video/225895805",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Consensus-geopolitics-chain-battery",
@@ -741,7 +764,8 @@
       "https://payload.cargocollective.com/1/0/8955/14294808/6_5000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/CopyCode",
@@ -761,7 +785,8 @@
       "https://payload.cargocollective.com/1/0/8955/219357/3647912435_dbdaac773d_o.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/CROSSING-STORIES",
@@ -775,7 +800,8 @@
     "description_cn": "",
     "description_en": "",
     "video_link": "",
-    "tags": []
+    "tags": [],
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Avatar",
@@ -789,49 +815,53 @@
     "description_cn": "",
     "description_en": "",
     "video_link": "",
-    "tags": []
+    "tags": [],
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Cube-Cell",
     "title": "Cube.Cell",
     "title_cn": "",
     "type": "Mixed Media Installation",
-    "materials": "concept: aaajiao, yang2; sound: yang2; software: aaajiao; hardware: majian",
+    "materials": "",
     "size": "",
     "duration": "",
     "year": "2007",
     "description_cn": "",
     "description_en": "",
     "video_link": "http://vimeo.com/338658",
-    "tags": []
+    "tags": [],
+    "credits": "concept: aaajiao, yang2; sound: yang2; software: aaajiao; hardware: majian"
   },
   {
     "url": "https://eventstructure.com/Cube-data",
     "title": "Cube.data",
     "title_cn": "",
     "type": "Video or Live performance",
-    "materials": "concept: aaajiao, yang2; sound: yang2; computer graphics, video editing: aaajiao",
+    "materials": "",
     "size": "",
     "duration": "15′00″",
     "year": "2007",
     "description_cn": "",
     "description_en": "",
     "video_link": "http://vimeo.com/1197451",
-    "tags": []
+    "tags": [],
+    "credits": "concept: aaajiao, yang2; sound: yang2; computer graphics, video editing: aaajiao"
   },
   {
     "url": "https://eventstructure.com/DataSpectrogram",
     "title": "DataSpectrogram",
     "title_cn": "",
     "type": "desktop app",
-    "materials": "concept: aaajiao, technical support: liu xiaoguang",
+    "materials": "",
     "size": "",
     "duration": "",
     "year": "2012",
     "description_cn": "",
     "description_en": "",
     "video_link": "",
-    "tags": []
+    "tags": [],
+    "credits": "concept: aaajiao, technical support: liu xiaoguang"
   },
   {
     "url": "https://eventstructure.com/Fabric-computational-wind-OCD-search",
@@ -851,7 +881,8 @@
       "https://payload.cargocollective.com/1/0/8955/14294803/4_5000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Faceing-system",
@@ -883,7 +914,8 @@
       "https://payload.cargocollective.com/1/0/8955/627726/DSC_0263_o.JPG"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Fine-tuning",
@@ -907,7 +939,8 @@
       "https://payload.cargocollective.com/1/0/8955/14529682/TGood-install-SETAREH_240425_0449-Edit_2048.jpg"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/943626589?badge=0&autopause=0&player_id=0&app_id=58479"
+    "video_link": "https://player.vimeo.com/video/943626589?badge=0&autopause=0&player_id=0&app_id=58479",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Free-will-open-mic-GFW-confessions",
@@ -929,7 +962,8 @@
       "https://payload.cargocollective.com/1/0/8955/14294805/5_o.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Gfwlist",
@@ -959,7 +993,8 @@
       "https://payload.cargocollective.com/1/0/8955/628651/DSC_0306_o.JPG"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Gluttony",
@@ -995,7 +1030,8 @@
       "https://payload.cargocollective.com/1/0/8955/13333466/aaajiao--PVC-2018-5_4032.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Guard-I",
@@ -1015,7 +1051,8 @@
       "https://payload.cargocollective.com/1/0/8955/14607907/Guard-i-1-gigapixel-standard-v2-6x-1_5000.JPG"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/1117816223?badge=0&autopause=0&player_id=0&app_id=58479"
+    "video_link": "https://player.vimeo.com/video/1117816223?badge=0&autopause=0&player_id=0&app_id=58479",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Guard-I-Long-hair",
@@ -1041,7 +1078,8 @@
       "https://payload.cargocollective.com/1/0/8955/14611978/aaajiao-pinky-fingers-4_5000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/HAL",
@@ -1073,7 +1111,8 @@
       "https://payload.cargocollective.com/1/0/8955/1614213/g_2001_space_odessey_final_Jun 6- 2011 5.22.06 AM_o.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Hard",
@@ -1095,7 +1134,8 @@
       "https://payload.cargocollective.com/1/0/8955/6662914/aaajiao_hard_02_RGB_o.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/I-hate-people-but-I-love-you",
@@ -1119,35 +1159,38 @@
       "https://payload.cargocollective.com/1/0/8955/12873150/vlcsnap-2017-03-30-21h14m32s692_1920.png"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/225883582"
+    "video_link": "https://player.vimeo.com/video/225883582",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/EmbeddedProject",
     "title": "EmbeddedProject",
     "title_cn": "",
     "type": "Architecture",
-    "materials": "concept: aaajiao, wang zhenfei, wang luming; interactive: aaajiao, liu xiaoguang; architecture: wang zhenfei, wang luming (HHD_FUN); computer graphics: aaajiao, wang zhenfei",
+    "materials": "",
     "size": "",
     "duration": "",
     "year": "2008",
     "description_cn": "",
     "description_en": "",
     "video_link": "",
-    "tags": []
+    "tags": [],
+    "credits": "concept: aaajiao, wang zhenfei, wang luming; interactive: aaajiao, liu xiaoguang; architecture: wang zhenfei, wang luming (HHD_FUN); computer graphics: aaajiao, wang zhenfei"
   },
   {
     "url": "https://eventstructure.com/Eyes-Fur",
     "title": "Eyes Fur",
     "title_cn": "眼睛毛",
     "type": "Instagram AR",
-    "materials": "made possible with the collaboration of Xu Cong and WLL.",
+    "materials": "",
     "size": "",
     "duration": "",
     "year": "2020",
     "description_cn": "",
     "description_en": "",
     "video_link": "",
-    "tags": []
+    "tags": [],
+    "credits": "made possible with the collaboration of Xu Cong and WLL."
   },
   {
     "url": "https://eventstructure.com/Karesansui",
@@ -1201,7 +1244,8 @@
       "https://payload.cargocollective.com/1/0/8955/8232807/20140801-010-ps_o.jpg"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/102992816"
+    "video_link": "https://player.vimeo.com/video/102992816",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Karesansui-KeeClub",
@@ -1293,7 +1337,8 @@
       "https://payload.cargocollective.com/1/0/8955/9617942/aaa150910-014_667.jpg"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/140556058"
+    "video_link": "https://player.vimeo.com/video/140556058",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Life-Mapping",
@@ -1317,7 +1362,8 @@
       "https://payload.cargocollective.com/1/0/8955/1391030/DSC_0542_o.JPG"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/HTTP-404",
@@ -1331,7 +1377,8 @@
     "description_cn": "",
     "description_en": "",
     "video_link": "",
-    "tags": []
+    "tags": [],
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Limited-Landscape-Unlimited",
@@ -1357,7 +1404,8 @@
       "https://payload.cargocollective.com/1/0/8955/8438718/20150116-014_5000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Limited-Landscape-Unlimited-Floating",
@@ -1395,7 +1443,8 @@
       "https://payload.cargocollective.com/1/0/8955/8530342/20150116-022_1000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Limited-Landscape-Unlimited-Matrix",
@@ -1423,7 +1472,8 @@
       "https://payload.cargocollective.com/1/0/8955/8458799/mountainFull_2456.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Limited-Landscape-Unlimited-Wave",
@@ -1447,7 +1497,8 @@
       "https://payload.cargocollective.com/1/0/8955/8969445/015_p2_white_5000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Limited-Landscape-Unlimited-Wave-3",
@@ -1469,7 +1520,8 @@
       "https://payload.cargocollective.com/1/0/8955/11241041/wave3-1_3264.jpg"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/261277602"
+    "video_link": "https://player.vimeo.com/video/261277602",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Lorem-Ipsum",
@@ -1495,7 +1547,8 @@
       "https://payload.cargocollective.com/1/0/8955/12884386/vlcsnap-2017-05-31-18h21m54s629_1728.png"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Membranization",
@@ -1559,7 +1612,8 @@
       "https://payload.cargocollective.com/1/0/8955/12884150/bot-012_2448.jpg"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/226569797"
+    "video_link": "https://player.vimeo.com/video/226569797",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Minority-Algorithm",
@@ -1591,7 +1645,8 @@
       "https://payload.cargocollective.com/1/0/8955/14526841/Screenshot-2023-08-24-at-19.57.15_2630.png"
     ],
     "source": "local",
-    "video_link": "https://vimeo.com/912041733"
+    "video_link": "https://vimeo.com/912041733",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Light-Shadow",
@@ -1605,7 +1660,8 @@
     "description_cn": "",
     "description_en": "",
     "video_link": "",
-    "tags": []
+    "tags": [],
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Nobody",
@@ -1631,7 +1687,8 @@
       "https://payload.cargocollective.com/1/0/8955/14611981/aaajiao-pinky-fingers-11_5000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Noise",
@@ -1659,7 +1716,8 @@
       "https://payload.cargocollective.com/1/0/8955/6663002/aaajiao_noise_02_RGB_2_o.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Obj-1-2",
@@ -1687,7 +1745,8 @@
       "https://payload.cargocollective.com/1/0/8955/7215064/_MG_0609_s_o.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Obj-3",
@@ -1711,7 +1770,8 @@
       "https://payload.cargocollective.com/1/0/8955/8434762/CameraRoll_28_o.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Obj-4",
@@ -1735,7 +1795,8 @@
       "https://payload.cargocollective.com/1/0/8955/7706664/20150116-050_3680.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Obj-5",
@@ -1769,7 +1830,8 @@
       "https://payload.cargocollective.com/1/0/8955/7606188/20150116-012_1000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/One-ritual",
@@ -1791,7 +1853,8 @@
       "https://payload.cargocollective.com/1/0/8955/14611987/aaajiao-pinky-fingers-24_5000.jpg"
     ],
     "source": "local",
-    "video_link": "https://vimeo.com/1113505913"
+    "video_link": "https://vimeo.com/1113505913",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Org-a",
@@ -1823,7 +1886,8 @@
       "https://payload.cargocollective.com/1/0/8955/11963885/_MG_0817_1500.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Overlap",
@@ -1855,7 +1919,8 @@
       "https://payload.cargocollective.com/1/0/8955/12299001/vlcsnap-2016-12-01-13h00m39s510_1920.png"
     ],
     "source": "local",
-    "video_link": "https://vimeo.com/197024846"
+    "video_link": "https://vimeo.com/197024846",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Majorelle-x-aaajiao-LLUW",
@@ -1869,7 +1934,8 @@
     "description_cn": "",
     "description_en": "",
     "video_link": "https://vimeo.com/157851613",
-    "tags": []
+    "tags": [],
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Mindlight-data",
@@ -1883,7 +1949,8 @@
     "description_cn": "",
     "description_en": "",
     "video_link": "http://vimeo.com/1197387",
-    "tags": []
+    "tags": [],
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/NTFs_aaajiao",
@@ -1897,7 +1964,8 @@
     "description_cn": "",
     "description_en": "",
     "video_link": "https://files.cargocollective.com/8955/aaajiao.zip",
-    "tags": []
+    "tags": [],
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Poor-Mining-I",
@@ -1939,7 +2007,8 @@
       "https://payload.cargocollective.com/1/0/8955/2489292/DSC_0696_o.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Progress-Bar",
@@ -1963,7 +2032,8 @@
       "https://payload.cargocollective.com/1/0/8955/12884581/20170523-084_1200.jpg"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/270373267"
+    "video_link": "https://player.vimeo.com/video/270373267",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Prompt-Engineering",
@@ -1987,7 +2057,8 @@
       "https://payload.cargocollective.com/1/0/8955/14479734/Prompt-Engineering_zoom_1750.png"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/863749362?badge=0&autopause=0&player_id=0&app_id=58479"
+    "video_link": "https://player.vimeo.com/video/863749362?badge=0&autopause=0&player_id=0&app_id=58479",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Prophecy-nullification-algorithm-shaman-conspiracy",
@@ -2009,7 +2080,8 @@
       "https://payload.cargocollective.com/1/0/8955/14294801/3_o.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Pure",
@@ -2039,21 +2111,23 @@
       "https://payload.cargocollective.com/1/0/8955/6662830/aaajiao_colors_06_RGB_o.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Patience-for-the-man",
     "title": "Patience for the man",
     "title_cn": "",
     "type": "Performance",
-    "materials": "concept: aaajiao, B6, Stephania Rossetti, Alizia Borsari; sound: B6; computer graphics: aaajiao; dancer: Stephania Rossetti; actress: Alizia Borsari",
+    "materials": "",
     "size": "",
     "duration": "",
     "year": "2009",
     "description_cn": "",
     "description_en": "",
     "video_link": "",
-    "tags": []
+    "tags": [],
+    "credits": "concept: aaajiao, B6, Stephania Rossetti, Alizia Borsari; sound: B6; computer graphics: aaajiao; dancer: Stephania Rossetti; actress: Alizia Borsari"
   },
   {
     "url": "https://eventstructure.com/Remnants-of-an-Electronic-Past",
@@ -2075,7 +2149,8 @@
       "https://payload.cargocollective.com/1/0/8955/11731532/Remnants_of_an_Electronic_Past_on_Vimeo_1904.jpg"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/172704243"
+    "video_link": "https://player.vimeo.com/video/172704243",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Remnants-of-an-Electronic-Past-CFCCA",
@@ -2109,7 +2184,8 @@
       "https://payload.cargocollective.com/1/0/8955/11969437/CFCCA-aaajiao-16-Print_o.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Repeatedly",
@@ -2129,21 +2205,23 @@
       "https://payload.cargocollective.com/1/0/8955/6662960/aaajiao_repeatedly_01_RGB_o.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Patience-for-the-man-1",
     "title": "Patience for the man",
     "title_cn": "",
     "type": "Performance",
-    "materials": "concept: aaajiao, B6, nunu, linxi; sound: B6; architecture: wang zhenfei, wang luming; computer graphics: aaajiao; dancer: nunu, linxi; actress: Alizia Borsari; support by arthub, eArts; curated by Defne Ayas and Davide Quadrio",
+    "materials": "",
     "size": "",
     "duration": "",
     "year": "2008",
     "description_cn": "",
     "description_en": "",
     "video_link": "",
-    "tags": []
+    "tags": [],
+    "credits": "concept: aaajiao, B6, nunu, linxi; sound: B6; architecture: wang zhenfei, wang luming; computer graphics: aaajiao; dancer: nunu, linxi; actress: Alizia Borsari; support by arthub, eArts; curated by Defne Ayas and Davide Quadrio"
   },
   {
     "url": "https://eventstructure.com/Seed-1348845846-1279984655",
@@ -2171,7 +2249,8 @@
       "https://payload.cargocollective.com/1/0/8955/14529987/TGood-install-SETAREH_240425_5285-Edit_2048.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Seed-3339138223-3632602548",
@@ -2203,7 +2282,8 @@
       "https://payload.cargocollective.com/1/0/8955/14529964/TGood-install-SETAREH_240425_5284-Edit_2048.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Seed-3864673680-2020419678-861016247",
@@ -2231,7 +2311,8 @@
       "https://payload.cargocollective.com/1/0/8955/14529815/seed3-1_3332.png"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Siu",
@@ -2259,7 +2340,8 @@
       "https://payload.cargocollective.com/1/0/8955/14294810/01_1845.png"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Soft",
@@ -2287,7 +2369,8 @@
       "https://payload.cargocollective.com/1/0/8955/6476543/aaajiao_blue_06_RGB_o.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/SoundEmbedded",
@@ -2307,7 +2390,8 @@
       "https://payload.cargocollective.com/1/0/8955/219350/2855270698_a30b456e56_o.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Space",
@@ -2331,7 +2415,8 @@
       "https://payload.cargocollective.com/1/0/8955/9014418/20160617-049_5000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Squab",
@@ -2355,7 +2440,8 @@
       "https://payload.cargocollective.com/1/0/8955/14611979/aaajiao-pinky-fingers-18_3949.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Static",
@@ -2379,7 +2465,8 @@
       "https://payload.cargocollective.com/1/0/8955/6476519/aaajiao_black_03_RGB_o.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Sunbathing-Not-dead",
@@ -2405,7 +2492,8 @@
       "https://payload.cargocollective.com/1/0/8955/14611980/aaajiao-pinky-fingers-8_5000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Tennis-for-none",
@@ -2429,7 +2517,8 @@
       "https://payload.cargocollective.com/1/0/8955/11731596/20160617-051_5000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Text-Format",
@@ -2465,7 +2554,8 @@
       "https://payload.cargocollective.com/1/0/8955/2488893/DSC_0631_o.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Text-Format-II",
@@ -2487,7 +2577,8 @@
       "https://payload.cargocollective.com/1/0/8955/3520951/20120601-030_o.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/The-Screen-Generation",
@@ -2535,7 +2626,8 @@
       "https://payload.cargocollective.com/1/0/8955/6848662/20131214-010_o.jpg"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/88982072"
+    "video_link": "https://player.vimeo.com/video/88982072",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/The-Screen-Generation-9m-Museum",
@@ -2581,7 +2673,8 @@
       "https://payload.cargocollective.com/1/0/8955/6973426/aaajiao_cpdf_o.png"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/88977098"
+    "video_link": "https://player.vimeo.com/video/88977098",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Time-Refactoring",
@@ -2629,7 +2722,8 @@
       "https://payload.cargocollective.com/1/0/8955/4994656/20121222-019_o.jpg"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/56334166"
+    "video_link": "https://player.vimeo.com/video/56334166",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Trfinite-I",
@@ -2673,7 +2767,8 @@
       "https://payload.cargocollective.com/1/0/8955/5770626/IMG_3273_o.JPG"
     ],
     "source": "local",
-    "video_link": "https://vimeo.com/68586747"
+    "video_link": "https://vimeo.com/68586747",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Trfinite-II",
@@ -2719,7 +2814,8 @@
       "https://payload.cargocollective.com/1/0/8955/5785218/IMG_3324_o.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Turritopsis-nutricula",
@@ -2749,7 +2845,8 @@
       "https://payload.cargocollective.com/1/0/8955/630389/DSC_0039_o.JPG"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Two-rituals",
@@ -2773,21 +2870,23 @@
       "https://payload.cargocollective.com/1/0/8955/14611986/aaajiao-pinky-fingers-20_5000.jpg"
     ],
     "source": "local",
-    "video_link": "https://vimeo.com/1108889225"
+    "video_link": "https://vimeo.com/1108889225",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/RealPacman",
     "title": "RealPacman",
     "title_cn": "",
     "type": "Interactive Installation",
-    "materials": "concept: aaajiao, wen; interactive: aaajiao, sleepy; sound: aaajiao; computer graphics: sleepy; hardwave: wen",
+    "materials": "",
     "size": "",
     "duration": "",
     "year": "2007",
     "description_cn": "",
     "description_en": "",
     "video_link": "",
-    "tags": []
+    "tags": [],
+    "credits": "concept: aaajiao, wen; interactive: aaajiao, sleepy; sound: aaajiao; computer graphics: sleepy; hardwave: wen"
   },
   {
     "url": "https://eventstructure.com/Untitled",
@@ -2815,7 +2914,8 @@
       "https://payload.cargocollective.com/1/0/8955/9279875/hyper-hiker-video_2_3456.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Untitled-0",
@@ -2835,7 +2935,8 @@
       "https://payload.cargocollective.com/1/0/8955/10015325/20151211-032_667.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Untitled-1",
@@ -2855,7 +2956,8 @@
       "https://payload.cargocollective.com/1/0/8955/10261412/20151211-035_667.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Untitled-2",
@@ -2875,7 +2977,8 @@
       "https://payload.cargocollective.com/1/0/8955/10131844/20151211-031_667.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Unzip",
@@ -2899,21 +3002,23 @@
       "https://payload.cargocollective.com/1/0/8955/14430004/01_754.png"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/795218230?h=45fbe8a6fe"
+    "video_link": "https://player.vimeo.com/video/795218230?h=45fbe8a6fe",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Sacpe-data",
     "title": "Sacpe.data",
     "title_cn": "",
     "type": "Video or Live performance",
-    "materials": "concept: aaajiao, yang2; sound: yang2; computer graphics, video editing: aaajiao",
+    "materials": "",
     "size": "",
     "duration": "15′00”",
     "year": "2007",
     "description_cn": "",
     "description_en": "",
     "video_link": "http://vimeo.com/256215",
-    "tags": []
+    "tags": [],
+    "credits": "concept: aaajiao, yang2; sound: yang2; computer graphics, video editing: aaajiao"
   },
   {
     "url": "https://eventstructure.com/Simulate-Simulator",
@@ -2927,7 +3032,8 @@
     "description_cn": "",
     "description_en": "",
     "video_link": "",
-    "tags": []
+    "tags": [],
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/WYSIWYG",
@@ -2961,7 +3067,8 @@
       "https://payload.cargocollective.com/1/0/8955/12884089/20170523-106_800.jpg"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/226570625"
+    "video_link": "https://player.vimeo.com/video/226570625",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Water-Measure-Petroleum",
@@ -2995,7 +3102,8 @@
       "https://payload.cargocollective.com/1/0/8955/12884632/20170523-051_800.jpg"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/226574906"
+    "video_link": "https://player.vimeo.com/video/226574906",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Water-measure",
@@ -3023,7 +3131,8 @@
       "https://payload.cargocollective.com/1/0/8955/630313/DSC_0138_o.JPG"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Windows-Gravestone",
@@ -3099,7 +3208,8 @@
       "https://payload.cargocollective.com/1/0/8955/11731713/20160617-020_5000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/WELT",
@@ -3113,7 +3223,8 @@
     "description_cn": "",
     "description_en": "",
     "video_link": "https://t-h-e-s-p-a-c-e.com/welt",
-    "tags": []
+    "tags": [],
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/a-aa-aaa-aaaa-aaaaa",
@@ -3141,7 +3252,8 @@
       "https://payload.cargocollective.com/1/0/8955/14180022/branch5_5000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Waving-Bamboo",
@@ -3155,7 +3267,8 @@
     "description_cn": "",
     "description_en": "",
     "video_link": "",
-    "tags": []
+    "tags": [],
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/Xindanwei-one-company",
@@ -3169,7 +3282,8 @@
     "description_cn": "",
     "description_en": "",
     "video_link": "",
-    "tags": []
+    "tags": [],
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/ai-ai-ai",
@@ -3193,7 +3307,8 @@
       "https://payload.cargocollective.com/1/0/8955/14611983/aaajiao-pinky-fingers-14_5000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/alias-aaajiao",
@@ -3215,7 +3330,8 @@
       "https://payload.cargocollective.com/1/0/8955/8963101/Alias__aaajiao_on_Vimeo_1918.jpg"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/117770120"
+    "video_link": "https://player.vimeo.com/video/117770120",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/anomaly",
@@ -3243,7 +3359,8 @@
       "https://payload.cargocollective.com/1/0/8955/8690809/20150116-018_5000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/anti-cybernetics",
@@ -3277,7 +3394,8 @@
       "https://payload.cargocollective.com/1/0/8955/626981/DSC_0229_o.JPG"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/archive-Candy-Wrappers",
@@ -3301,7 +3419,8 @@
       "https://payload.cargocollective.com/1/0/8955/13032861/vlcsnap-2017-07-24-09h38m10s318_1920.png"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/226674808"
+    "video_link": "https://player.vimeo.com/video/226674808",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/bits-of-information",
@@ -3347,7 +3466,8 @@
       "https://payload.cargocollective.com/1/0/8955/10474491/20151211-048_1000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/biubiu",
@@ -3381,7 +3501,8 @@
       "https://payload.cargocollective.com/1/0/8955/14294809/4B5A2392_2000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/aaajiao-Cybernetics-exhibition-catalog",
@@ -3395,14 +3516,15 @@
     "description_cn": "",
     "description_en": "",
     "video_link": "",
-    "tags": []
+    "tags": [],
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/bot",
     "title": "bot,",
     "title_cn": "观察者",
     "year": "2017-2018",
-    "type": "https://player.vimeo.com/video/269875758",
+    "type": "",
     "materials": "",
     "size": "Dimension variable / 尺寸可变",
     "duration": "",
@@ -3415,14 +3537,15 @@
       "https://payload.cargocollective.com/1/0/8955/13492671/bot.gif"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/269875758"
+    "video_link": "https://player.vimeo.com/video/269875758",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/bot-Berlin",
     "title": "bot, @Berlin",
     "title_cn": "",
     "year": "2018",
-    "type": "Copyright of House of Egorn, Photo by Joseph Devitt",
+    "type": "",
     "materials": "",
     "size": "dimensions variable",
     "duration": "15 min",
@@ -3445,7 +3568,8 @@
       "https://payload.cargocollective.com/1/0/8955/13619087/bot-253_3912.jpg"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/291484133"
+    "video_link": "https://player.vimeo.com/video/291484133",
+    "credits": "Copyright of House of Egorn, Photo by Joseph Devitt"
   },
   {
     "url": "https://eventstructure.com/bots",
@@ -3477,7 +3601,8 @@
       "https://payload.cargocollective.com/1/0/8955/13656456/IMG_1742_2001.JPG"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/cloud-data-app",
@@ -3517,7 +3642,8 @@
       "https://payload.cargocollective.com/1/0/8955/637683/6263b7e9jw6de31s6qr4tj_o.png"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/15233120"
+    "video_link": "https://player.vimeo.com/video/15233120",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/ddrk-me",
@@ -3545,7 +3671,8 @@
       "https://payload.cargocollective.com/1/0/8955/14294819/210830-032_2000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/exist",
@@ -3569,7 +3696,8 @@
       "https://payload.cargocollective.com/1/0/8955/10856449/20151211-021_3744.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/foam-wave",
@@ -3599,7 +3727,8 @@
       "https://payload.cargocollective.com/1/0/8955/12786182/fw5_960.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/fur",
@@ -3631,7 +3760,8 @@
       "https://payload.cargocollective.com/1/0/8955/14091563/4-255245_2851.jpg"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/413358085"
+    "video_link": "https://player.vimeo.com/video/413358085",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/gumdrop",
@@ -3655,21 +3785,23 @@
       "https://payload.cargocollective.com/1/0/8955/14091573/20200430-073_3203.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/berlin-transmediale",
     "title": "berlin@transmediale",
     "title_cn": "",
     "type": "Performance",
-    "materials": "concept: aaajiao, zhang jian; sound: zhang jian @ fm3; computer graphics: aaajiao",
+    "materials": "",
     "size": "",
     "duration": "",
     "year": "2010",
     "description_cn": "",
     "description_en": "",
     "video_link": "",
-    "tags": []
+    "tags": [],
+    "credits": "concept: aaajiao, zhang jian; sound: zhang jian @ fm3; computer graphics: aaajiao"
   },
   {
     "url": "https://eventstructure.com/icon-002-005",
@@ -3695,7 +3827,8 @@
       "https://payload.cargocollective.com/1/0/8955/13890299/2-2557887_3404.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/icon-006-008",
@@ -3719,7 +3852,8 @@
       "https://payload.cargocollective.com/1/0/8955/13992177/AAAJIAO_11_1804.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/icon-009-010",
@@ -3743,7 +3877,8 @@
       "https://payload.cargocollective.com/1/0/8955/14091553/4-253112_1610.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/icon-2018-2022-Diaspora-as-History",
@@ -3759,7 +3894,8 @@
     "images": [],
     "high_res_images": [],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/icon011",
@@ -3781,7 +3917,8 @@
       "https://payload.cargocollective.com/1/0/8955/14294811/210830-030_1333.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/icongif-003-009",
@@ -3797,7 +3934,8 @@
     "images": [],
     "high_res_images": [],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/icongif-010-011",
@@ -3821,7 +3959,8 @@
       "https://payload.cargocollective.com/1/0/8955/14091555/4-254165_1781.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/infinite",
@@ -3845,7 +3984,8 @@
       "https://payload.cargocollective.com/1/0/8955/1555913/R0013334_o.JPG"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/integriert-qualifiziert-nicht-integriert",
@@ -3881,7 +4021,8 @@
       "https://payload.cargocollective.com/1/0/8955/14518120/sCopy-of-_DSC6773_2000.png"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/922496073?badge=0&autopause=0&player_id=0&app_id=58479"
+    "video_link": "https://player.vimeo.com/video/922496073?badge=0&autopause=0&player_id=0&app_id=58479",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/landscape-001",
@@ -3913,7 +4054,8 @@
       "https://payload.cargocollective.com/1/0/8955/14414208/landscape-01--2022_install_R_3962.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/landscape-002",
@@ -3945,7 +4087,8 @@
       "https://payload.cargocollective.com/1/0/8955/14414223/landscape-02--2022_install_5000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/landscape-003",
@@ -3977,7 +4120,8 @@
       "https://payload.cargocollective.com/1/0/8955/14414228/landscape-03--2022_install_L_3472.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/landscape000",
@@ -4001,7 +4145,8 @@
       "https://payload.cargocollective.com/1/0/8955/14294813/210830-017_2000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/landscape004-gif",
@@ -4025,7 +4170,8 @@
       "https://payload.cargocollective.com/1/0/8955/14091561/DSCF9913mid-res_2480.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/landscape_005",
@@ -4049,7 +4195,8 @@
       "https://payload.cargocollective.com/1/0/8955/14081700/Ni-YRUW3IQTKzKjZ.gif"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/light_7-pmap",
@@ -4069,7 +4216,8 @@
       "https://payload.cargocollective.com/1/0/8955/12739749/light_7_pmap_Info_800.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/memory-vending-machines",
@@ -4113,7 +4261,8 @@
       "https://payload.cargocollective.com/1/0/8955/87143/R0012447_o.JPG"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/487835050"
+    "video_link": "https://player.vimeo.com/video/487835050",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/blogArchaeological-0",
@@ -4127,7 +4276,8 @@
     "description_cn": "",
     "description_en": "",
     "video_link": "",
-    "tags": []
+    "tags": [],
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/meta",
@@ -4173,7 +4323,8 @@
       "https://payload.cargocollective.com/1/0/8955/9222602/vlcsnap-2015-02-15-12h53m54s210_1920.png"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/natural-materials",
@@ -4195,7 +4346,8 @@
       "https://payload.cargocollective.com/1/0/8955/14091571/DSCF9947-mid-res_2480.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/nature-2017-19",
@@ -4223,7 +4375,8 @@
       "https://payload.cargocollective.com/1/0/8955/14091566/DSCF9912-mid-res_2480.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/observe",
@@ -4245,7 +4398,8 @@
       "https://payload.cargocollective.com/1/0/8955/8863568/20150116-036_5000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/ornaments",
@@ -4335,7 +4489,8 @@
       "https://payload.cargocollective.com/1/0/8955/7514867/o-ornaments.038_o.jpg"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/93179665"
+    "video_link": "https://player.vimeo.com/video/93179665",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/party",
@@ -4355,7 +4510,8 @@
       "https://payload.cargocollective.com/1/0/8955/13938943/party.gif"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/357517262"
+    "video_link": "https://player.vimeo.com/video/357517262",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/protester-cursor-emoji",
@@ -4377,7 +4533,8 @@
       "https://payload.cargocollective.com/1/0/8955/13935212/protester-cursor.gif"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/protester-cursor-eyes",
@@ -4397,7 +4554,8 @@
       "https://payload.cargocollective.com/1/0/8955/14070715/RPReplay_Final1585767339.gif"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/rhizomes",
@@ -4423,21 +4581,23 @@
       "https://payload.cargocollective.com/1/0/8955/14306028/9.3_5000.png"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/cursor-traces",
     "title": "cursor traces",
     "title_cn": "光标痕迹",
     "type": "JavaScript library",
-    "materials": "Dimension variable / 尺寸可变",
+    "materials": "",
     "size": "Dimension variable / 尺寸可变",
     "duration": "",
     "year": "2022",
     "description_cn": "",
     "description_en": "",
     "video_link": "https://www.npmjs.com/package/cursor-traces",
-    "tags": []
+    "tags": [],
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/the-last-media",
@@ -4457,7 +4617,8 @@
       "https://payload.cargocollective.com/1/0/8955/13935650/thelastmedia.gif"
     ],
     "source": "local",
-    "video_link": "https://player.vimeo.com/video/356446660"
+    "video_link": "https://player.vimeo.com/video/356446660",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/totem",
@@ -4499,7 +4660,8 @@
       "https://payload.cargocollective.com/1/0/8955/10490558/20151211-053_667.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/typeface",
@@ -4533,7 +4695,8 @@
       "https://payload.cargocollective.com/1/0/8955/11731618/20160617-047_5000.jpg"
     ],
     "source": "local",
-    "video_link": ""
+    "video_link": "",
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/hm-data",
@@ -4547,7 +4710,8 @@
     "description_cn": "",
     "description_en": "",
     "video_link": "",
-    "tags": []
+    "tags": [],
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/nature",
@@ -4561,20 +4725,22 @@
     "description_cn": "",
     "description_en": "",
     "video_link": "",
-    "tags": []
+    "tags": [],
+    "credits": ""
   },
   {
     "url": "https://eventstructure.com/spectrogram",
     "title": "spectrogram",
     "title_cn": "",
     "type": "Performance",
-    "materials": "concept: aaajiao, B6; sound: B6; computer graphics: aaajiao, liu xiaoguang",
+    "materials": "",
     "size": "",
     "duration": "",
     "year": "2012",
     "description_cn": "",
     "description_en": "",
     "video_link": "",
-    "tags": []
+    "tags": [],
+    "credits": "concept: aaajiao, B6; sound: B6; computer graphics: aaajiao, liu xiaoguang"
   }
 ]

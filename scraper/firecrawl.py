@@ -19,7 +19,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
-from .constants import FC_TIMEOUT, FULL_SCHEMA, PROMPT_TEMPLATES, QUICK_SCHEMA
+from .constants import (
+    FC_TIMEOUT, FULL_SCHEMA, PROMPT_TEMPLATES, QUICK_SCHEMA,
+    MATERIAL_KEYWORDS, CREDITS_PATTERNS,
+)
 from .basic import is_artwork, normalize_year, parse_size_duration, is_extraction_complete
 
 logger = logging.getLogger(__name__)
@@ -120,7 +123,7 @@ class FirecrawlMixin:
             # Enrich local_data with regex parsing
             if local_data:
                 enriched = self._enrich_with_regex(local_data, markdown)
-                if is_extraction_complete(enriched):
+                if is_extraction_complete(enriched, strict_materials=True):
                     logger.info(f"✅ Layer 2 success (1 credit): {enriched['title']}")
                     if self.use_cache:
                         self._save_cache(url, enriched)
@@ -128,7 +131,19 @@ class FirecrawlMixin:
 
         # ===== Layer 3: LLM Extract (2 credits) - Last Resort =====
         logger.info(f"🔥 Layer 3: Using LLM extraction for {url}")
-        return self._extract_with_llm(url, retry_count)
+        llm_data = self._extract_with_llm(url, retry_count)
+
+        # Merge LLM data with Layer 1/2 data to preserve images and descriptions
+        if llm_data and local_data:
+            merged = self._merge_extraction_data(local_data, llm_data)
+            if self.use_cache:
+                self._save_cache(url, merged)
+            return merged
+
+        # If no local_data, just return LLM data
+        if llm_data and self.use_cache:
+            self._save_cache(url, llm_data)
+        return llm_data
 
     def scrape_markdown(self, url: str) -> Optional[str]:
         """Scrape a URL and return markdown content (1 credit).
@@ -229,7 +244,7 @@ class FirecrawlMixin:
             markdown: Markdown content to parse.
 
         Returns:
-            Enriched data dictionary with size/duration/video_link/title_cn filled.
+            Enriched data dictionary with size/duration/video_link/title_cn/materials/credits filled.
         """
         result = data.copy()
 
@@ -264,10 +279,310 @@ class FirecrawlMixin:
                     result["title_cn"] = cn_part
                     logger.debug(f"Enriched title_cn: {cn_part}")
 
+        # === Extract materials from markdown ===
+        if not result.get("materials"):
+            materials = self._extract_materials_from_markdown(markdown)
+            if materials:
+                result["materials"] = materials
+                logger.debug(f"Enriched materials: {materials}")
+
+        # === Extract credits from markdown ===
+        if not result.get("credits"):
+            credits = self._extract_credits_from_markdown(markdown)
+            if credits:
+                result["credits"] = credits
+                logger.debug(f"Enriched credits: {credits}")
+
+        # === Clean type field and extract embedded duration/size ===
+        if result.get("type"):
+            original_type = result["type"]
+            cleaned_type, extracted_duration, extracted_size = self._clean_type_field_with_duration(original_type)
+            result["type"] = cleaned_type
+            # Use extracted duration if we don't have one yet
+            if extracted_duration and not result.get("duration"):
+                result["duration"] = extracted_duration
+                logger.debug(f"Extracted duration from type: {extracted_duration}")
+            # Use extracted size if we don't have one yet
+            if extracted_size and not result.get("size"):
+                result["size"] = extracted_size
+                logger.debug(f"Extracted size from type: {extracted_size}")
+
         # Normalize year if present
         if result.get("year"):
             result["year"] = normalize_year(result["year"])
 
+        return result
+
+    def _extract_materials_from_markdown(self, markdown: str) -> str:
+        """Extract materials from markdown content.
+
+        Uses strict validation to avoid false positives (descriptions, credits).
+
+        Args:
+            markdown: Markdown content to parse.
+
+        Returns:
+            Materials string if found, empty string otherwise.
+        """
+        # Sentence starters to exclude (likely descriptions, not material lists)
+        sentence_starters = ['the', 'for', 'in', 'a', 'an', 'this', 'it', 'was', 'is', 'are']
+
+        def is_bilingual_line(line: str) -> bool:
+            """Check if line is bilingual format (English/Chinese with / separator)."""
+            if '/' not in line and '／' not in line:
+                return False
+            has_english = any(c.isalpha() and ord(c) < 128 for c in line)
+            has_chinese = any('\u4e00' <= c <= '\u9fff' for c in line)
+            return has_english and has_chinese
+
+        text = markdown[:3000]
+        lines = text.split('\n')
+
+        for line in lines[:30]:  # Check first 30 lines
+            line = line.strip()
+            # Remove markdown formatting
+            line = re.sub(r'^\*+|\*+$', '', line).strip()
+            line = re.sub(r'^#+\s*', '', line).strip()
+
+            if not line:
+                continue
+
+            # === Strict validation (same as Layer 1) ===
+
+            # 1. Length limit: 80 for regular lines, 150 for bilingual lines
+            max_len = 150 if is_bilingual_line(line) else 80
+            if len(line) > max_len:
+                continue
+
+            # 2. Must have list separators (materials are listed, not described)
+            if not any(sep in line for sep in [',', '/', '、', '，']):
+                continue
+
+            # 3. Exclude lines starting with sentence starters
+            first_word = line.split()[0].lower() if line.split() else ''
+            if first_word in sentence_starters:
+                continue
+
+            # 4. Exclude lines containing artist name
+            line_lower = line.lower()
+            if 'aaajiao' in line_lower or '徐文恺' in line:
+                continue
+
+            # 5. Skip lines that look like credits
+            is_credits = False
+            for pattern in CREDITS_PATTERNS:
+                if re.match(pattern, line_lower, re.IGNORECASE):
+                    is_credits = True
+                    break
+            if is_credits:
+                continue
+
+            # 6. Must contain material keywords
+            if any(kw.lower() in line_lower for kw in MATERIAL_KEYWORDS):
+                return line
+
+        return ""
+
+    def _extract_credits_from_markdown(self, markdown: str) -> str:
+        """Extract credits/collaborators from markdown content.
+
+        Args:
+            markdown: Markdown content to parse.
+
+        Returns:
+            Credits string if found, empty string otherwise.
+        """
+        text = markdown[:3000]
+
+        for pattern in CREDITS_PATTERNS:
+            match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
+            if match:
+                # Use group(0) for full match since patterns may not have capture groups
+                return match.group(0).strip()
+
+        return ""
+
+    def _clean_type_field(self, type_val: str) -> str:
+        """Clean type field by removing credits, size info, and long descriptions.
+
+        Args:
+            type_val: Raw type string.
+
+        Returns:
+            Cleaned type string, or empty string if invalid.
+        """
+        cleaned, _, _ = self._clean_type_field_with_duration(type_val)
+        return cleaned
+
+    def _clean_type_field_with_duration(self, type_val: str) -> tuple:
+        """Clean type field and extract embedded duration and size.
+
+        Args:
+            type_val: Raw type string.
+
+        Returns:
+            Tuple of (cleaned_type, extracted_duration, extracted_size).
+            Any may be empty string.
+        """
+        if not type_val:
+            return "", "", ""
+
+        type_lower = type_val.lower()
+        extracted_duration = ""
+        extracted_size = ""
+
+        # Helper: check if line is bilingual format
+        def is_bilingual_line(line: str) -> bool:
+            if '/' not in line and '／' not in line:
+                return False
+            has_english = any(c.isalpha() and ord(c) < 128 for c in line)
+            has_chinese = any('\u4e00' <= c <= '\u9fff' for c in line)
+            return has_english and has_chinese
+
+        # If type looks like credits, return empty
+        credits_indicators = [
+            r'^Photo(?:\s+by)?:',
+            r'^concept:',
+            r'^sound:',
+            r'^software:',
+            r'^Copyright',
+            r'^made possible',
+        ]
+        for pattern in credits_indicators:
+            if re.match(pattern, type_lower, re.IGNORECASE):
+                return "", "", ""
+
+        # If type is URL, return empty
+        if type_val.startswith('http'):
+            return "", "", ""
+
+        # Length limit: 80 for regular, 150 for bilingual
+        max_len = 150 if is_bilingual_line(type_val) else 80
+        if len(type_val) > max_len:
+            return "", "", ""
+
+        # Exclude size-related lines (common false positives)
+        size_indicators = ['variable size', '尺寸可变', 'dimension variable',
+                           'dimensions variable', 'variable media']
+        if any(x in type_lower for x in size_indicators):
+            return "", "", ""
+
+        # Exclude lines containing artist name
+        if 'aaajiao' in type_lower or '徐文恺' in type_val:
+            return "", "", ""
+
+        # Exclude lines with colon followed by long descriptive text
+        if ':' in type_val and not re.match(r'^[A-Za-z]+:', type_lower):
+            colon_pos = type_val.find(':')
+            after_colon = type_val[colon_pos+1:].strip()
+            if len(after_colon) > 30:
+                return "", "", ""
+
+        # Extract and remove embedded duration from type
+        # Pattern 1: Quote-style duration at start (6'00" or 15′00″)
+        duration_at_start = re.match(
+            r"^(\d+['\u2018\u2019\u2032′'\"]{1,2}\d*['\u2018\u2019\u2032′''\"]*)\s*(.*)$",
+            type_val
+        )
+        if duration_at_start:
+            extracted_duration = duration_at_start.group(1).strip()
+            remaining = duration_at_start.group(2).strip()
+            type_val = remaining.lstrip('"\'"′″\u201c\u201d\u2018\u2019 ')
+        else:
+            # Pattern 2: minutes/seconds embedded in type
+            duration_match = re.search(
+                r',?\s*(\d+\s*(?:min(?:utes?)?|seconds?)[^,]*)',
+                type_val,
+                re.IGNORECASE
+            )
+            if duration_match:
+                extracted_duration = duration_match.group(1).strip()
+                type_val = re.sub(
+                    r',?\s*\d+\s*(?:min(?:utes?)?|seconds?)[^,]*',
+                    '',
+                    type_val,
+                    flags=re.IGNORECASE
+                ).strip().rstrip(',')
+
+        # Extract and remove embedded size from type
+        # E.g., "installation / 装置 76cm × 30cm × 280cm"
+        size_in_type = re.search(
+            r'(\d+\s*(?:cm|mm|m)?\s*[×xX]\s*\d+\s*(?:cm|mm|m)?(?:\s*[×xX]\s*\d+\s*(?:cm|mm|m)?)?)',
+            type_val
+        )
+        if size_in_type:
+            extracted_size = size_in_type.group(1).strip()
+            type_val = re.sub(
+                r'\s*\d+\s*(?:cm|mm|m)?\s*[×xX]\s*\d+\s*(?:cm|mm|m)?(?:\s*[×xX]\s*\d+\s*(?:cm|mm|m)?)?',
+                '',
+                type_val
+            ).strip().rstrip(',').rstrip('/')
+
+        return type_val, extracted_duration, extracted_size
+
+    def _merge_extraction_data(
+        self, base_data: Dict[str, Any], llm_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Merge Layer 1/2 data with Layer 3 LLM extraction results.
+
+        Strategy: LLM non-empty fields take priority, but preserve base data's
+        images and descriptions which are often lost in LLM extraction.
+
+        Args:
+            base_data: Data from Layer 1 (BS4) or Layer 2 (Markdown enriched).
+            llm_data: Data from Layer 3 LLM extraction.
+
+        Returns:
+            Merged dictionary with best data from both sources.
+        """
+        result = base_data.copy()
+
+        # Helper: check if a string looks like credits (not materials)
+        def looks_like_credits(text: str) -> bool:
+            if not text:
+                return False
+            text_lower = text.lower()
+            # Credits patterns: "concept:", "sound:", "software:", etc.
+            credit_indicators = ['concept:', 'sound:', 'software:', 'hardware:',
+                                 'photo:', 'video editing:', 'team:', 'director:']
+            return any(ci in text_lower for ci in credit_indicators)
+
+        # Helper: check if materials value is actually empty/placeholder
+        def is_empty_materials(text: str) -> bool:
+            if not text:
+                return True
+            text_lower = text.lower().strip()
+            empty_indicators = ['none', 'n/a', 'not specified', 'none specified',
+                                'not available', 'unknown', 'na', '-', '']
+            return text_lower in empty_indicators
+
+        # LLM priority fields - these are better extracted by LLM
+        llm_priority_fields = [
+            'title', 'title_cn', 'year', 'type', 'materials',
+            'size', 'duration', 'credits', 'video_link'
+        ]
+        for field in llm_priority_fields:
+            if llm_data.get(field):
+                # Special handling for materials field
+                if field == 'materials':
+                    mat_val = llm_data.get('materials', '')
+                    # Skip if LLM confused credits with materials
+                    if looks_like_credits(mat_val):
+                        logger.debug(f"Skipping LLM materials (looks like credits): {mat_val[:50]}")
+                        continue
+                    # Skip placeholder values
+                    if is_empty_materials(mat_val):
+                        continue
+                result[field] = llm_data[field]
+
+        # Preserve base data's images and descriptions (often lost in LLM)
+        preserve_fields = ['images', 'high_res_images', 'description_en', 'description_cn']
+        for field in preserve_fields:
+            # Keep base_data value if result doesn't have it or is empty
+            if base_data.get(field) and not result.get(field):
+                result[field] = base_data[field]
+
+        result['source'] = 'merged_llm'
         return result
 
     def _extract_with_llm(self, url: str, retry_count: int = 0) -> Optional[Dict[str, Any]]:
@@ -310,7 +625,7 @@ class FirecrawlMixin:
                     },
                     "materials": {
                         "type": "string",
-                        "description": "Materials list ONLY. Do NOT include dimensions or duration here.",
+                        "description": "Physical materials ONLY (e.g. LED, acrylic, wood, silicone, screen printing). Do NOT include credits or collaborators here.",
                     },
                     "size": {
                         "type": "string",
@@ -319,6 +634,10 @@ class FirecrawlMixin:
                     "duration": {
                         "type": "string",
                         "description": "Video duration for video/film works (e.g. '4:30', '2′47′'). Leave empty for non-video works.",
+                    },
+                    "credits": {
+                        "type": "string",
+                        "description": "Credits and collaborators (e.g. 'Photo: John', 'concept: aaajiao; sound: yang2'). Separate from materials.",
                     },
                     "video_link": {"type": "string", "description": "Vimeo URL if present"},
                 },
@@ -364,6 +683,7 @@ class FirecrawlMixin:
                         "materials": json_data.get("materials", ""),
                         "size": json_data.get("size", ""),
                         "duration": json_data.get("duration", ""),
+                        "credits": json_data.get("credits", ""),
                         "year": json_data.get("year", ""),
                         "description_cn": json_data.get("description_cn", ""),
                         "description_en": json_data.get("description_en", ""),

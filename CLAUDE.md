@@ -38,8 +38,12 @@ aaajiao_scraper/
 ├── scripts/                     # Utility scripts
 │   ├── batch_update_works.py   # Bulk markdown scraping (1 credit/page)
 │   ├── clean_size_materials.py # Extract size/duration from materials
+│   ├── clean_materials_credits.py # Clean materials and credits fields
 │   ├── generate_web_report.py  # Web report generation
+│   ├── firecrawl_test.py       # Firecrawl API testing
+│   ├── update_scraper.py       # Scraper update utilities
 │   └── verify_portfolio.py     # Data validation
+├── reports/                     # Generated markdown reports
 ├── examples/                    # Usage examples
 │   ├── quick_start.py
 │   ├── batch_extraction.py
@@ -162,7 +166,10 @@ RATE_LIMIT_CALLS_PER_MINUTE=10
 |--------|---------|
 | `batch_update_works.py` | Bulk markdown scraping with regex parsing (supports dry-run) |
 | `clean_size_materials.py` | Extract size/duration from materials field |
+| `clean_materials_credits.py` | Clean up materials and credits fields |
 | `generate_web_report.py` | Generate web-based reports |
+| `firecrawl_test.py` | Test Firecrawl API integration |
+| `update_scraper.py` | Update scraper utilities |
 | `verify_portfolio.py` | Validate portfolio data integrity |
 
 ## Output Files
@@ -173,6 +180,7 @@ Generated files (gitignored, can be regenerated):
 - `.cache/` - Multi-level cache directory
 - `output/` - Basic scraper output
 - `output/images/` - Downloaded artwork images
+- `reports/` - Generated markdown reports
 
 ## Code Style
 

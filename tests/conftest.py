@@ -141,20 +141,22 @@ def mock_requests():
 @pytest.fixture
 def scraper_with_mock_cache(temp_cache_dir, mock_firecrawl_key, monkeypatch):
     """Create a scraper instance with mocked cache directory.
-    
+
     Args:
         temp_cache_dir: Temporary cache directory fixture
         mock_firecrawl_key: Mock API key fixture
         monkeypatch: pytest monkeypatch fixture
-        
+
     Returns:
         AaajiaoScraper instance configured for testing
     """
     from scraper import AaajiaoScraper
-    
+
     # Mock environment and cache directory
+    # Need to patch both constants.CACHE_DIR and cache.CACHE_DIR since cache.py imports it at load time
     monkeypatch.setenv("FIRECRAWL_API_KEY", mock_firecrawl_key)
     monkeypatch.setattr("scraper.constants.CACHE_DIR", str(temp_cache_dir))
-    
+    monkeypatch.setattr("scraper.cache.CACHE_DIR", str(temp_cache_dir))
+
     return AaajiaoScraper(use_cache=True)
 

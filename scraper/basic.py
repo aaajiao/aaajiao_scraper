@@ -19,7 +19,11 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
-from .constants import BASE_URL, CACHE_DIR, SITEMAP_URL, TIMEOUT
+from .constants import (
+    BASE_URL, CACHE_DIR, SITEMAP_URL, TIMEOUT,
+    MATERIAL_KEYWORDS, CREDITS_PATTERNS, TYPE_KEYWORDS,
+    CANONICAL_TYPES, TYPE_POLLUTANTS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -301,15 +305,37 @@ class BasicScraperMixin:
             # Try to split from project_title first
             title, title_cn = self._split_bilingual_title(raw_title)
 
-            # --- 2. Content Analysis ---
+            # --- 2. Extract type from "Filed under" tags (most reliable source) ---
+            work_type = ""
+            tags_span = soup.find("span", class_="tags")
+            if tags_span:
+                # Find type links like: <a href=".../filter/installation">installation</a>
+                for a in tags_span.find_all("a", href=True):
+                    href = a.get("href", "")
+                    # Skip year links (e.g., /filter/2013)
+                    if "/filter/" in href and not href.split("/")[-1].isdigit():
+                        tag_text = a.get_text().strip().lower()
+                        # Check if it's a known type
+                        if tag_text in CANONICAL_TYPES:
+                            work_type = CANONICAL_TYPES[tag_text]
+                            break
+                        # Also check TYPE_KEYWORDS
+                        for kw in TYPE_KEYWORDS:
+                            if kw.lower() in tag_text:
+                                work_type = tag_text.title()
+                                break
+                        if work_type:
+                            break
+
+            # --- 3. Content Analysis ---
             content_div = soup.find("div", class_="project_content")
 
             year = ""
-            work_type = ""
             materials = ""
             size = ""
             duration = ""
             video_link = ""
+            credits = ""
             desc_en = ""
             desc_cn = ""
 
@@ -319,11 +345,30 @@ class BasicScraperMixin:
                     s.decompose()
 
                 # Extract text lines
+                import re  # Move import here for preprocessing
                 text = content_div.get_text(separator="\n")
-                lines = [line.strip() for line in text.split("\n") if line.strip()]
+                raw_lines = [line.strip() for line in text.split("\n") if line.strip()]
+
+                # === Preprocessing: Filter out interference lines ===
+                skip_patterns = [
+                    r'^Previous$',
+                    r'^Next',
+                    r'^\(?(\d+)\s+of\s+(\d+)\)?$',
+                    r'^Fullscreen$',
+                    r'^\.vimeo$',
+                    r'^\.youku$',
+                    r'^\.pdf$',
+                    r'^\.video$',
+                    r'^https?://',
+                    r'^\d{5}\s+\w+',  # Postal code address
+                    r'^Schöneberger|^Berlin|^Tiergarten',  # Address fragments
+                ]
+                lines = []
+                for line in raw_lines:
+                    if not any(re.match(p, line, re.IGNORECASE) for p in skip_patterns):
+                        lines.append(line)
 
                 # Heuristic Parsing
-                import re
 
                 # A0. Try to get bilingual title from content (format: "Title / 中文标题")
                 if not title_cn:
@@ -341,24 +386,216 @@ class BasicScraperMixin:
                     if year_match:
                         year = year_match.group(1).replace("–", "-") # Normalize en-dash
                         break
-                
+
                 # B. Find Category/Materials (Short lines with / or english/chinese mix)
                 # This is tricky without NLP, so we look for short lines that aren't the year
-                candidates = [l for l in lines if len(l) < 100 and l != year]
-                
-                # Heuristic: Type often comes early
-                if candidates:
-                    # Try to guess based on keywords
-                    common_types = [
-                        "Video", "Installation", "Website", "Software", "Print",
-                        "Data", "Performance", "Sculpture", "Media", "Photo",
-                        "装置", "录像", "雕塑", "摄影"
-                    ]
-                    for line in candidates:
-                        if any(t.lower() in line.lower() for t in common_types):
-                            work_type = line
+                candidates = [l for l in lines if len(l) < 150 and l != year]
+
+                # Use shared constants from constants.py
+                # CREDITS_PATTERNS, MATERIAL_KEYWORDS, TYPE_KEYWORDS are imported at module level
+
+                # Helper function: check if line is credits
+                def is_credits_line(line: str) -> bool:
+                    line_lower = line.lower().strip()
+                    for pattern in CREDITS_PATTERNS:
+                        if re.match(pattern, line_lower, re.IGNORECASE):
+                            return True
+                    return False
+
+                # Helper function: check if line contains material keywords
+                def has_MATERIAL_KEYWORDS(line: str) -> bool:
+                    line_lower = line.lower()
+                    return any(kw.lower() in line_lower for kw in MATERIAL_KEYWORDS)
+
+                # Helper function: check if line is bilingual format (contains / separator with Chinese)
+                def is_bilingual_line(line: str) -> bool:
+                    if '/' not in line and '／' not in line:
+                        return False
+                    # Check if line has both English and Chinese characters
+                    has_english = any(c.isalpha() and ord(c) < 128 for c in line)
+                    has_chinese = any('\u4e00' <= c <= '\u9fff' for c in line)
+                    return has_english and has_chinese
+
+                # Helper function: check if line contains type keywords
+                def has_TYPE_KEYWORDS(line: str) -> bool:
+                    line_lower = line.lower()
+                    # Exclude size-related lines (common false positives)
+                    size_indicators = ['variable size', '尺寸可变', 'dimension variable',
+                                       'dimensions variable', 'variable media']
+                    if any(x in line_lower for x in size_indicators):
+                        return False
+                    # Exclude lines that contain artist name (likely description/label format)
+                    if 'aaajiao' in line_lower or '徐文恺' in line:
+                        return False
+                    # Exclude lines with colon followed by descriptive text (e.g., "cloud.data: Soothing iPad...")
+                    # but allow "Video / 录像" format
+                    if ':' in line and not re.match(r'^[A-Za-z]+:', line_lower):
+                        # Has colon but doesn't start with a role pattern like "Photo:"
+                        colon_pos = line.find(':')
+                        after_colon = line[colon_pos+1:].strip()
+                        # If text after colon is long, it's likely a description
+                        if len(after_colon) > 30:
+                            return False
+                    # Exclude lines that look like descriptions (start with verb or article)
+                    desc_starters = ['weigh', 'the ', 'invite', 'prep', '准备', '每周', '使用', '神秘']
+                    if any(line_lower.startswith(s) for s in desc_starters):
+                        return False
+                    # Length limit: 80 for regular lines, 150 for bilingual lines
+                    max_len = 150 if is_bilingual_line(line) else 80
+                    if len(line) > max_len:
+                        return False
+                    # Must contain type keyword
+                    if not any(kw.lower() in line_lower for kw in TYPE_KEYWORDS):
+                        return False
+                    # Type keyword should appear at the START of the line (first word or after punctuation)
+                    # This is stricter to avoid matching descriptions that happen to contain a type word
+                    for kw in TYPE_KEYWORDS:
+                        kw_lower = kw.lower()
+                        # Check if line starts with the keyword (allowing for leading whitespace)
+                        if line_lower.strip().startswith(kw_lower):
+                            return True
+                        # Check if keyword appears after a slash (bilingual format like "Video / 视频")
+                        if '/' in line_lower:
+                            parts = line_lower.split('/')
+                            for part in parts:
+                                if part.strip().startswith(kw_lower):
+                                    return True
+                    return False
+
+                # Helper function: check if line is a valid materials line
+                def is_valid_materials_line(line: str, check_title: bool = True) -> bool:
+                    # Length limit: 80 for regular lines, 150 for bilingual lines
+                    max_len = 150 if is_bilingual_line(line) else 80
+                    if len(line) > max_len:
+                        return False
+                    # Must have list separators (materials are listed, not described)
+                    if not any(sep in line for sep in [',', '/', '、', '，']):
+                        return False
+                    # Exclude lines starting with common sentence starters
+                    first_word = line.split()[0].lower() if line.split() else ''
+                    sentence_starters = ['the', 'for', 'in', 'a', 'an', 'this', 'it', 'was', 'is', 'are']
+                    if first_word in sentence_starters:
+                        return False
+                    # Exclude lines that look like type lines
+                    if has_TYPE_KEYWORDS(line):
+                        return False
+                    # Exclude lines that are just year
+                    if re.match(r'^20\d{2}(?:\s*[-–]\s*20\d{2})?$', line.strip()):
+                        return False
+                    # Exclude size-only lines
+                    if re.match(r'^\d+\s*[×xX]\s*\d+(?:\s*[×xX]\s*\d+)?\s*(?:cm|mm|m)?$', line.strip(), re.IGNORECASE):
+                        return False
+                    # Exclude dimension variable lines
+                    if 'dimension' in line.lower() and 'variable' in line.lower():
+                        return False
+                    if '尺寸可变' in line:
+                        return False
+                    # Exclude lines that match or contain the title (bilingual title line)
+                    if check_title and title:
+                        title_lower = title.lower().strip()
+                        line_lower = line.lower().strip()
+                        # Check if line starts with title or title is contained in line
+                        if line_lower.startswith(title_lower) or title_lower in line_lower:
+                            return False
+                        # Also check title_cn
+                        if title_cn:
+                            if title_cn in line:
+                                return False
+                    # Exclude very short lines (likely not materials)
+                    if len(line) < 10:
+                        return False
+                    # Exclude lines containing URLs
+                    if 'http://' in line.lower() or 'https://' in line.lower() or 'www.' in line.lower():
+                        return False
+                    # Exclude lines that match credits patterns
+                    if is_credits_line(line):
+                        return False
+                    # Exclude lines that look like event info (Opening, Feb, date patterns)
+                    if re.search(r'\b(Opening|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|Jan)\b', line, re.IGNORECASE):
+                        if re.search(r'\d{1,2}[.,]\s*\d{4}', line):  # Date pattern like "21, 2014"
+                            return False
+                    # Exclude lines that look like addresses/venue info
+                    address_keywords = ['venue', 'unit', 'no.', 'road', 'street', 'avenue', 'building',
+                                        'floor', 'museum', 'gallery', 'center', 'centre']
+                    line_lower = line.lower()
+                    if sum(1 for kw in address_keywords if kw in line_lower) >= 2:
+                        return False
+                    # Exclude lines that are pure Chinese descriptions (no separators creating a list)
+                    chinese_chars = sum(1 for c in line if '\u4e00' <= c <= '\u9fff')
+                    if chinese_chars > 20 and chinese_chars / len(line) > 0.7:
+                        # Mostly Chinese, likely a description
+                        return False
+                    # Check for material keywords (relaxed: only need one match)
+                    if has_MATERIAL_KEYWORDS(line):
+                        return True
+                    # Fallback: accept lines with multiple comma-separated items that look like a list
+                    # (e.g., "silicone, fiberglass, artificial hair, clothing, seat")
+                    parts = re.split(r'[,，、/]', line)
+                    if len(parts) >= 3:
+                        # Multiple items, likely a materials list
+                        # Check it's not a description (no verbs, articles at start of parts)
+                        desc_words = ['the', 'a', 'an', 'is', 'are', 'was', 'were', 'has', 'have', 'and']
+                        for part in parts[:2]:
+                            part_lower = part.strip().lower()
+                            if part_lower.split()[0] in desc_words if part_lower.split() else False:
+                                return False
+                        return True
+                    return False
+
+                # Process candidates with position-aware logic
+                # Step 1: Find type line first (it's the anchor for materials)
+                # Only if type wasn't already found from tags
+                type_line_idx = -1
+                type_from_tags = bool(work_type)  # Remember if type came from tags
+                for idx, line in enumerate(candidates):
+                    if has_TYPE_KEYWORDS(line):
+                        for kw in TYPE_KEYWORDS:
+                            if kw.lower() in line.lower()[:30]:
+                                # Only override if we didn't get type from tags
+                                if not type_from_tags:
+                                    work_type = line
+                                type_line_idx = idx
+                                break
+                        if type_line_idx >= 0:
                             break
-                
+
+                # Step 2: Find materials - check lines AFTER type line first (position-based)
+                if type_line_idx >= 0 and not materials:
+                    # Look at lines immediately after type (typical structure)
+                    for offset in range(1, 4):  # Check next 3 lines
+                        next_idx = type_line_idx + offset
+                        if next_idx < len(candidates):
+                            next_line = candidates[next_idx]
+                            # Skip if it's size, year, or dimension variable
+                            if re.match(r'^\d+\s*[×xX]\s*\d+', next_line):
+                                continue
+                            if re.match(r'^20\d{2}(?:\s*[-–]\s*20\d{2})?$', next_line.strip()):
+                                continue
+                            if 'dimension' in next_line.lower() and 'variable' in next_line.lower():
+                                continue
+                            if '尺寸可变' in next_line:
+                                continue
+                            # Check if it looks like materials (has separators, reasonable length)
+                            if is_valid_materials_line(next_line):
+                                materials = next_line
+                                break
+
+                # Step 3: Fallback - scan all candidates for materials and credits
+                for line in candidates:
+                    if work_type and materials and credits:
+                        break
+
+                    # Check credits
+                    if not credits and is_credits_line(line):
+                        credits = line
+                        continue
+
+                    # Fallback materials detection (if position-based failed)
+                    if not materials and is_valid_materials_line(line):
+                        if not is_credits_line(line):
+                            materials = line
+                            continue
+
                 # B2. Find Size (尺寸)
                 size_patterns = [
                     r'(Dimension[s]?\s+variable\s*/?\s*尺寸可变)',
@@ -375,7 +612,7 @@ class BasicScraperMixin:
                         if match:
                             size = match.group(1).strip()
                             break
-                
+
                 # B3. Find Duration (时长) for video works
                 # Unicode quotes: ' (\u2018), ' (\u2019), ′ (\u2032), " (\u201c\u201d)
                 duration_patterns = [
@@ -392,7 +629,88 @@ class BasicScraperMixin:
                         if match:
                             duration = match.group(1).strip()
                             break
-                            
+
+                # B4. Extract and remove duration embedded in type field
+                # E.g., "Single channel video, color,sound,15 minutes and 30 seconds"
+                # Or: "6′00″ Video or Live performance"
+                # Or: "video 4'4''" (quote-style in the middle)
+                # Always clean type even if duration already found elsewhere
+                if work_type:
+                    # Pattern 1: Quote-style duration at start (6'00" or 15′00″)
+                    duration_at_start = re.match(
+                        r"^(\d+['\u2018\u2019\u2032′'\"]{1,2}\d*['\u2018\u2019\u2032′''\"]*)\s*(.*)$",
+                        work_type
+                    )
+                    if duration_at_start:
+                        # Only set duration if not already found
+                        if not duration:
+                            duration = duration_at_start.group(1).strip()
+                        # Always clean remaining type, remove leading quotes/punctuation
+                        remaining = duration_at_start.group(2).strip()
+                        work_type = remaining.lstrip('"\'"′″\u201c\u201d\u2018\u2019 ')
+                    else:
+                        # Pattern 2: Quote-style duration in the middle/end (video 4'4'')
+                        duration_quote_style = re.search(
+                            r"\s+(\d+['\u2018\u2019\u2032′'\"]{1,2}\d*['\u2018\u2019\u2032′''\"]*)\s*$",
+                            work_type
+                        )
+                        if duration_quote_style:
+                            # Only set duration if not already found
+                            if not duration:
+                                duration = duration_quote_style.group(1).strip()
+                            # Always clean up type by removing the duration part
+                            work_type = re.sub(
+                                r"\s+\d+['\u2018\u2019\u2032′'\"]{1,2}\d*['\u2018\u2019\u2032′''\"]*\s*$",
+                                '',
+                                work_type
+                            ).strip()
+                        else:
+                            # Pattern 3: minutes/seconds embedded in type
+                            duration_in_type = re.search(
+                                r',?\s*(\d+\s*(?:min(?:utes?)?|seconds?)[^,]*)',
+                                work_type,
+                                re.IGNORECASE
+                            )
+                            if duration_in_type:
+                                # Only set duration if not already found
+                                if not duration:
+                                    duration = duration_in_type.group(1).strip()
+                                # Always clean up type by removing the duration part
+                                work_type = re.sub(
+                                    r',?\s*\d+\s*(?:min(?:utes?)?|seconds?)[^,]*',
+                                    '',
+                                    work_type,
+                                    flags=re.IGNORECASE
+                                ).strip().rstrip(',')
+
+                # B5. Extract and remove size embedded in type field
+                # E.g., "installation / 装置 76cm × 30cm × 280cm"
+                # Always clean type even if size already found elsewhere
+                if work_type:
+                    size_in_type = re.search(
+                        r'(\d+\s*(?:cm|mm|m)?\s*[×xX]\s*\d+\s*(?:cm|mm|m)?(?:\s*[×xX]\s*\d+\s*(?:cm|mm|m)?)?)',
+                        work_type
+                    )
+                    if size_in_type:
+                        # Only set size if not already found
+                        if not size:
+                            size = size_in_type.group(1).strip()
+                        # Always clean up type by removing the size part
+                        work_type = re.sub(
+                            r'\s*\d+\s*(?:cm|mm|m)?\s*[×xX]\s*\d+\s*(?:cm|mm|m)?(?:\s*[×xX]\s*\d+\s*(?:cm|mm|m)?)?',
+                            '',
+                            work_type
+                        ).strip().rstrip(',').rstrip('/').strip()
+
+                # B6. Remove year range embedded in type field
+                # E.g., "Single channel video, color,sound, 2017 – 2018,"
+                if work_type:
+                    work_type = re.sub(
+                        r',?\s*20\d{2}\s*[-–]\s*20\d{2}\s*,?',
+                        '',
+                        work_type
+                    ).strip().rstrip(',').strip()
+
                 # C. Descriptions (Longer lines)
                 long_lines = [l for l in lines if len(l) > 100]
                 if long_lines:
@@ -410,15 +728,24 @@ class BasicScraperMixin:
             # --- 4. Video Link ---
             video_link = self._extract_video_link(soup)
 
+            # --- 5. Normalize type and extract embedded materials ---
+            if work_type:
+                normalized_type, type_materials = normalize_type(work_type)
+                work_type = normalized_type
+                # If we extracted materials from type field and don't have materials yet
+                if type_materials and not materials:
+                    materials = type_materials
+
             return {
                 "url": url,
                 "title": title,
                 "title_cn": title_cn,
                 "year": year,
                 "type": work_type,
-                "materials": materials,  # Hard to separate from type without LLM
+                "materials": materials,
                 "size": size,
                 "duration": duration,
+                "credits": credits,
                 "description_en": desc_en.strip(),
                 "description_cn": desc_cn.strip(),
                 "images": images,
@@ -771,6 +1098,110 @@ def normalize_year(year_str: str) -> str:
     return f"{unique_years[0]}-{unique_years[-1]}"
 
 
+def normalize_type(type_str: str) -> tuple:
+    """Normalize type string and extract materials if mixed.
+
+    Contemporary art type fields often contain mixed information:
+    - "Single channel video, color, projector, player" -> type + format + equipment
+    - "Screen printing, chevron board, metal frame" -> technique + materials
+
+    This function separates them properly.
+
+    Args:
+        type_str: Raw type string that may contain mixed info.
+
+    Returns:
+        Tuple of (normalized_type, extracted_materials):
+        - normalized_type: Clean canonical type string
+        - extracted_materials: Equipment/materials found in type field (or empty string)
+
+    Examples:
+        >>> normalize_type('installation / 装置')
+        ('Installation', '')
+        >>> normalize_type('Single channel video, color, projector, player')
+        ('Single Channel Video', 'projector, player')
+        >>> normalize_type('Screen printing, chevron board, metal frame')
+        ('Screen Print', 'chevron board, metal frame')
+    """
+    if not type_str:
+        return ('', '')
+
+    type_str = type_str.strip()
+    type_lower = type_str.lower()
+
+    # Step 1: Try direct canonical mapping
+    for key, canonical in CANONICAL_TYPES.items():
+        if type_lower == key or type_lower.replace(' ', '') == key.replace(' ', ''):
+            return (canonical, '')
+
+    # Step 2: Check if type is polluted (contains equipment/materials)
+    has_pollutants = any(p in type_lower for p in TYPE_POLLUTANTS)
+
+    if not has_pollutants and len(type_str) < 50:
+        # Clean short type, try to match prefix
+        for key, canonical in CANONICAL_TYPES.items():
+            if type_lower.startswith(key) or key in type_lower:
+                return (canonical, '')
+        # No match, return as-is (might be a valid type we don't know)
+        return (type_str, '')
+
+    # Step 3: Type is polluted - split and extract
+    # Split by common separators
+    parts = re.split(r'[,;/，；]', type_str)
+
+    clean_type_parts = []
+    material_parts = []
+
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+
+        part_lower = part.lower()
+
+        # Check if this part is a type keyword
+        is_type_part = False
+        for key in CANONICAL_TYPES.keys():
+            if key in part_lower:
+                is_type_part = True
+                # Get canonical form
+                for k, v in CANONICAL_TYPES.items():
+                    if k in part_lower:
+                        clean_type_parts.append(v)
+                        break
+                break
+
+        if not is_type_part:
+            # Check if it's a format descriptor (color, sound) - keep with type
+            format_words = ['color', 'colour', '彩色', 'sound', '有声', 'silent', '无声']
+            if any(fw in part_lower for fw in format_words):
+                continue  # Skip format descriptors
+
+            # Check if it's a pollutant (equipment/material)
+            if any(p in part_lower for p in TYPE_POLLUTANTS):
+                material_parts.append(part)
+            elif len(part) > 3:  # Likely material if not recognized
+                material_parts.append(part)
+
+    # Build result
+    if clean_type_parts:
+        # Deduplicate while preserving order
+        seen = set()
+        unique_types = []
+        for t in clean_type_parts:
+            if t not in seen:
+                seen.add(t)
+                unique_types.append(t)
+        normalized_type = ' / '.join(unique_types)
+    else:
+        # Fallback: use first part as type
+        normalized_type = parts[0].strip() if parts else type_str
+
+    extracted_materials = ', '.join(material_parts) if material_parts else ''
+
+    return (normalized_type, extracted_materials)
+
+
 def parse_size_duration(text: str) -> Dict[str, str]:
     """Extract size and duration from text using regex patterns.
 
@@ -837,13 +1268,15 @@ def parse_size_duration(text: str) -> Dict[str, str]:
     return result
 
 
-def is_extraction_complete(data: Dict[str, Any]) -> bool:
+def is_extraction_complete(data: Dict[str, Any], strict_materials: bool = False) -> bool:
     """Check if extracted data has all essential fields.
 
     Used to determine whether to proceed to more expensive extraction methods.
 
     Args:
         data: Dictionary with extracted work metadata.
+        strict_materials: If True, require materials for physical artworks
+            (installation, sculpture, print, object). Defaults to False.
 
     Returns:
         True if extraction is complete, False otherwise.
@@ -863,10 +1296,29 @@ def is_extraction_complete(data: Dict[str, Any]) -> bool:
     if not data.get('type'):
         return False
 
-    # Video works should have duration or video_link
     type_val = data.get('type', '').lower()
+    type_raw = data.get('type', '')
+
+    # Check if type field is too long (likely contains mixed info like materials)
+    # Clean type should be short (e.g., "Video Installation", "Single channel video")
+    # If type is longer than 60 chars and contains equipment keywords, it's likely polluted
+    equipment_keywords = ['projector', 'player', 'screen', 'monitor', 'computer',
+                          '投影', '播放器', '显示器', '电脑']
+    if len(type_raw) > 60 and any(kw in type_val for kw in equipment_keywords):
+        # Type field contains equipment info that should be in materials
+        if not data.get('materials'):
+            return False
+
+    # Video works should have duration or video_link
     if 'video' in type_val:
         if not (data.get('duration') or data.get('video_link')):
             return False
+
+    # Physical artwork types should have materials (when strict mode enabled)
+    if strict_materials:
+        physical_types = ['installation', 'sculpture', 'print', 'object']
+        if any(pt in type_val for pt in physical_types):
+            if not data.get('materials'):
+                return False
 
     return True

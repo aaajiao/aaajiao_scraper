@@ -113,12 +113,15 @@ class TestGetAllWorkLinks:
 
     def test_incremental_mode_no_changes(self, scraper_with_mock_cache, caplog):
         """Test incremental mode with no changes."""
+        import logging
+        caplog.set_level(logging.INFO)
+
         # Identical sitemap
         sitemap_data = {
             "https://eventstructure.com/work/test-1": "2024-01-01"
         }
         scraper_with_mock_cache._save_sitemap_cache(sitemap_data)
-        
+
         sitemap_xml = """<?xml version="1.0"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
@@ -126,30 +129,33 @@ class TestGetAllWorkLinks:
         <lastmod>2024-01-01</lastmod>
     </url>
 </urlset>"""
-        
+
         with patch.object(scraper_with_mock_cache.session, "get") as mock_get:
             mock_response = MagicMock()
             mock_response.status_code = 200
             mock_response.content = sitemap_xml.encode()
             mock_get.return_value = mock_response
-            
+
             links = scraper_with_mock_cache.get_all_work_links(incremental=True)
-            
+
             # Should return empty list
             assert len(links) == 0
             assert "No updates detected" in caplog.text
 
     def test_sitemap_failure_triggers_fallback(self, scraper_with_mock_cache, caplog):
         """Test that sitemap failure triggers fallback scanning."""
+        import logging
+        caplog.set_level(logging.INFO)
+
         with patch.object(scraper_with_mock_cache.session, "get") as mock_get:
             # First call (sitemap) fails
             mock_get.side_effect = [
                 Exception("Sitemap timeout"),
                 MagicMock(status_code=200, content=b"<html></html>")
             ]
-            
+
             links = scraper_with_mock_cache.get_all_work_links(incremental=False)
-            
+
             # Should have attempted fallback
             assert "Sitemap parsing failed" in caplog.text
             assert "Attempting to scan main page" in caplog.text
@@ -254,3 +260,157 @@ class TestIsValidWorkLink:
     def test_sitemap_url_rejected(self, scraper_with_mock_cache):
         """Test that sitemap URL is rejected."""
         assert scraper_with_mock_cache._is_valid_work_link("https://eventstructure.com/sitemap") is False
+
+
+class TestExtractMetadataBS4:
+    """Test suite for extract_metadata_bs4 method - materials and credits extraction."""
+
+    def test_extracts_physical_materials(self, scraper_with_mock_cache):
+        """Test extraction of physical materials from HTML."""
+        html = """
+        <html>
+            <div class="project_title">Test Work / 测试作品</div>
+            <div class="project_content">
+                2024
+                Video Installation / 视频装置
+                LED, acrylic, wood
+                Dimension variable / 尺寸可变
+                Some long description that goes on and on to explain the artwork
+                in detail and provide context about the artistic vision behind it.
+            </div>
+        </html>
+        """
+
+        with patch.object(scraper_with_mock_cache.session, "get") as mock_get:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.content = html.encode()
+            mock_get.return_value = mock_response
+
+            result = scraper_with_mock_cache.extract_metadata_bs4(
+                "https://eventstructure.com/test-work"
+            )
+
+            assert result is not None
+            assert result["title"] == "Test Work"
+            assert result["title_cn"] == "测试作品"
+            assert result["year"] == "2024"
+            assert "LED" in result["materials"] or "acrylic" in result["materials"]
+            assert result["credits"] == ""
+
+    def test_separates_credits_from_materials(self, scraper_with_mock_cache):
+        """Test that credits are extracted separately from materials."""
+        html = """
+        <html>
+            <div class="project_title">Test Work</div>
+            <div class="project_content">
+                2024
+                Installation
+                concept: aaajiao; sound: yang2; software: aaajiao
+                Some description about the work.
+            </div>
+        </html>
+        """
+
+        with patch.object(scraper_with_mock_cache.session, "get") as mock_get:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.content = html.encode()
+            mock_get.return_value = mock_response
+
+            result = scraper_with_mock_cache.extract_metadata_bs4(
+                "https://eventstructure.com/test-work"
+            )
+
+            assert result is not None
+            # Credits should be extracted, materials should be empty
+            assert "concept:" in result["credits"] or "aaajiao" in result["credits"]
+            assert result["materials"] == ""
+
+    def test_extracts_photo_credits(self, scraper_with_mock_cache):
+        """Test extraction of photo credits."""
+        html = """
+        <html>
+            <div class="project_title">Test Work</div>
+            <div class="project_content">
+                2024
+                Sculpture
+                Photo: Trevor Good
+                Silicone, fiberglass
+            </div>
+        </html>
+        """
+
+        with patch.object(scraper_with_mock_cache.session, "get") as mock_get:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.content = html.encode()
+            mock_get.return_value = mock_response
+
+            result = scraper_with_mock_cache.extract_metadata_bs4(
+                "https://eventstructure.com/test-work"
+            )
+
+            assert result is not None
+            assert "Photo" in result["credits"] or "Trevor" in result["credits"]
+            # Materials should contain silicone/fiberglass, not photo credit
+            if result["materials"]:
+                assert "Photo" not in result["materials"]
+
+    def test_handles_bilingual_materials(self, scraper_with_mock_cache):
+        """Test extraction of bilingual materials format."""
+        html = """
+        <html>
+            <div class="project_title">Test Work</div>
+            <div class="project_content">
+                2024
+                Print
+                Screen printing, silicone skin / 丝网印刷、硅胶皮
+                180 x 180 cm
+            </div>
+        </html>
+        """
+
+        with patch.object(scraper_with_mock_cache.session, "get") as mock_get:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.content = html.encode()
+            mock_get.return_value = mock_response
+
+            result = scraper_with_mock_cache.extract_metadata_bs4(
+                "https://eventstructure.com/test-work"
+            )
+
+            assert result is not None
+            # Should extract bilingual materials line
+            assert "screen printing" in result["materials"].lower() or "丝网印刷" in result["materials"]
+
+    def test_type_not_polluted_by_credits(self, scraper_with_mock_cache):
+        """Test that type field is not polluted by credits info."""
+        html = """
+        <html>
+            <div class="project_title">Test Work</div>
+            <div class="project_content">
+                2024
+                Photo: John Smith
+                Video Installation
+                LED screens
+            </div>
+        </html>
+        """
+
+        with patch.object(scraper_with_mock_cache.session, "get") as mock_get:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.content = html.encode()
+            mock_get.return_value = mock_response
+
+            result = scraper_with_mock_cache.extract_metadata_bs4(
+                "https://eventstructure.com/test-work"
+            )
+
+            assert result is not None
+            # Type should be Video Installation, not Photo credit
+            if result["type"]:
+                assert "Video" in result["type"] or "Installation" in result["type"]
+                assert "Photo:" not in result["type"]
