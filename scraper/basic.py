@@ -559,6 +559,25 @@ class BasicScraperMixin:
                         if any(ind in line.lower() for ind in sentence_indicators):
                             return False  # This is a description, not materials
 
+                    line_lower = line.lower()
+
+                    # Exclude lines that look like credits/collaboration info
+                    credits_indicators = ['collaboration', 'made possible', 'curated by',
+                                          'this piece was done', 'team:', 'concept:', 'sound:',
+                                          'photo:', 'director:', 'venue', '© ', 'copyright']
+                    if any(ci in line_lower for ci in credits_indicators):
+                        return False
+
+                    # Exclude lines that start with a quote (likely description)
+                    if line.startswith('"') or line.startswith('"') or line.startswith('「') or line.startswith('"'):
+                        return False
+
+                    # Exclude lines that are descriptions (sentence-like with verbs)
+                    desc_verbs = [' build ', ' builds ', ' through ', ' invit', ' explore',
+                                  ' examine', ' question', ' reflect', ' represent', ' create']
+                    if any(v in line_lower for v in desc_verbs):
+                        return False
+
                     # Length limit: 80 for regular lines, 150 for bilingual lines
                     max_len = 150 if is_bilingual_line(line) else 80
                     if len(line) > max_len:

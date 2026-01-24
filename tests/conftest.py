@@ -72,12 +72,41 @@ def sample_artwork_data() -> Dict[str, Any]:
 @pytest.fixture
 def mock_firecrawl_response(sample_artwork_data):
     """Provide a mock successful Firecrawl API response.
-    
+
     Args:
         sample_artwork_data: Sample artwork fixture
-        
+
     Returns:
-        Dictionary mimicking Firecrawl V2 API response
+        Dictionary mimicking Firecrawl V2 API response (LLM extraction format)
+    """
+    return {
+        "success": True,
+        "data": {
+            "json": {
+                "title": sample_artwork_data["title"],
+                "title_cn": sample_artwork_data["title_cn"],
+                "year": sample_artwork_data["year"],
+                "type": sample_artwork_data["type"],
+                "category": sample_artwork_data["type"],  # LLM uses category
+                "materials": sample_artwork_data["materials"],
+                "description_en": sample_artwork_data["description_en"],
+                "description_cn": sample_artwork_data["description_cn"],
+                "video_link": sample_artwork_data["video_link"],
+                "duration": sample_artwork_data["duration"],
+            }
+        },
+    }
+
+
+@pytest.fixture
+def mock_firecrawl_extract_response(sample_artwork_data):
+    """Provide a mock successful Firecrawl Extract API response (schema extraction).
+
+    Args:
+        sample_artwork_data: Sample artwork fixture
+
+    Returns:
+        Dictionary mimicking Firecrawl V2 Extract API response
     """
     return {
         "success": True,

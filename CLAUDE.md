@@ -4,7 +4,7 @@ This file provides guidance for Claude Code when working with this repository.
 
 ## Project Overview
 
-**aaajiao Portfolio Scraper** (v6.4.0) - A Python-based web scraper for extracting artwork metadata from eventstructure.com. It implements a two-layer hybrid extraction strategy (Strategy B) with SPA title validation, combining local parsing with AI-powered schema extraction for 100% data accuracy.
+**aaajiao Portfolio Scraper** (v6.5.0) - A Python-based web scraper for extracting artwork metadata from eventstructure.com. It implements a two-layer hybrid extraction strategy (Strategy B) with SPA title validation, combining local parsing with AI-powered schema extraction for 100% data accuracy.
 
 ## Tech Stack
 
@@ -161,6 +161,13 @@ All artworks go through Layer 2 for content fields. Layer 1 filters out non-artw
 - **`_is_known_sidebar_title(title, url)`** - Detect sidebar navigation pollution
 - **`_validate_title_against_url(title, url)`** - Validate title matches URL slug
 - **`_titles_are_similar(title1, title2)`** - Fuzzy title comparison
+- **`_clean_duplicate_title(title, title_cn)`** - Clean up duplicate bilingual title patterns
+
+### Data Validation Methods
+
+- **`is_description_not_materials(text)`** - Detect descriptions misclassified as materials
+- **`looks_like_credits(text)`** - Detect credits misclassified as materials
+- **`is_valid_materials_line(line)`** - Validate materials field content
 
 ### Caching System
 
@@ -196,6 +203,7 @@ RATE_LIMIT_CALLS_PER_MINUTE=10
 | Script | Purpose |
 |--------|---------|
 | `batch_update_works.py` | Bulk update works using two-layer extraction (supports dry-run) |
+| `fix_problematic_works.py` | Fix data issues: type null, duplicate titles, invalid materials |
 | `verify_layer2.py` | Test Layer 2 (Firecrawl Extract) extraction quality |
 | `clean_size_materials.py` | Extract size/duration from materials field |
 | `clean_materials_credits.py` | Clean up materials and credits fields |
@@ -229,6 +237,8 @@ Generated files (gitignored, can be regenerated):
 - **Concurrent Processing** - ThreadPoolExecutor for parallel extraction
 - **Silent Failure** - Cache operations fail silently to avoid blocking
 - **SPA Title Validation** - Four-layer validation chain prevents navigation pollution
+- **Materials Validation** - Filters out descriptions, credits, and invalid data from materials field
+- **Title Deduplication** - Automatically cleans duplicate bilingual title patterns
 
 ## Important Notes
 

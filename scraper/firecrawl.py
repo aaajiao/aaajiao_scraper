@@ -540,17 +540,46 @@ class FirecrawlMixin:
             text_lower = text.lower()
             # Credits patterns: "concept:", "sound:", "software:", etc.
             credit_indicators = ['concept:', 'sound:', 'software:', 'hardware:',
-                                 'photo:', 'video editing:', 'team:', 'director:']
+                                 'photo:', 'video editing:', 'team:', 'director:',
+                                 'collaboration', 'made possible', 'curated by',
+                                 'this piece was done', 'venue', '© ']
             return any(ci in text_lower for ci in credit_indicators)
 
-        # Helper: check if materials value is actually empty/placeholder
+        # Helper: check if materials value is actually empty/placeholder or invalid
         def is_empty_materials(text: str) -> bool:
             if not text:
                 return True
             text_lower = text.lower().strip()
             empty_indicators = ['none', 'n/a', 'not specified', 'none specified',
-                                'not available', 'unknown', 'na', '-', '']
+                                'not available', 'unknown', 'na', '-', '', 'null']
             return text_lower in empty_indicators
+
+        # Helper: check if materials is actually a description (too long, sentence-like)
+        def is_description_not_materials(text: str) -> bool:
+            if not text:
+                return False
+            # Materials should be short lists, not paragraphs
+            if len(text) > 150:
+                return True
+            # Check for sentence indicators (descriptions tend to have these)
+            text_lower = text.lower()
+            sentence_indicators = [' is ', ' are ', ' was ', ' were ', ' build ', ' builds ',
+                                   ' through ', 'invit', ' the ', ' this ', ' for ']
+            # If text has 2+ sentence indicators, likely a description
+            indicator_count = sum(1 for ind in sentence_indicators if ind in text_lower)
+            if indicator_count >= 2:
+                return True
+            # Check if starts with a quote (likely a description)
+            quote_chars = ['"', '\u201c', '\u201d', '\u300c', '\u300e', "'", '\u2018', '\u300a']
+            if any(text.startswith(q) for q in quote_chars):
+                return True
+            # Chinese description indicators
+            chinese_desc_indicators = ['生于', '工作涉及', '展览', '概念', '探索', '邀请', '创作']
+            if any(ind in text for ind in chinese_desc_indicators):
+                chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+                if chinese_chars > 20:
+                    return True
+            return False
 
         # LLM priority fields - these are better extracted by LLM
         llm_priority_fields = [
@@ -559,6 +588,13 @@ class FirecrawlMixin:
         ]
         for field in llm_priority_fields:
             if llm_data.get(field):
+                # Special handling for type field - filter out literal "null"
+                if field == 'type':
+                    type_val = llm_data.get('type', '')
+                    if type_val.lower().strip() == 'null':
+                        logger.debug(f"Skipping LLM type (literal null)")
+                        continue
+
                 # Special handling for materials field
                 if field == 'materials':
                     mat_val = llm_data.get('materials', '')
@@ -568,6 +604,10 @@ class FirecrawlMixin:
                         continue
                     # Skip placeholder values
                     if is_empty_materials(mat_val):
+                        continue
+                    # Skip if it's actually a description
+                    if is_description_not_materials(mat_val):
+                        logger.debug(f"Skipping LLM materials (looks like description): {mat_val[:50]}")
                         continue
                 result[field] = llm_data[field]
 
@@ -1050,6 +1090,72 @@ class FirecrawlMixin:
         similarity = SequenceMatcher(None, norm1, norm2).ratio()
         return similarity >= threshold
 
+    def _clean_duplicate_title(self, title: str, title_cn: str) -> Tuple[str, str]:
+        """Clean up duplicate title patterns.
+
+        Handles cases like:
+        - "Seed: 3339138223 / 种子: 3339138223" where both parts are in title
+        - "icon 2018 / 图标 2018" where title includes Chinese
+        - "bot / 观察者 / 观察者" where title_cn is duplicated
+
+        Args:
+            title: English title (may contain bilingual format)
+            title_cn: Chinese title (may be duplicate or empty)
+
+        Returns:
+            Tuple of (cleaned_title, cleaned_title_cn)
+        """
+        if not title:
+            return title, title_cn
+
+        # Check if title contains bilingual format "English / Chinese"
+        if '/' in title:
+            parts = [p.strip() for p in title.split('/')]
+            # Check if we have English / Chinese pattern
+            if len(parts) >= 2:
+                # Check which parts have Chinese characters
+                has_chinese = [any('\u4e00' <= c <= '\u9fff' for c in p) for p in parts]
+
+                if not has_chinese[0] and has_chinese[-1]:
+                    # First part is English, last part has Chinese
+                    clean_title = parts[0]
+                    # Take the Chinese part, but check for duplicates
+                    clean_cn = parts[-1]
+
+                    # If we already have title_cn and it's the same, keep it
+                    if title_cn and clean_cn != title_cn:
+                        # Check if title_cn is just a duplicate of clean_cn
+                        if clean_cn in title_cn or title_cn in clean_cn:
+                            clean_cn = clean_cn  # Use the extracted one
+                        else:
+                            clean_cn = title_cn  # Keep original
+
+                    return clean_title, clean_cn
+
+                elif all(not hc for hc in has_chinese):
+                    # All parts are English (e.g., "landscape 005 / landscape 005 动森限定")
+                    # Check if parts are similar
+                    if len(parts) == 2:
+                        # If second part contains first part, use first as title
+                        if parts[0].lower() in parts[1].lower():
+                            clean_title = parts[0]
+                            # Check if second part has additional Chinese content
+                            cn_chars = ''.join(c for c in parts[1] if '\u4e00' <= c <= '\u9fff')
+                            if cn_chars:
+                                clean_cn = parts[1]
+                            else:
+                                clean_cn = title_cn
+                            return clean_title, clean_cn
+
+        # Check if title_cn is a duplicate (e.g., "观察者 / 观察者")
+        if title_cn and '/' in title_cn:
+            cn_parts = [p.strip() for p in title_cn.split('/')]
+            # Check for duplicates
+            if len(cn_parts) >= 2 and cn_parts[0] == cn_parts[-1]:
+                title_cn = cn_parts[0]
+
+        return title, title_cn
+
     def extract_work_details_v2(self, url: str) -> Optional[Dict[str, Any]]:
         """Optimized two-layer extraction strategy for maximum completeness.
 
@@ -1175,6 +1281,16 @@ class FirecrawlMixin:
             # Layer 2 failed, use Layer 1 data only
             logger.warning(f"⚠️ Layer 2 failed, using Layer 1 only: {local_data.get('title', 'Unknown')}")
             local_data['source'] = 'layer1_only'
+
+        # Clean up duplicate titles before caching
+        if local_data:
+            title = local_data.get('title', '')
+            title_cn = local_data.get('title_cn', '')
+            clean_title, clean_cn = self._clean_duplicate_title(title, title_cn)
+            if clean_title != title or clean_cn != title_cn:
+                logger.debug(f"Title cleaned: '{title}' -> '{clean_title}', '{title_cn}' -> '{clean_cn}'")
+                local_data['title'] = clean_title
+                local_data['title_cn'] = clean_cn
 
         # Cache and return
         if local_data and self.use_cache:

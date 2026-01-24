@@ -102,7 +102,9 @@ class TestGenerateMarkdown:
         scraper_with_mock_cache.generate_markdown(str(output_file))
         
         content = output_file.read_text()
-        assert "English Title / 中文标题" in content
+        # Title is formatted as a link: [English Title](url) / 中文标题
+        assert "English Title" in content
+        assert "中文标题" in content
 
 
 class TestGenerateAgentReport:
