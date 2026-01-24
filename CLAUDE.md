@@ -4,7 +4,7 @@ This file provides guidance for Claude Code when working with this repository.
 
 ## Project Overview
 
-**aaajiao Portfolio Scraper** (v6.3.0) - A Python-based web scraper for extracting artwork metadata from eventstructure.com. It implements a two-layer hybrid extraction strategy combining local parsing with AI-powered schema extraction for 100% data accuracy.
+**aaajiao Portfolio Scraper** (v6.4.0) - A Python-based web scraper for extracting artwork metadata from eventstructure.com. It implements a two-layer hybrid extraction strategy (Strategy B) with SPA title validation, combining local parsing with AI-powered schema extraction for 100% data accuracy.
 
 ## Tech Stack
 
@@ -117,33 +117,50 @@ AaajiaoScraper
 └── ReportMixin          # JSON, Markdown, agent report generation
 ```
 
-### Two-Layer Hybrid Extraction Strategy
+### Two-Layer Hybrid Extraction Strategy (Strategy B)
 
-The extraction strategy ensures 100% data accuracy through mandatory AI verification:
+The extraction strategy ensures 100% data accuracy through mandatory AI verification with SPA title validation:
 
 1. **Layer 0**: Cache check (free)
-2. **Layer 1**: Local BeautifulSoup parsing (0 credits) - filtering non-artwork pages + extracting authoritative fields
-3. **Layer 2**: Firecrawl Extract API **v2** with Pydantic schema (~5 credits/extract) - AI verification for ALL artworks
+2. **Layer 1**: Local BeautifulSoup parsing (0 credits) - filtering non-artwork pages + extracting authoritative fields + title baseline for validation
+3. **Layer 2**: Firecrawl Extract API **v2** with Pydantic schema (~5 credits/extract) - ALWAYS called for content fields
 
 **IMPORTANT: All Firecrawl API calls use v2 endpoints:**
 - Extract: `https://api.firecrawl.dev/v2/extract`
 - Scrape: `https://api.firecrawl.dev/v2/scrape`
 - Agent: `https://api.firecrawl.dev/v2/agent`
 
-**Field Priority:**
+**Field Priority (Strategy B):**
 - **Layer 1 authoritative**: `year`, `type` (from tags, ~100% accurate), `images` (from slideshow container)
-- **Layer 2 authoritative**: `title`, `title_cn`, `materials`, `size`, `duration`, `credits`, `description_en`, `description_cn`
+- **Layer 1 validation**: `title` (used as baseline to validate Layer 2's title)
+- **Layer 2 authoritative**: `title` (if validated), `title_cn`, `materials`, `size`, `duration`, `credits`, `description_en`, `description_cn`
 
-All artworks go through Layer 2 verification. Layer 1 filters out non-artwork pages (exhibitions, catalogs) to save API costs.
+**SPA Title Validation Chain:**
+Layer 2 title must pass validation before being accepted:
+1. `_is_type_string()` - Reject type strings like "video installation"
+2. `_is_known_sidebar_title()` - Reject sidebar navigation items on wrong pages
+3. `_validate_title_against_url()` - Validate title matches URL slug
+4. `_titles_are_similar()` - Fuzzy match with Layer 1 title
+
+If validation fails, Layer 1 title is kept while Layer 2 content fields are still used.
+
+All artworks go through Layer 2 for content fields. Layer 1 filters out non-artwork pages (exhibitions, catalogs) to save API costs.
 
 ### Key Methods
 
 - **`run_full_pipeline()`** - Main one-click extraction with incremental support
-- **`extract_work_details_v2(url)`** - Optimized two-layer hybrid extraction (recommended)
+- **`extract_work_details_v2(url)`** - Optimized two-layer hybrid extraction with SPA title validation (recommended)
 - **`extract_work_details(url)`** - [LEGACY] Old three-tier extraction (deprecated)
 - **`scrape_markdown(url)`** - Low-cost Firecrawl scrape (1 credit)
 - **`agent_search(urls)`** - Batch/agent mode intelligent search
 - **`discover_urls_with_scroll()`** - Infinite-scroll URL discovery
+
+### Title Validation Methods
+
+- **`_is_type_string(title)`** - Check if title is actually an artwork type (e.g., "video installation")
+- **`_is_known_sidebar_title(title, url)`** - Detect sidebar navigation pollution
+- **`_validate_title_against_url(title, url)`** - Validate title matches URL slug
+- **`_titles_are_similar(title1, title2)`** - Fuzzy title comparison
 
 ### Caching System
 
@@ -211,6 +228,7 @@ Generated files (gitignored, can be regenerated):
 - **Retry Logic** - Automatic retries with exponential backoff (3x)
 - **Concurrent Processing** - ThreadPoolExecutor for parallel extraction
 - **Silent Failure** - Cache operations fail silently to avoid blocking
+- **SPA Title Validation** - Four-layer validation chain prevents navigation pollution
 
 ## Important Notes
 

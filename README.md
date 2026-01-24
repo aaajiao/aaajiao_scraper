@@ -11,24 +11,31 @@
 
 ## 核心特性
 
-### 两层混合提取策略（v6.3.0 新架构）
+### 两层混合提取策略 + SPA 标题验证（v6.4.0 Strategy B）
 
-采用优化的两层混合策略，确保 100% 数据准确性：
+采用优化的两层混合策略 + 四层标题验证，确保 100% 数据准确性：
 
 1. **Layer 0**: 缓存检查（免费）
-2. **Layer 1**: 本地 BeautifulSoup 解析（0 Credits）- 快速过滤 + 提取 year/type/images
-3. **Layer 2**: Firecrawl Extract API **v2** + Pydantic（~5-20 Credits）- AI 验证和补充所有文本字段
+2. **Layer 1**: 本地 BeautifulSoup 解析（0 Credits）- 快速过滤 + 提取 year/type/images + 标题验证基准
+3. **Layer 2**: Firecrawl Extract API **v2** + Pydantic（~5 Credits）- **始终调用**获取内容字段
 
 **重要：所有 Firecrawl API 调用使用 v2 端点：**
 - Extract: `https://api.firecrawl.dev/v2/extract`
 - Scrape: `https://api.firecrawl.dev/v2/scrape`
 - Agent: `https://api.firecrawl.dev/v2/agent`
 
-**字段优先级：**
+**字段优先级（Strategy B）：**
 - **Layer 1 权威字段**: `year`, `type`（从 tags 提取，~100% 准确）, `images`（从 slideshow 容器提取）
-- **Layer 2 权威字段**: `title`, `title_cn`, `materials`, `size`, `duration`, `credits`, `description_en`, `description_cn`
+- **Layer 1 验证字段**: `title`（作为基准验证 Layer 2 标题）
+- **Layer 2 权威字段**: `title`（验证通过后）, `title_cn`, `materials`, `size`, `duration`, `credits`, `description_en`, `description_cn`
 
-所有作品都经过 Layer 2 验证，确保数据完整性。Layer 1 负责过滤非作品页面（exhibition/catalog）以节省 API 成本。
+**SPA 标题验证链（防止导航栏污染）：**
+1. `_is_type_string()` - 拒绝类型字符串（如 "video installation / 视频装置"）
+2. `_is_known_sidebar_title()` - 拒绝已知侧边栏标题在错误页面使用
+3. `_validate_title_against_url()` - 验证标题与 URL slug 匹配
+4. `_titles_are_similar()` - 与 Layer 1 标题模糊匹配
+
+所有作品都经过 Layer 2 获取内容字段。Layer 1 负责过滤非作品页面（exhibition/catalog）以节省 API 成本。
 
 ### 智能缓存系统
 
@@ -276,7 +283,20 @@ aaajiao_scraper/
 
 ## 更新日志
 
-### v6.3.0（当前版本）
+### v6.4.0（当前版本）
+
+- **Strategy B 架构**：Layer 2 始终调用获取内容字段，Layer 1 提供 year/type/images 和标题验证
+- **SPA 标题验证链**：四层验证防止导航栏污染
+  - `_is_type_string()` - 拒绝类型字符串（如 "video installation"）
+  - `_is_known_sidebar_title()` - 拒绝已知侧边栏标题在错误页面使用（如 "Guard, I…"、"One ritual"）
+  - `_validate_title_against_url()` - 验证标题与 URL slug 匹配
+  - `_titles_are_similar()` - 与 Layer 1 标题模糊匹配
+- **数据污染修复**：修复 15 个被错误标题覆盖的作品（"Guard, I…"、"video installation"、"One ritual"）
+- **title_cn 提取优化**：BS4 现在检查行长度和标题起始位置，避免提取描述片段
+- **ARTWORK_EXTRACT_PROMPT 更新**：明确警告 LLM 忽略 SPA 侧边栏内容
+- **已知侧边栏标题映射**：`SIDEBAR_TITLE_TO_URL` 映射表用于精确检测
+
+### v6.3.0
 
 - **升级到 Firecrawl v2 API**：所有 API 调用使用 v2 端点，成本降低约 10 倍
   - Extract: `/v2/extract`（~5-20 credits vs v1 的 ~30 credits）

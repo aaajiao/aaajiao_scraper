@@ -10,7 +10,9 @@ This module contains all configuration constants including:
 All constants are immutable and should not be modified at runtime.
 """
 
-from typing import Any, Dict, Final, List
+from typing import Any, Dict, Final, List, Optional
+
+from pydantic import BaseModel, Field
 
 # ====================
 # Extraction Schema Definitions
@@ -139,6 +141,13 @@ TIMEOUT: Final[int] = 15
 
 FC_TIMEOUT: Final[int] = 30
 """Firecrawl API request timeout in seconds (longer due to LLM processing)."""
+
+# API Cost Estimates (for documentation and planning)
+SCRAPE_CREDITS_PER_PAGE: Final[int] = 1
+"""Firecrawl Scrape API cost: 1 credit per page (markdown only)."""
+
+EXTRACT_CREDITS_PER_PAGE: Final[int] = 30
+"""Firecrawl Extract API average cost: ~30 credits per page (token-based, actual 20-50)."""
 
 # ====================
 # Extraction Pattern Constants
@@ -303,6 +312,27 @@ Maps various type strings (including Chinese) to standardized English type names
 Used to clean and normalize the 'type' field.
 """
 
+# ====================
+# Excluded Tags (for filtering non-artwork pages)
+# ====================
+
+EXCLUDED_TAGS: Final[List[str]] = [
+    # Exhibition types
+    "exhibition", "solo exhibition", "group exhibition",
+    "展览", "个展", "群展",
+    # Publications
+    "catalog", "catalogue", "book", "publication",
+    "图录", "书籍", "出版物",
+    # Other non-artwork
+    "event", "talk", "lecture", "workshop",
+    "活动", "讲座", "工作坊",
+]
+"""Tags that indicate non-artwork pages (exhibitions, publications, events).
+
+Used in extract_metadata_bs4() to early-detect and mark pages for filtering.
+These pages will be skipped by is_artwork() check.
+"""
+
 # Equipment/material keywords that should NOT be in type field
 TYPE_POLLUTANTS: Final[List[str]] = [
     # Equipment (should be in materials)
@@ -321,4 +351,99 @@ TYPE_POLLUTANTS: Final[List[str]] = [
 
 If type field contains these AND is longer than expected,
 the extra content should be moved to materials.
+"""
+
+# ====================
+# Pydantic Schema for Firecrawl Extract
+# ====================
+
+
+class ArtworkSchema(BaseModel):
+    """Pydantic schema for structured artwork metadata extraction.
+
+    Used with Firecrawl Extract API to ensure consistent, typed output.
+    Field descriptions guide the LLM on what to extract and expected formats.
+    """
+
+    title: str = Field(description="Artwork title in English")
+    title_cn: Optional[str] = Field(
+        default=None,
+        description="Chinese title, usually after '/' in bilingual format like 'Title / 标题'",
+    )
+    year: str = Field(
+        description="Creation year, format: YYYY or YYYY-YYYY for ranges"
+    )
+    type: Optional[str] = Field(
+        default=None,
+        description="Artwork type: Installation, Video, Performance, Sculpture, etc.",
+    )
+
+    # Physical properties
+    size: Optional[str] = Field(
+        default=None,
+        description=(
+            "Physical dimensions. Accept formats: 180 x 180 cm, 180×180×50cm, "
+            "180*180, Dimension variable, 尺寸可变"
+        ),
+    )
+    duration: Optional[str] = Field(
+        default=None,
+        description=(
+            "Video/sound duration. Accept formats: 6'30\", 4 minutes, 10 min, "
+            "4分30秒, 00:04:30"
+        ),
+    )
+    materials: Optional[str] = Field(
+        default=None,
+        description=(
+            "Materials and medium used, comma-separated. "
+            "Example: 'LED screen, acrylic, wood / LED屏幕, 亚克力, 木'"
+        ),
+    )
+
+    # Descriptions
+    description_en: Optional[str] = Field(
+        default=None, description="English description paragraph(s)"
+    )
+    description_cn: Optional[str] = Field(
+        default=None, description="Chinese description paragraph(s) (中文描述)"
+    )
+
+    # Credits
+    credits: Optional[str] = Field(
+        default=None,
+        description=(
+            "Credits and acknowledgments: photo by, technical support, "
+            "collaboration, made possible with, etc."
+        ),
+    )
+
+
+ARTWORK_EXTRACT_PROMPT: Final[str] = """
+Extract artwork metadata from this artist portfolio page.
+
+⚠️ CRITICAL - THIS IS A SINGLE PAGE APPLICATION (SPA):
+- The page contains a SIDEBAR with links to OTHER artworks - IGNORE THESE!
+- Only extract from the MAIN CONTENT AREA (center/right of page)
+- The sidebar may list: "One ritual", "Two rituals", "Guard, I...", etc. - DO NOT extract these!
+- If you see multiple titles, the MAIN artwork title is the one with full description below it
+
+HOW TO IDENTIFY THE CORRECT ARTWORK:
+1. Look for the largest/most prominent title in the main content area
+2. The correct title has detailed information below it (year, type, materials, description)
+3. Sidebar items only have title + small thumbnail - skip these
+
+EXTRACTION RULES:
+1. Title format: Usually "English Title / 中文标题" - split into title and title_cn
+2. Size: 180 x 180 cm, 180×180×50cm, Dimension variable, 尺寸可变
+3. Duration: 6'30", 4 minutes, 4分30秒, 00:04:30 (for video/sound works)
+4. Materials: Physical materials only (LED, acrylic, wood, silicone, etc.)
+5. Credits: Photo credits, collaborators, technical support
+6. Descriptions: Separate English and Chinese paragraphs
+
+VERIFICATION: Your extracted title should relate to the URL slug of the page.
+"""
+"""Optimized prompt for Firecrawl Extract API.
+
+Emphasizes ignoring sidebar content and handling various data formats.
 """

@@ -22,7 +22,7 @@ from bs4 import BeautifulSoup
 from .constants import (
     BASE_URL, CACHE_DIR, SITEMAP_URL, TIMEOUT,
     MATERIAL_KEYWORDS, CREDITS_PATTERNS, TYPE_KEYWORDS,
-    CANONICAL_TYPES, TYPE_POLLUTANTS,
+    CANONICAL_TYPES, TYPE_POLLUTANTS, EXCLUDED_TAGS,
 )
 
 logger = logging.getLogger(__name__)
@@ -305,23 +305,40 @@ class BasicScraperMixin:
             # Try to split from project_title first
             title, title_cn = self._split_bilingual_title(raw_title)
 
-            # --- 2. Extract type from "Filed under" tags (most reliable source) ---
+            # --- 2. Extract type AND year from "Filed under" tags (most reliable source) ---
             work_type = ""
+            year_from_tags = ""
             tags_span = soup.find("span", class_="tags")
             if tags_span:
-                # Find type links like: <a href=".../filter/installation">installation</a>
+                # Find type/year links like: <a href=".../filter/installation">installation</a>
                 for a in tags_span.find_all("a", href=True):
                     href = a.get("href", "")
-                    # Skip year links (e.g., /filter/2013)
-                    if "/filter/" in href and not href.split("/")[-1].isdigit():
-                        tag_text = a.get_text().strip().lower()
-                        # Check if it's a known type
-                        if tag_text in CANONICAL_TYPES:
-                            work_type = CANONICAL_TYPES[tag_text]
+                    if "/filter/" in href:
+                        tag_text = a.get_text().strip()
+
+                        # Extract year from tags (format: 2013 or 2019-2020)
+                        if re.match(r'^20\d{2}(?:-20\d{2})?$', tag_text):
+                            if not year_from_tags:  # Only take the first year tag
+                                year_from_tags = tag_text
+                            continue  # Continue to process other tags
+
+                        # Extract type (existing logic)
+                        tag_lower = tag_text.lower()
+
+                        # Priority 1: Check if it's an excluded type (exhibition, catalog, etc.)
+                        # This ensures non-artwork pages are properly marked for filtering
+                        if tag_lower in EXCLUDED_TAGS:
+                            work_type = tag_text.title()  # e.g., "Exhibition", "Catalog"
                             break
-                        # Also check TYPE_KEYWORDS
+
+                        # Priority 2: Check if it's a known artwork type
+                        if tag_lower in CANONICAL_TYPES:
+                            work_type = CANONICAL_TYPES[tag_lower]
+                            break
+
+                        # Priority 3: Check TYPE_KEYWORDS for partial match
                         for kw in TYPE_KEYWORDS:
-                            if kw.lower() in tag_text:
+                            if kw.lower() in tag_lower:
                                 work_type = tag_text.title()
                                 break
                         if work_type:
@@ -344,8 +361,7 @@ class BasicScraperMixin:
                 for s in content_div(["script", "style"]):
                     s.decompose()
 
-                # Extract text lines
-                import re  # Move import here for preprocessing
+                # Extract text lines (re is imported at module level)
                 text = content_div.get_text(separator="\n")
                 raw_lines = [line.strip() for line in text.split("\n") if line.strip()]
 
@@ -373,19 +389,29 @@ class BasicScraperMixin:
                 # A0. Try to get bilingual title from content (format: "Title / 中文标题")
                 if not title_cn:
                     for line in lines[:10]:  # Check first 10 lines
+                        # Skip long lines (likely descriptions, not titles)
+                        if len(line) > 80:
+                            continue
                         if "/" in line and title.lower() in line.lower():
+                            # Additional validation: line should start with the title
+                            # to avoid matching descriptions that happen to contain the title
+                            line_lower = line.lower().strip()
+                            if not line_lower.startswith(title.lower()):
+                                continue
                             _, cn = self._split_bilingual_title(line)
                             if cn:
                                 title_cn = cn
                                 break
 
-                # A. Find Year (Priority: Standalone year specific regex)
-                for line in lines:
-                    # Match 2018 or 2018-2022
-                    year_match = re.search(r'\b(20\d{2}(?:\s*[-–]\s*20\d{2})?)\b', line)
-                    if year_match:
-                        year = year_match.group(1).replace("–", "-") # Normalize en-dash
-                        break
+                # A. Find Year (Priority: tags > content regex)
+                year = year_from_tags  # Prefer year from tags (most reliable)
+                if not year:
+                    for line in lines:
+                        # Match 2018 or 2018-2022
+                        year_match = re.search(r'\b(20\d{2}(?:\s*[-–]\s*20\d{2})?)\b', line)
+                        if year_match:
+                            year = year_match.group(1).replace("–", "-")  # Normalize en-dash
+                            break
 
                 # B. Find Category/Materials (Short lines with / or english/chinese mix)
                 # This is tricky without NLP, so we look for short lines that aren't the year
@@ -394,18 +420,80 @@ class BasicScraperMixin:
                 # Use shared constants from constants.py
                 # CREDITS_PATTERNS, MATERIAL_KEYWORDS, TYPE_KEYWORDS are imported at module level
 
+                # Helper function: check if line contains material keywords (define early for B0)
+                def has_MATERIAL_KEYWORDS(line: str) -> bool:
+                    line_lower = line.lower()
+                    return any(kw.lower() in line_lower for kw in MATERIAL_KEYWORDS)
+
+                # B0. Position-based metadata extraction
+                # Page structure is typically: Title, Type, Materials, Size, Year
+                # Find the metadata block by looking for the title line
+                title_idx = -1
+                for idx, line in enumerate(lines[:15]):
+                    if title.lower() in line.lower() or (title_cn and title_cn in line):
+                        title_idx = idx
+                        break
+
+                # If we found title, extract metadata from fixed positions
+                if title_idx >= 0:
+                    metadata_lines = lines[title_idx:title_idx + 6]  # Title + 5 lines
+                    logger.debug(f"Metadata block: {metadata_lines}")
+
+                    # Line after title is usually Type
+                    # Line after Type is usually Materials (if not Size/Year)
+                    for offset, mline in enumerate(metadata_lines[1:], 1):
+                        mline_lower = mline.lower()
+
+                        # Skip size lines
+                        if re.match(r'^\d+\s*[×xX]\s*\d+', mline):
+                            continue
+                        if 'dimension' in mline_lower and 'variable' in mline_lower:
+                            continue
+                        if '尺寸可变' in mline:
+                            continue
+                        # Skip year lines
+                        if re.match(r'^20\d{2}(?:\s*[-–]\s*20\d{2})?$', mline.strip()):
+                            continue
+                        # Skip if it's the type line (contains TYPE_KEYWORDS)
+                        is_type_line = any(kw.lower() in mline_lower for kw in TYPE_KEYWORDS)
+                        if is_type_line:
+                            # If type not set from tags, use this
+                            if not work_type:
+                                work_type = mline
+                            continue
+
+                        # This is likely materials
+                        # Accept bilingual format, comma-separated, or single-item materials with keywords
+                        # But skip lines that look like descriptions
+                        # Check 1: Long lines with sentence-ending punctuation
+                        if len(mline) > 80 and ('。' in mline or mline.endswith('.')):
+                            continue
+                        # Check 2: Lines that look like description sentences
+                        if len(mline) > 0 and mline[0].isupper() and mline.endswith('.'):
+                            sentence_indicators = [' is ', ' are ', ' was ', ' were ', ' can ',
+                                                   ' will ', ' should ', ' the ', ' this ', ' with ']
+                            if any(ind in mline.lower() for ind in sentence_indicators):
+                                continue
+
+                        has_separators = '/' in mline or ',' in mline or '、' in mline
+                        has_material_kw = has_MATERIAL_KEYWORDS(mline)
+
+                        if has_separators or has_material_kw:
+                            if not materials:
+                                materials = mline
+                                logger.debug(f"Position-based materials: {materials}")
+                            break
+
                 # Helper function: check if line is credits
                 def is_credits_line(line: str) -> bool:
+                    # Credits lines are typically short; long lines are descriptions
+                    if len(line) > 100:
+                        return False
                     line_lower = line.lower().strip()
                     for pattern in CREDITS_PATTERNS:
                         if re.match(pattern, line_lower, re.IGNORECASE):
                             return True
                     return False
-
-                # Helper function: check if line contains material keywords
-                def has_MATERIAL_KEYWORDS(line: str) -> bool:
-                    line_lower = line.lower()
-                    return any(kw.lower() in line_lower for kw in MATERIAL_KEYWORDS)
 
                 # Helper function: check if line is bilingual format (contains / separator with Chinese)
                 def is_bilingual_line(line: str) -> bool:
@@ -464,6 +552,13 @@ class BasicScraperMixin:
 
                 # Helper function: check if line is a valid materials line
                 def is_valid_materials_line(line: str, check_title: bool = True) -> bool:
+                    # Exclude description sentences (uppercase start + period end + verb indicators)
+                    if len(line) > 0 and line[0].isupper() and (line.endswith('.') or line.endswith('。')):
+                        sentence_indicators = [' is ', ' are ', ' was ', ' were ', ' can ', ' will ',
+                                               ' should ', ' the ', ' this ', ' that ', ' with ']
+                        if any(ind in line.lower() for ind in sentence_indicators):
+                            return False  # This is a description, not materials
+
                     # Length limit: 80 for regular lines, 150 for bilingual lines
                     max_len = 150 if is_bilingual_line(line) else 80
                     if len(line) > max_len:
@@ -601,8 +696,10 @@ class BasicScraperMixin:
                     r'(Dimension[s]?\s+variable\s*/?\s*尺寸可变)',
                     r'(Dimension[s]?\s+variable)',
                     r'(尺寸可变)',
-                    # Match: 180cm x 130 cm, 180 x 180 cm, 180×180×50cm
-                    r'(\d+\s*(?:cm|mm|m)?\s*[×xX]\s*\d+\s*(?:cm|mm|m)?(?:\s*[×xX]\s*\d+\s*(?:cm|mm|m)?)?)',
+                    r'(Variable\s+size)',  # Alternative format
+                    r'(各种尺寸)',  # Various sizes in Chinese
+                    # Match: 180cm x 130 cm, 180 x 180 cm, 180×180×50cm, 180*180
+                    r'(\d+\s*(?:cm|mm|m)?\s*[×xX\*]\s*\d+\s*(?:cm|mm|m)?(?:\s*[×xX\*]\s*\d+\s*(?:cm|mm|m)?)?)',
                 ]
                 for line in candidates:
                     if size:
@@ -712,12 +809,49 @@ class BasicScraperMixin:
                     ).strip().rstrip(',').strip()
 
                 # C. Descriptions (Longer lines)
-                long_lines = [l for l in lines if len(l) > 100]
-                if long_lines:
-                    # Determine language by character checking
-                    for line in long_lines:
-                        # Simple check for Chinese characters
-                        if any('\u4e00' <= char <= '\u9fff' for char in line):
+                # Lower threshold to 60 chars to catch shorter descriptions
+                # Also filter out non-description content
+                for line in lines:
+                    line_len = len(line)
+                    # Skip short lines
+                    if line_len < 60:
+                        continue
+                    # Skip lines that look like metadata (type, materials, credits)
+                    if is_credits_line(line):
+                        continue
+                    # Skip lines that look like materials (comma-separated list of items)
+                    # Materials lines typically: short, many commas, short segments between commas
+                    if line_len < 120:
+                        comma_count = line.count(',') + line.count('，')
+                        if comma_count >= 3:
+                            # Check average segment length - materials have short segments
+                            segments = re.split(r'[,，]', line)
+                            avg_segment_len = sum(len(s.strip()) for s in segments) / len(segments)
+                            if avg_segment_len < 20:
+                                # Likely a materials list, not a description
+                                continue
+                    # Skip lines that match materials pattern (bilingual with /)
+                    if materials and line.strip() == materials.strip():
+                        continue
+                    # Skip lines that are mostly punctuation or symbols
+                    alpha_count = sum(1 for c in line if c.isalpha() or '\u4e00' <= c <= '\u9fff')
+                    if alpha_count < line_len * 0.5:
+                        continue
+                    # Skip lines that look like event info
+                    if re.search(r'\b(Opening|Exhibition|Gallery|Museum)\b.*\d{4}', line, re.IGNORECASE):
+                        continue
+                    # Skip lines that are addresses
+                    if re.search(r'\d+\s+\w+\s+(Street|Road|Ave|Blvd|路|街|号)', line, re.IGNORECASE):
+                        continue
+
+                    # Count Chinese characters to determine language
+                    chinese_count = sum(1 for c in line if '\u4e00' <= c <= '\u9fff')
+                    total_alpha = sum(1 for c in line if c.isalpha() or '\u4e00' <= c <= '\u9fff')
+
+                    if total_alpha > 0:
+                        chinese_ratio = chinese_count / total_alpha
+                        # >50% Chinese = Chinese description
+                        if chinese_ratio > 0.5:
                             desc_cn += line + "\n\n"
                         else:
                             desc_en += line + "\n\n"
@@ -728,7 +862,13 @@ class BasicScraperMixin:
             # --- 4. Video Link ---
             video_link = self._extract_video_link(soup)
 
-            # --- 5. Normalize type and extract embedded materials ---
+            # --- 5. Fallback type detection from video link ---
+            # If no type found but has video link, likely a video work
+            if not work_type and video_link:
+                work_type = "Video"
+                logger.debug(f"Type inferred from video_link: Video")
+
+            # --- 6. Normalize type and extract embedded materials ---
             if work_type:
                 normalized_type, type_materials = normalize_type(work_type)
                 work_type = normalized_type
@@ -1033,8 +1173,13 @@ class BasicScraperMixin:
 # Utility Functions (Module-level)
 # ====================
 
-# Types to exclude (exhibitions, catalogs)
-EXCLUDED_TYPES = ['exhibition', 'catalog']
+# Types to exclude (exhibitions, catalogs, publications, events)
+# Must be kept in sync with EXCLUDED_TAGS in constants.py
+EXCLUDED_TYPES = [
+    'exhibition', 'solo exhibition', 'group exhibition',
+    'catalog', 'catalogue', 'book', 'publication',
+    'event', 'talk', 'lecture', 'workshop',
+]
 
 
 def is_artwork(data: Dict[str, Any]) -> bool:

@@ -19,9 +19,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
+from difflib import SequenceMatcher
+
 from .constants import (
     FC_TIMEOUT, FULL_SCHEMA, PROMPT_TEMPLATES, QUICK_SCHEMA,
-    MATERIAL_KEYWORDS, CREDITS_PATTERNS,
+    MATERIAL_KEYWORDS, CREDITS_PATTERNS, CANONICAL_TYPES,
     ArtworkSchema, ARTWORK_EXTRACT_PROMPT,
 )
 from .basic import is_artwork, normalize_year, parse_size_duration, is_extraction_complete
@@ -853,12 +855,211 @@ class FirecrawlMixin:
             logger.error(f"Batch Extract error: {e}")
             return {url: None for url in urls}
 
+    # Known sidebar titles that should NOT be used as titles for other pages
+    # These are actual artwork titles that appear in the navigation sidebar
+    # and can be mistakenly extracted by the LLM
+    KNOWN_SIDEBAR_TITLES = [
+        "guard, i",
+        "guard, i…",
+        "保安，我",
+        "保安，我...",
+        "one ritual",
+        "一个仪式",
+        "two rituals",
+        "两个仪式",
+    ]
+
+    def _is_type_string(self, title: str) -> bool:
+        """Check if a title is actually an artwork type string.
+
+        Prevents LLM from confusing type descriptions with titles.
+        E.g., "video installation" or "视频装置" are types, not titles.
+
+        Args:
+            title: Title string to check.
+
+        Returns:
+            True if the title looks like a type string, False otherwise.
+        """
+        if not title:
+            return False
+
+        title_lower = title.lower().strip()
+
+        # Check against canonical types
+        if title_lower in CANONICAL_TYPES:
+            logger.debug(f"Title '{title}' is a canonical type string")
+            return True
+
+        # Check bilingual type format: "video installation / 视频装置"
+        if '/' in title:
+            parts = [p.strip().lower() for p in title.split('/')]
+            if all(p in CANONICAL_TYPES for p in parts if p):
+                logger.debug(f"Title '{title}' is a bilingual type string")
+                return True
+
+        return False
+
+    # Mapping of sidebar titles to their corresponding URL patterns
+    # Format: {normalized_title: [valid_url_patterns]}
+    SIDEBAR_TITLE_TO_URL = {
+        "guard i": ["guard-i", "guard_i"],
+        "保安我": ["guard-i", "guard_i"],
+        "one ritual": ["one-ritual", "one_ritual"],
+        "一个仪式": ["one-ritual", "one_ritual"],
+        "two rituals": ["two-rituals", "two_rituals"],
+        "两个仪式": ["two-rituals", "two_rituals"],
+    }
+
+    def _is_known_sidebar_title(self, title: str, url: str) -> bool:
+        """Check if title is a known sidebar navigation item.
+
+        This detects when the LLM extracts a sidebar item's title instead of
+        the main content title. Returns True only if the title matches a known
+        sidebar title AND the URL doesn't match (i.e., wrong page).
+
+        Args:
+            title: Extracted title to check.
+            url: URL of the page being extracted.
+
+        Returns:
+            True if this is a sidebar title being used on the wrong page.
+        """
+        if not title:
+            return False
+
+        # Normalize title for matching
+        title_lower = title.lower().strip()
+        # Remove punctuation for matching
+        title_clean = ''.join(c for c in title_lower if c.isalnum() or c.isspace() or '\u4e00' <= c <= '\u9fff')
+        title_clean = ' '.join(title_clean.split())
+
+        # Get URL slug
+        url_slug = url.rstrip("/").split("/")[-1].lower()
+
+        # Check against known sidebar titles
+        for sidebar_key, valid_urls in self.SIDEBAR_TITLE_TO_URL.items():
+            # Check if title matches this sidebar key
+            if title_clean == sidebar_key or sidebar_key in title_clean:
+                # Check if URL matches any valid pattern for this title
+                for valid_pattern in valid_urls:
+                    if valid_pattern in url_slug:
+                        return False  # This is the correct page for this title
+
+                # URL doesn't match - this is sidebar pollution
+                logger.warning(
+                    f"Sidebar title detected: '{title}' on page {url_slug}"
+                )
+                return True
+
+        return False
+
+    def _validate_title_against_url(self, title: str, url: str) -> bool:
+        """Validate if extracted title matches the URL slug.
+
+        This prevents SPA navigation pollution where LLM extracts titles from
+        sidebar elements instead of the main content area.
+
+        Args:
+            title: Extracted title to validate.
+            url: URL of the page (contains slug for validation).
+
+        Returns:
+            True if title appears valid for this URL, False if suspicious.
+
+        Example:
+            >>> _validate_title_against_url("Sacpe.data", ".../Sacpe-data")
+            True
+            >>> _validate_title_against_url("Guard, I...", ".../Sacpe-data")
+            False
+            >>> _validate_title_against_url("video installation", ".../Obj-3")
+            False  # Type string, not a title
+        """
+        if not title or not url:
+            return False
+
+        # Reject type strings as titles
+        if self._is_type_string(title):
+            logger.warning(f"Title validation FAILED: '{title}' is a type string, not a title")
+            return False
+
+        # Reject known sidebar titles used on wrong pages
+        if self._is_known_sidebar_title(title, url):
+            logger.warning(f"Title validation FAILED: '{title}' is a sidebar item, not this page's title")
+            return False
+
+        # Extract and normalize URL slug
+        url_slug = url.rstrip("/").split("/")[-1]
+        slug_normalized = url_slug.replace("-", " ").replace("_", " ").lower()
+        slug_words = set(slug_normalized.split())
+
+        # Normalize title for comparison
+        title_lower = title.lower()
+        # Remove common punctuation for matching
+        title_clean = ''.join(c if c.isalnum() or c.isspace() else ' ' for c in title_lower)
+        title_words = set(title_clean.split())
+
+        # Check 1: Word overlap between slug and title
+        if slug_words and title_words:
+            overlap = slug_words & title_words
+            overlap_ratio = len(overlap) / len(slug_words)
+            if overlap_ratio >= 0.5:
+                return True
+
+        # Check 2: Fuzzy string matching
+        similarity = SequenceMatcher(None, slug_normalized, title_clean).ratio()
+        if similarity >= 0.6:
+            return True
+
+        # Check 3: Title contains slug (handles cases like "a-aa-aaa" → "a, aa, aaa")
+        slug_chars = ''.join(c for c in slug_normalized if c.isalnum())
+        title_chars = ''.join(c for c in title_clean if c.isalnum())
+        if slug_chars and title_chars:
+            if slug_chars in title_chars or title_chars in slug_chars:
+                return True
+
+        logger.debug(
+            f"Title validation FAILED: '{title}' vs URL slug '{url_slug}' "
+            f"(similarity={similarity:.2f})"
+        )
+        return False
+
+    def _titles_are_similar(self, title1: str, title2: str, threshold: float = 0.7) -> bool:
+        """Check if two titles are similar using fuzzy matching.
+
+        Args:
+            title1: First title to compare.
+            title2: Second title to compare.
+            threshold: Minimum similarity ratio (0-1). Default 0.7.
+
+        Returns:
+            True if titles are similar enough, False otherwise.
+        """
+        if not title1 or not title2:
+            return False
+
+        # Normalize: lowercase, remove punctuation
+        def normalize(s: str) -> str:
+            s = s.lower()
+            s = ''.join(c if c.isalnum() or c.isspace() else '' for c in s)
+            return ' '.join(s.split())
+
+        norm1 = normalize(title1)
+        norm2 = normalize(title2)
+
+        similarity = SequenceMatcher(None, norm1, norm2).ratio()
+        return similarity >= threshold
+
     def extract_work_details_v2(self, url: str) -> Optional[Dict[str, Any]]:
         """Optimized two-layer extraction strategy for maximum completeness.
 
         Strategy:
-        1. Layer 1: Local BS4 parsing (0 credits) - fast, free
-        2. Layer 2: Firecrawl Extract with schema (~20-50 credits, token-based) - if Layer 1 incomplete
+        1. Layer 1: Local BS4 parsing (0 credits) - fast, free, reliable for SPA
+        2. Layer 2: Firecrawl Extract with schema (~5 credits) - supplement missing fields
+        3. Validation: Layer 2 title must match URL slug or Layer 1 title
+
+        The validation step prevents SPA navigation pollution where the LLM
+        extracts titles from sidebar elements instead of main content.
 
         Args:
             url: Artwork page URL to extract from.
@@ -892,49 +1093,88 @@ class FirecrawlMixin:
                 if local_data.get("year"):
                     local_data["year"] = normalize_year(local_data["year"])
 
-        # Check completeness of Layer 1 result
-        # Use type-aware required fields to reduce unnecessary API calls
-        if local_data:
-            missing = self._get_missing_fields(local_data)
-        else:
-            missing = ['title', 'year', 'type']  # Minimum required
+        # Strategy B: Layer 1 provides year/type/title-validation/images
+        # Layer 2 ALWAYS provides content fields for maximum accuracy
+        #
+        # Layer 1 authoritative fields: year, type (from HTML tags, ~100% accurate)
+        # Layer 1 exclusive fields: images (from slideshow container)
+        # Layer 1 validation: title (used to validate Layer 2's title)
+        # Layer 2 authoritative fields: title, title_cn, materials, size, duration, credits, descriptions
 
-        # Always use Layer 2 to verify and supplement for 100% data accuracy
-        # Even if Layer 1 appears complete, Layer 2 double-checks for correctness
-        always_verify = True  # Set to False to only call Layer 2 when fields are missing
-        if always_verify or len(missing) >= 1:
-            logger.info(f"📝 Calling Layer 2 for verification (missing {len(missing)} field(s))...")
-            schema_data = self._extract_with_schema(url)
+        logger.info(f"📝 Calling Layer 2 for content fields...")
+        schema_data = self._extract_with_schema(url)
 
-            if schema_data:
-                if local_data:
-                    # Field priority:
-                    # - Layer 1 authoritative: year, type (from tags, ~100% accurate)
-                    # - Layer 1 exclusive: images (from slideshow container)
-                    # - Layer 2 authoritative: other text fields (AI more accurate)
+        if schema_data:
+            if local_data:
+                # === CRITICAL: Validate Layer 2 title before accepting ===
+                layer1_title = local_data.get('title', '')
+                layer2_title = schema_data.get('title', '')
 
-                    # Fields where Layer 2 takes priority (override Layer 1)
-                    layer2_priority = [
-                        'title', 'title_cn',
-                        'materials', 'size', 'duration', 'credits',
-                        'description_en', 'description_cn'
-                    ]
-                    for field in layer2_priority:
-                        if schema_data.get(field):
-                            local_data[field] = schema_data[field]
+                # Check if Layer 2 title is valid
+                layer2_title_valid = False
+                if layer2_title:
+                    # Validation 1: Does Layer 2 title match URL slug?
+                    url_match = self._validate_title_against_url(layer2_title, url)
 
-                    # Fields where Layer 1 takes priority (only fill if empty)
-                    # year and type from tags are more reliable than LLM extraction
-                    layer1_priority = ['year', 'type']
-                    for field in layer1_priority:
-                        if not local_data.get(field) and schema_data.get(field):
-                            local_data[field] = schema_data[field]
+                    # Validation 2: Does Layer 2 title match Layer 1 title?
+                    title_match = self._titles_are_similar(layer1_title, layer2_title)
 
-                    local_data['source'] = 'hybrid_verified'
-                else:
-                    local_data = schema_data
+                    layer2_title_valid = url_match or title_match
+
+                    if not layer2_title_valid:
+                        logger.warning(
+                            f"⚠️ Layer 2 title REJECTED: '{layer2_title}' "
+                            f"(doesn't match URL or Layer 1 title '{layer1_title}')"
+                        )
+
+                # === Strategy B: Layer 2 provides all content fields ===
+                # Layer 2 authoritative: title (if validated), title_cn, materials, size, duration, credits, descriptions
+                layer2_content_fields = [
+                    'materials', 'size', 'duration', 'credits',
+                    'description_en', 'description_cn'
+                ]
+                for field in layer2_content_fields:
+                    if schema_data.get(field):
+                        local_data[field] = schema_data[field]
+
+                # Title: Only accept Layer 2 title if validated
+                if layer2_title_valid and layer2_title:
+                    local_data['title'] = layer2_title
+                    if schema_data.get('title_cn'):
+                        local_data['title_cn'] = schema_data['title_cn']
+                elif not layer1_title and layer2_title:
+                    # Layer 1 had no title, use Layer 2 even if not validated
+                    logger.warning(f"⚠️ Using unvalidated Layer 2 title: '{layer2_title}'")
+                    local_data['title'] = layer2_title
+                    if schema_data.get('title_cn'):
+                        local_data['title_cn'] = schema_data['title_cn']
+
+                # Layer 1 authoritative: year, type (from HTML tags, ~100% accurate)
+                # Only use Layer 2 if Layer 1 is empty
+                layer1_priority = ['year', 'type']
+                for field in layer1_priority:
+                    if not local_data.get(field) and schema_data.get(field):
+                        local_data[field] = schema_data[field]
+
+                # Layer 1 exclusive: images (from slideshow container, already in local_data)
+
+                local_data['source'] = 'hybrid_layer2'
+            else:
+                # No Layer 1 data, use Layer 2 with URL validation
+                layer2_title = schema_data.get('title', '')
+                if layer2_title and not self._validate_title_against_url(layer2_title, url):
+                    logger.warning(
+                        f"⚠️ Layer 2 only, but title '{layer2_title}' "
+                        f"doesn't match URL. Extracting from URL slug."
+                    )
+                    # Fallback: Use URL slug as title
+                    url_slug = url.rstrip("/").split("/")[-1]
+                    schema_data['title'] = url_slug.replace("-", " ").replace("_", " ")
+                local_data = schema_data
         elif local_data:
-            logger.info(f"✅ Layer 1 complete: {local_data.get('title', 'Unknown')}")
+            # Layer 2 failed, use Layer 1 data only
+            logger.warning(f"⚠️ Layer 2 failed, using Layer 1 only: {local_data.get('title', 'Unknown')}")
+            local_data['source'] = 'layer1_only'
 
         # Cache and return
         if local_data and self.use_cache:

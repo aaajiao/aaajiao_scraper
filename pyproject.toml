@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aaajiao-scraper"
-version = "6.1.0"
+version = "6.4.0"
 description = "AI-powered portfolio scraper for aaajiao's works with multi-modal extraction"
 authors = [
     {name = "aaajiao Scraper Contributors"}
@@ -31,6 +31,7 @@ dependencies = [
     "streamlit>=1.29.0",
     "pandas>=2.0.0",
     "python-dotenv>=1.0.0",
+    "pydantic>=2.5.0",
 ]
 
 [project.optional-dependencies]
