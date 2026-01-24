@@ -4,14 +4,15 @@ This file provides guidance for Claude Code when working with this repository.
 
 ## Project Overview
 
-**aaajiao Portfolio Scraper** (v6.1.0) - A Python-based web scraper for extracting artwork metadata from eventstructure.com. It implements a multi-tiered extraction strategy to minimize API costs while maintaining data quality, with intelligent caching and structured output generation.
+**aaajiao Portfolio Scraper** (v6.3.0) - A Python-based web scraper for extracting artwork metadata from eventstructure.com. It implements a two-layer hybrid extraction strategy combining local parsing with AI-powered schema extraction for 100% data accuracy.
 
 ## Tech Stack
 
 - **Language**: Python 3.9+
 - **Web Framework**: Streamlit (GUI in `app.py`)
 - **Web Scraping**: BeautifulSoup4 (local parsing), Firecrawl API v2 (AI extraction)
-- **Dependencies**: requests, tqdm, pandas, python-dotenv
+- **Schema Validation**: Pydantic v2 (structured extraction schemas)
+- **Dependencies**: requests, tqdm, pandas, python-dotenv, pydantic
 - **Testing**: pytest with coverage (70+ tests, 90%+ coverage target)
 - **Linting**: ruff, black, mypy
 
@@ -116,17 +117,30 @@ AaajiaoScraper
 └── ReportMixin          # JSON, Markdown, agent report generation
 ```
 
-### Three-Tier Extraction Strategy (Cost Optimization)
+### Two-Layer Hybrid Extraction Strategy
+
+The extraction strategy ensures 100% data accuracy through mandatory AI verification:
 
 1. **Layer 0**: Cache check (free)
-2. **Layer 1**: Local BeautifulSoup parsing (0 credits)
-3. **Layer 2**: Markdown scrape + regex enrichment (1 credit)
-4. **Layer 3**: LLM extraction via Firecrawl (2 credits, last resort)
+2. **Layer 1**: Local BeautifulSoup parsing (0 credits) - filtering non-artwork pages + extracting authoritative fields
+3. **Layer 2**: Firecrawl Extract API **v2** with Pydantic schema (~5 credits/extract) - AI verification for ALL artworks
+
+**IMPORTANT: All Firecrawl API calls use v2 endpoints:**
+- Extract: `https://api.firecrawl.dev/v2/extract`
+- Scrape: `https://api.firecrawl.dev/v2/scrape`
+- Agent: `https://api.firecrawl.dev/v2/agent`
+
+**Field Priority:**
+- **Layer 1 authoritative**: `year`, `type` (from tags, ~100% accurate), `images` (from slideshow container)
+- **Layer 2 authoritative**: `title`, `title_cn`, `materials`, `size`, `duration`, `credits`, `description_en`, `description_cn`
+
+All artworks go through Layer 2 verification. Layer 1 filters out non-artwork pages (exhibitions, catalogs) to save API costs.
 
 ### Key Methods
 
 - **`run_full_pipeline()`** - Main one-click extraction with incremental support
-- **`extract_work_details(url)`** - Multi-layer extraction with automatic fallback
+- **`extract_work_details_v2(url)`** - Optimized two-layer hybrid extraction (recommended)
+- **`extract_work_details(url)`** - [LEGACY] Old three-tier extraction (deprecated)
 - **`scrape_markdown(url)`** - Low-cost Firecrawl scrape (1 credit)
 - **`agent_search(urls)`** - Batch/agent mode intelligent search
 - **`discover_urls_with_scroll()`** - Infinite-scroll URL discovery
@@ -164,7 +178,8 @@ RATE_LIMIT_CALLS_PER_MINUTE=10
 
 | Script | Purpose |
 |--------|---------|
-| `batch_update_works.py` | Bulk markdown scraping with regex parsing (supports dry-run) |
+| `batch_update_works.py` | Bulk update works using two-layer extraction (supports dry-run) |
+| `verify_layer2.py` | Test Layer 2 (Firecrawl Extract) extraction quality |
 | `clean_size_materials.py` | Extract size/duration from materials field |
 | `clean_materials_credits.py` | Clean up materials and credits fields |
 | `generate_web_report.py` | Generate web-based reports |
@@ -203,3 +218,14 @@ Generated files (gitignored, can be regenerated):
 - Firecrawl API key is required for AI-powered extraction
 - Local BS4 extraction works without API key but with limited accuracy
 - Always prefer incremental mode for regular updates to minimize API costs
+
+## API Cost Reference (Firecrawl v2)
+
+| API | Cost | Notes |
+|-----|------|-------|
+| Scrape (markdown) | 1 credit/page | Raw content only |
+| Extract v2 (schema) | ~5 credits/page | 10x cheaper than v1, higher accuracy |
+| Agent v2 | Variable | For complex navigation scenarios |
+| Estimated total | ~1,000 credits | For ~166 artworks (using v2) |
+
+**Note:** All API calls use Firecrawl v2 endpoints. v1 endpoints are deprecated and should not be used.

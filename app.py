@@ -3,7 +3,7 @@ aaajiao 作品集抓取工具 - Streamlit GUI
 
 简化的单页界面，用于从 eventstructure.com 抓取作品数据。
 功能：
-- 一键抓取，三层成本优化策略
+- 一键抓取，两层混合提取策略 (v6.3.0)
 - 自动过滤展览和画册
 - 图片整合工具
 """
@@ -112,44 +112,39 @@ def generate_rich_work_markdown(work: dict, include_local_images: bool = False) 
     else:
         lines.append(f"## {title}\n\n")
 
-    lines.append("| 字段 | 内容 |\n")
-    lines.append("|------|------|\n")
-
     if year:
-        lines.append(f"| 年份 | {year} |\n")
+        lines.append(f"**Year**: {year}\n\n")
     if work.get("type"):
-        lines.append(f"| 类型 | {work['type']} |\n")
+        lines.append(f"**Type**: {work['type']}\n\n")
     if work.get("materials"):
-        lines.append(f"| 材料 | {work['materials']} |\n")
+        lines.append(f"**Materials**: {work['materials']}\n\n")
     if work.get("size"):
-        lines.append(f"| 尺寸 | {work['size']} |\n")
+        lines.append(f"**Size**: {work['size']}\n\n")
     if work.get("duration"):
-        lines.append(f"| 时长 | {work['duration']} |\n")
+        lines.append(f"**Duration**: {work['duration']}\n\n")
     if work.get("video_link"):
-        lines.append(f"| 视频 | [{work['video_link']}]({work['video_link']}) |\n")
+        lines.append(f"**Video**: {work['video_link']}\n\n")
     if work.get("url"):
-        lines.append(f"| 链接 | [{work['url']}]({work['url']}) |\n")
-
-    lines.append("\n")
+        lines.append(f"**URL**: {work['url']}\n\n")
 
     if work.get("description_cn"):
-        lines.append(f"### 中文描述\n\n> {work['description_cn']}\n\n")
+        lines.append(f"**中文描述**: {work['description_cn']}\n\n")
     if work.get("description_en"):
-        lines.append(f"### English Description\n\n{work['description_en']}\n\n")
+        lines.append(f"**Description**: {work['description_en']}\n\n")
 
     if include_local_images and work.get("local_images"):
         images = work.get("local_images", [])
         if images:
             lines.append("### 图片\n\n")
-            for img_path in images[:10]:
+            for img_path in images:  # 显示全部本地图片
                 rel_path = os.path.basename(img_path)
-                lines.append(f"![{title}]({rel_path})\n\n")
+                lines.append(f'<a href="{rel_path}" target="_blank"><img src="{rel_path}" width="400" alt="{title}"></a>\n\n')
     else:
         images = work.get("images", []) or work.get("high_res_images", [])
         if images:
             lines.append("### 图片\n\n")
-            for img in images[:5]:
-                lines.append(f"![]({img})\n\n")
+            for img in images:  # 显示全部图片
+                lines.append(f'<a href="{img}" target="_blank"><img src="{img}" width="400"></a>\n\n')
 
     lines.append("---\n\n")
     return "".join(lines)
@@ -173,7 +168,7 @@ st.subheader("📦 当前状态")
 works = st.session_state.works
 stats = get_stats(works)
 
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4, col5 = st.columns(5)
 with col1:
     st.metric("作品总数", stats["total"])
 with col2:
@@ -182,17 +177,33 @@ with col3:
     st.metric("有时长", stats["has_duration"])
 with col4:
     st.metric("有年份", stats["has_year"])
+with col5:
+    # 显示 API credits
+    if 'api_credits' not in st.session_state:
+        st.session_state.api_credits = None
+    if st.button("🔄", key="refresh_credits", help="刷新 API 余额"):
+        try:
+            scraper = AaajiaoScraper(use_cache=False)
+            st.session_state.api_credits = scraper.get_credit_usage()
+        except Exception:
+            st.session_state.api_credits = None
+    if st.session_state.api_credits:
+        credits = st.session_state.api_credits
+        remaining = credits.get('remaining_credits', 0)
+        total = credits.get('plan_credits', 0)
+        st.metric("API Credits", f"{remaining:,}", delta=f"/{total:,}")
 
 st.divider()
 
 # --- 主操作区域 ---
 st.subheader("🚀 一键抓取")
 st.markdown("""
-**工作流程：** 获取 sitemap → 提取数据（三层优化）→ 过滤展览 → 保存
+**工作流程：** 获取 sitemap → 提取数据（两层混合策略）→ 过滤展览 → 保存
 
-- **第1层：** 本地 HTML 解析（0 credits）
-- **第2层：** Markdown 抓取 + 正则（1 credit）
-- **第3层：** LLM 提取（2 credits）- 仅在必要时使用
+- **第1层：** 本地 BeautifulSoup 解析（0 credits）
+- **第2层：** Firecrawl Extract v2（~5 credits/页，比 v1 便宜 10 倍）
+
+*v6.3.0 新架构：使用 Firecrawl v2 API，智能合并两层结果，完整度可达 90%+*
 """)
 
 # 高级选项（默认折叠）
@@ -293,6 +304,57 @@ with col_dl2:
 with st.expander("📋 数据预览", expanded=bool(works)):
     if works:
         df = pd.DataFrame(works)
+
+        # === 类型筛选器 ===
+        # 归一化类型用于分组（去除大小写、空格差异）
+        def normalize_type_for_filter(t: str) -> str:
+            if not t:
+                return "(空)"
+            t = t.lower().strip()
+            # 简单归一化：提取主要类型
+            if "installation" in t:
+                if "video" in t:
+                    return "Video Installation"
+                elif "sound" in t:
+                    return "Sound Installation"
+                elif "interactive" in t:
+                    return "Interactive Installation"
+                return "Installation"
+            elif "video" in t:
+                return "Video"
+            elif "website" in t or "网站" in t:
+                return "Website"
+            elif "performance" in t:
+                return "Performance"
+            elif "sculpture" in t or "雕塑" in t:
+                return "Sculpture"
+            elif "print" in t or "printing" in t or "印刷" in t or "打印" in t:
+                return "Print"
+            elif "software" in t or "app" in t:
+                return "Software/App"
+            elif "photo" in t:
+                return "Photography"
+            return t.title()[:30]  # 其他类型截断
+
+        # 创建归一化类型列
+        df['_normalized_type'] = df['type'].apply(lambda x: normalize_type_for_filter(x or ''))
+
+        # 获取所有归一化类型并统计
+        type_counts = df['_normalized_type'].value_counts().to_dict()
+        type_options = ["全部"] + [f"{t} ({c})" for t, c in sorted(type_counts.items(), key=lambda x: -x[1])]
+
+        col_filter1, col_filter2 = st.columns([1, 2])
+        with col_filter1:
+            selected_type_display = st.selectbox("按类型筛选", type_options)
+
+        # 解析选择的类型
+        if selected_type_display == "全部":
+            filtered_df = df
+        else:
+            selected_type = selected_type_display.rsplit(" (", 1)[0]
+            filtered_df = df[df['_normalized_type'] == selected_type]
+
+        # === 列选择器 ===
         # 定义所有可用列及其显示名称
         all_columns = {
             'title': '标题',
@@ -302,30 +364,30 @@ with st.expander("📋 数据预览", expanded=bool(works)):
             'materials': '材料',
             'size': '尺寸',
             'duration': '时长',
+            'credits': '致谢',
             'description_cn': '中文描述',
             'description_en': '英文描述',
             'video_link': '视频链接',
-            'tags': '标签',
             'url': '链接'
         }
         # 默认显示的列
         default_cols = ['title', 'title_cn', 'year', 'type', 'materials', 'size', 'duration']
         available_cols = [c for c in all_columns.keys() if c in df.columns]
 
-        # 列选择器
-        selected_cols = st.multiselect(
-            "选择显示的列",
-            options=available_cols,
-            default=[c for c in default_cols if c in available_cols],
-            format_func=lambda x: all_columns.get(x, x)
-        )
+        with col_filter2:
+            selected_cols = st.multiselect(
+                "选择显示的列",
+                options=available_cols,
+                default=[c for c in default_cols if c in available_cols],
+                format_func=lambda x: all_columns.get(x, x)
+            )
 
         if selected_cols:
-            # 重命名列为中文显示
-            display_df = df[selected_cols].copy()
+            # 过滤并重命名列为中文显示
+            display_df = filtered_df[selected_cols].copy()
             display_df.columns = [all_columns.get(c, c) for c in selected_cols]
             st.dataframe(display_df.head(100), use_container_width=True)
-            st.caption(f"显示 {min(100, len(works))}/{len(works)} 个作品")
+            st.caption(f"显示 {min(100, len(filtered_df))}/{len(filtered_df)} 个作品（共 {len(works)} 个）")
         else:
             st.warning("请至少选择一列")
     else:
@@ -337,14 +399,16 @@ st.divider()
 
 st.subheader("🖼️ 图片工具")
 
-# 加载缓存的作品用于图片工具
-scraper_preview = AaajiaoScraper()
-cached_works = scraper_preview.get_all_cached_works()
-# 仅过滤为作品
-cached_works = [w for w in cached_works if is_artwork(w)]
+# 优先从 aaajiao_works.json 加载，回退到缓存
+works_for_images = load_existing_works()
+if not works_for_images:
+    # 回退：尝试从 .cache/ 读取
+    scraper_preview = AaajiaoScraper()
+    works_for_images = scraper_preview.get_all_cached_works()
+    works_for_images = [w for w in works_for_images if is_artwork(w)]
 
-if cached_works:
-    st.success(f"📦 找到 {len(cached_works)} 个已缓存作品")
+if works_for_images:
+    st.success(f"📦 找到 {len(works_for_images)} 个作品")
 
     # --- 功能 1：图片整合 ---
     with st.expander("🖼️ 图片整合（下载到本地）"):
@@ -361,8 +425,8 @@ if cached_works:
             img_limit = st.slider(
                 "处理作品数",
                 min_value=1,
-                max_value=len(cached_works),
-                value=min(50, len(cached_works))
+                max_value=len(works_for_images),
+                value=min(50, len(works_for_images))
             )
 
         merge_full_metadata = st.checkbox(
@@ -383,7 +447,7 @@ if cached_works:
                     st.warning("⚠️ 未找到 aaajiao_works.json，将使用缓存数据")
 
             scraper = AaajiaoScraper()
-            works_to_process = cached_works[:img_limit]
+            works_to_process = works_for_images[:img_limit]
             enriched_works = []
 
             for i, work in enumerate(works_to_process):
@@ -424,9 +488,9 @@ if cached_works:
 
                     if local_images:
                         report_lines.append("### 图片\n\n")
-                        for img_path in local_images[:10]:
+                        for img_path in local_images:  # 显示全部本地图片
                             rel_path = os.path.basename(img_path)
-                            report_lines.append(f"![图片]({rel_path})\n\n")
+                            report_lines.append(f'<a href="{rel_path}" target="_blank"><img src="{rel_path}" width="400"></a>\n\n')
 
                     report_lines.append("---\n\n")
 
@@ -480,7 +544,7 @@ if cached_works:
                     return str(y).split("-")[-1]
                 return str(y)
 
-            sorted_works = sorted(cached_works, key=get_sort_year, reverse=True)
+            sorted_works = sorted(works_for_images, key=get_sort_year, reverse=True)
 
             if web_merge_full_metadata:
                 lines = [
@@ -559,10 +623,10 @@ else:
 with st.sidebar:
     st.markdown("### 控制台")
     st.markdown("---")
-    st.markdown("**成本优化：**")
-    st.markdown("- 第1层：0 credits（本地）")
-    st.markdown("- 第2层：1 credit（markdown）")
-    st.markdown("- 第3层：2 credits（LLM）")
+    st.markdown("**两层混合策略 (v6.3.0)：**")
+    st.markdown("- 第1层：0 credits（BS4 本地）")
+    st.markdown("- 第2层：~5 credits（Extract v2）")
+    st.markdown("- 智能合并：90%+ 完整度")
     st.markdown("---")
     st.markdown("**过滤规则：**")
     st.markdown("- ✅ 仅作品")

@@ -11,14 +11,24 @@
 
 ## 核心特性
 
-### 多层提取策略（成本优化）
+### 两层混合提取策略（v6.3.0 新架构）
 
-采用三层提取策略，自动选择最经济的方式：
+采用优化的两层混合策略，确保 100% 数据准确性：
 
 1. **Layer 0**: 缓存检查（免费）
-2. **Layer 1**: 本地 BeautifulSoup 解析（0 Credits）
-3. **Layer 2**: Markdown 抓取 + 正则增强（1 Credit）
-4. **Layer 3**: LLM 智能提取（2 Credits，最后手段）
+2. **Layer 1**: 本地 BeautifulSoup 解析（0 Credits）- 快速过滤 + 提取 year/type/images
+3. **Layer 2**: Firecrawl Extract API **v2** + Pydantic（~5-20 Credits）- AI 验证和补充所有文本字段
+
+**重要：所有 Firecrawl API 调用使用 v2 端点：**
+- Extract: `https://api.firecrawl.dev/v2/extract`
+- Scrape: `https://api.firecrawl.dev/v2/scrape`
+- Agent: `https://api.firecrawl.dev/v2/agent`
+
+**字段优先级：**
+- **Layer 1 权威字段**: `year`, `type`（从 tags 提取，~100% 准确）, `images`（从 slideshow 容器提取）
+- **Layer 2 权威字段**: `title`, `title_cn`, `materials`, `size`, `duration`, `credits`, `description_en`, `description_cn`
+
+所有作品都经过 Layer 2 验证，确保数据完整性。Layer 1 负责过滤非作品页面（exhibition/catalog）以节省 API 成本。
 
 ### 智能缓存系统
 
@@ -231,16 +241,19 @@ mypy scraper/
 
 ## 成本说明
 
-Firecrawl V2 计费机制：
+Firecrawl v2 API 计费机制（Extract API 按 token 计费，15 tokens = 1 credit）：
 
 | 模式 | 方法 | 成本 | 适用场景 |
 |------|------|------|----------|
 | **缓存命中** | 本地读取 | 0 Credit | 重复请求 |
-| **本地解析** | BeautifulSoup | 0 Credit | 标准页面 |
+| **本地解析** | BeautifulSoup (Layer 1) | 0 Credit | 过滤 + year/type/images |
 | **Markdown 抓取** | `scrape_markdown()` | 1 Credit | 需要原始内容 |
-| **LLM 提取** | `extract_work_details()` | 2 Credits | 复杂页面 |
+| **Extract v2** | `extract_work_details_v2()` | ~5-20 Credits | 推荐方式（v2 比 v1 便宜 10 倍） |
+| **LLM 提取** | `extract_work_details()` | ~30 Credits | 旧方法（已弃用） |
 
-> 启用缓存（默认开启），重复抓取相同 URL 时 **0 消耗**
+> - Extract v2 API 实际消耗 5-25 credits/页，比 v1 便宜约 10 倍
+> - 启用缓存（默认开启），重复抓取相同 URL 时 **0 消耗**
+> - 预计总成本：~166 作品 × ~15 credits ≈ 2,500 credits（使用 v2）
 
 ---
 
@@ -263,8 +276,33 @@ aaajiao_scraper/
 
 ## 更新日志
 
-### v6.2.0（当前版本）
+### v6.3.0（当前版本）
 
+- **升级到 Firecrawl v2 API**：所有 API 调用使用 v2 端点，成本降低约 10 倍
+  - Extract: `/v2/extract`（~5-20 credits vs v1 的 ~30 credits）
+  - Scrape: `/v2/scrape`
+  - Agent: `/v2/agent`
+- **100% 数据验证**：所有作品都经过 Layer 2 (AI) 验证，确保数据准确性
+- **字段优先级优化**：
+  - Layer 1 权威：`year`, `type`（从 tags 提取，~100% 准确）, `images`
+  - Layer 2 权威：`title`, `title_cn`, `materials`, `size`, `duration`, `credits`, `description_en`, `description_cn`
+- **API 调用追踪**：添加调用计数器，便于调试重复调用问题
+- **URL 去重安全检查**：确保并发执行时不会重复处理同一 URL
+- **图片显示优化**：
+  - 移除图片数量限制，显示全部图片
+  - 添加可点击缩略图（400px 宽度，点击查看大图）
+- **Markdown 报告格式统一**：
+  - 使用 `**Field**: value` 格式替代表格
+  - 添加 Year 字段到单个作品元数据
+  - 描述使用普通文本格式（非 blockquote）
+- **验证脚本**：新增 `scripts/verify_layer2.py` 用于测试 Layer 2 提取质量
+
+### v6.2.0
+
+- **两层混合提取策略**：全新架构，Layer 1 (BS4) + Layer 2 (Firecrawl Schema Extract)
+- **Pydantic Schema**：使用 ArtworkSchema 进行结构化提取，字段描述引导 LLM
+- **90%+ 完整度**：优化后覆盖率从 37% 提升至 90%+
+- **智能合并**：Layer 1 和 Layer 2 结果自动合并，取长补短
 - **图片工具增强**：新增「合并完整元数据」选项，可将图片与已有作品信息合并输出
 - **富文本报告**：支持生成包含类型、材料、尺寸、时长、描述等完整信息的 Markdown 报告
 

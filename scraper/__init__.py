@@ -46,7 +46,7 @@ class AaajiaoScraper(CoreScraper, BasicScraperMixin, FirecrawlMixin, CacheMixin,
 
         This is the main entry point for one-click scraping. It handles:
         1. Fetching URLs from sitemap (incremental or full)
-        2. Concurrent extraction with three-tier cost optimization
+        2. Concurrent extraction with two-layer hybrid strategy
         3. Automatic filtering of exhibitions and catalogs
         4. Deduplication and saving to JSON/Markdown
 
@@ -110,15 +110,23 @@ class AaajiaoScraper(CoreScraper, BasicScraperMixin, FirecrawlMixin, CacheMixin,
                 "files": [],
             }
 
+        # Ensure URLs are unique (safety check)
+        unique_urls = list(dict.fromkeys(urls))  # Preserves order, removes duplicates
+        if len(unique_urls) != len(urls):
+            logger.warning(f"⚠️ Removed {len(urls) - len(unique_urls)} duplicate URLs")
+        urls = unique_urls
+
         _progress(f"Found {len(urls)} URLs to process", 0.1)
 
         # ===== Step 2: Concurrent Extraction =====
         extracted_works: List[Dict[str, Any]] = []
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_url = {
-                executor.submit(self.extract_work_details, url): url for url in urls
-            }
+            # Submit all jobs and build mapping
+            future_to_url = {}
+            for url in urls:
+                future = executor.submit(self.extract_work_details_v2, url)
+                future_to_url[future] = url
 
             completed = 0
             for future in concurrent.futures.as_completed(future_to_url):

@@ -22,6 +22,7 @@ import requests
 from .constants import (
     FC_TIMEOUT, FULL_SCHEMA, PROMPT_TEMPLATES, QUICK_SCHEMA,
     MATERIAL_KEYWORDS, CREDITS_PATTERNS,
+    ArtworkSchema, ARTWORK_EXTRACT_PROMPT,
 )
 from .basic import is_artwork, normalize_year, parse_size_duration, is_extraction_complete
 
@@ -45,29 +46,19 @@ class FirecrawlMixin:
     """
 
     def extract_work_details(self, url: str, retry_count: int = 0) -> Optional[Dict[str, Any]]:
-        """Extract artwork details using three-tier strategy to minimize API costs.
+        """[LEGACY] Extract artwork details using old three-tier strategy.
 
-        Strategy (cost from low to high):
-        1. Layer 1: Local BeautifulSoup parsing (0 credits)
-        2. Layer 2: Firecrawl Scrape + regex enrichment (1 credit)
-        3. Layer 3: Firecrawl LLM Extract (2 credits) - last resort
+        DEPRECATED: Use extract_work_details_v2() instead for better results.
 
-        Automatically filters out exhibitions and catalogs, returning None for those.
+        This method is kept for backwards compatibility but may be removed in v7.0.
+        The new two-layer strategy (v2) provides higher accuracy with similar cost.
 
         Args:
             url: Artwork page URL to extract from.
             retry_count: Current retry attempt (for internal recursion).
-                Defaults to 0. Max 3 retries.
 
         Returns:
-            Dictionary with extracted artwork fields, or None if:
-            - Extraction fails after all layers
-            - The content is an exhibition or catalog (not an artwork)
-
-        Note:
-            - Checks cache first to save API credits
-            - Normalizes year format automatically
-            - Filters out exhibitions and catalogs
+            Dictionary with extracted artwork fields, or None if extraction fails.
         """
         max_retries = 3
 
@@ -129,7 +120,7 @@ class FirecrawlMixin:
                         self._save_cache(url, enriched)
                     return enriched
 
-        # ===== Layer 3: LLM Extract (2 credits) - Last Resort =====
+        # ===== Layer 3: LLM Extract (~20-50 credits, token-based) - Last Resort =====
         logger.info(f"🔥 Layer 3: Using LLM extraction for {url}")
         llm_data = self._extract_with_llm(url, retry_count)
 
@@ -168,6 +159,9 @@ class FirecrawlMixin:
                 "url": url,
                 "formats": ["markdown"],
                 "onlyMainContent": True,
+                # Enable Firecrawl server-side caching (2 days default)
+                # This can speed up repeated scrapes by up to 5x
+                "maxAge": 172800,  # 2 days in seconds
             }
             headers = {
                 "Authorization": f"Bearer {self.firecrawl_key}",
@@ -523,14 +517,14 @@ class FirecrawlMixin:
     def _merge_extraction_data(
         self, base_data: Dict[str, Any], llm_data: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Merge Layer 1/2 data with Layer 3 LLM extraction results.
+        """Merge local data with LLM extraction results.
 
         Strategy: LLM non-empty fields take priority, but preserve base data's
         images and descriptions which are often lost in LLM extraction.
 
         Args:
-            base_data: Data from Layer 1 (BS4) or Layer 2 (Markdown enriched).
-            llm_data: Data from Layer 3 LLM extraction.
+            base_data: Data from BS4 local parsing.
+            llm_data: Data from Firecrawl LLM/Schema extraction.
 
         Returns:
             Merged dictionary with best data from both sources.
@@ -585,8 +579,371 @@ class FirecrawlMixin:
         result['source'] = 'merged_llm'
         return result
 
+    def _get_missing_fields(self, data: Dict[str, Any]) -> List[str]:
+        """Determine which important fields are missing based on artwork type.
+
+        Uses type-aware logic to decide if Layer 2 (API) is needed:
+        - Video works: need duration
+        - Physical installations: need size and/or materials
+        - Website/Software: minimal requirements
+
+        Args:
+            data: Extracted artwork data with 'type' field.
+
+        Returns:
+            List of missing field names that should trigger Layer 2.
+        """
+        missing = []
+        type_val = (data.get('type') or '').lower()
+
+        # Type classification
+        is_video = 'video' in type_val or 'film' in type_val or 'animation' in type_val
+        is_physical = any(t in type_val for t in [
+            'installation', 'sculpture', 'object', 'print', 'painting', 'media'
+        ])
+        is_digital_only = any(t in type_val for t in [
+            'website', 'software', 'app', 'game', 'nft', 'crypto'
+        ]) and not is_physical
+
+        # Video works: duration is important
+        if is_video and not data.get('duration') and not data.get('video_link'):
+            missing.append('duration')
+
+        # Physical works: size and materials are important
+        if is_physical:
+            # Size: important unless explicitly "variable"
+            if not data.get('size'):
+                if 'variable' not in type_val and '可变' not in type_val:
+                    missing.append('size')
+            # Materials: important for understanding the work
+            if not data.get('materials'):
+                missing.append('materials')
+
+        # Description: important for completeness - count as 2 missing fields
+        # This ensures Layer 2 is triggered when only description is missing
+        if not data.get('description_en') and not data.get('description_cn'):
+            missing.append('description_en')
+            missing.append('description_cn')
+
+        return missing
+
+    def _extract_with_schema(self, url: str, max_polls: int = 15) -> Optional[Dict[str, Any]]:
+        """Extract using Firecrawl Extract API v2 with Pydantic schema (~5 credits per extract).
+
+        Uses the optimized ArtworkSchema for structured extraction with better
+        field descriptions and prompt engineering. The Extract API v2 is async,
+        so we submit a job and poll for results.
+
+        Args:
+            url: URL to extract from.
+            max_polls: Maximum polling attempts (default 15, ~45 seconds).
+
+        Returns:
+            Dictionary with extracted fields, or None if extraction fails.
+        """
+        if not self.firecrawl_key:
+            logger.warning("No Firecrawl API key for schema extraction")
+            return None
+
+        self.rate_limiter.wait()
+
+        # Track API calls for debugging duplicate issues
+        if not hasattr(self, '_extract_call_count'):
+            self._extract_call_count = {}
+        self._extract_call_count[url] = self._extract_call_count.get(url, 0) + 1
+        call_num = self._extract_call_count[url]
+
+        try:
+            logger.info(f"🎯 Schema Extract (v2) [call #{call_num}]: {url}")
+
+            headers = {
+                "Authorization": f"Bearer {self.firecrawl_key}",
+                "Content-Type": "application/json",
+            }
+
+            # Use Pydantic schema for structured extraction
+            payload = {
+                "urls": [url],
+                "schema": ArtworkSchema.model_json_schema(),
+                "prompt": ARTWORK_EXTRACT_PROMPT,
+            }
+
+            # Step 1: Submit async extraction job (v2 API)
+            resp = requests.post(
+                "https://api.firecrawl.dev/v2/extract",
+                json=payload,
+                headers=headers,
+                timeout=60,
+            )
+
+            if resp.status_code != 200:
+                if resp.status_code == 429:
+                    logger.warning("Rate limited on schema extract, waiting...")
+                    time.sleep(5)
+                    return self._extract_with_schema(url)
+                logger.warning(f"Schema Extract submit failed: {resp.status_code}")
+                return None
+
+            result = resp.json()
+            if not result.get("success") or not result.get("id"):
+                logger.warning(f"Schema Extract job creation failed: {result}")
+                return None
+
+            job_id = result["id"]
+            logger.debug(f"Extract job submitted: {job_id}")
+
+            # Step 2: Poll for results (v2 API)
+            for poll_attempt in range(max_polls):
+                time.sleep(3)  # Wait 3 seconds between polls
+
+                poll_resp = requests.get(
+                    f"https://api.firecrawl.dev/v2/extract/{job_id}",
+                    headers=headers,
+                    timeout=30,
+                )
+
+                if poll_resp.status_code != 200:
+                    logger.warning(f"Poll failed: {poll_resp.status_code}")
+                    continue
+
+                poll_result = poll_resp.json()
+                status = poll_result.get("status")
+
+                if status == "completed":
+                    data = poll_result.get("data", {})
+                    if data:
+                        # v2 API may return data as a list
+                        if isinstance(data, list) and len(data) > 0:
+                            data = data[0]
+                        data["url"] = url
+                        data["source"] = "schema_extract_v2"
+                        logger.info(f"✅ Schema Extract success: {data.get('title', 'Unknown')}")
+                        return data
+                    else:
+                        logger.warning(f"Schema Extract returned empty data for {url}")
+                        return None
+
+                elif status == "failed":
+                    logger.warning(f"Schema Extract job failed: {poll_result}")
+                    return None
+
+                # Still processing, continue polling
+                logger.debug(f"Extract job {job_id} status: {status} (poll {poll_attempt + 1}/{max_polls})")
+
+            logger.warning(f"Schema Extract timed out after {max_polls} polls for {url}")
+            return None
+
+        except Exception as e:
+            logger.error(f"Schema Extract error: {e}")
+            return None
+
+    def _batch_extract_with_schema(
+        self, urls: List[str], max_polls: int = 30
+    ) -> Dict[str, Optional[Dict[str, Any]]]:
+        """Batch extract using Firecrawl Extract API v2 with multiple URLs.
+
+        More efficient than individual extractions when processing many URLs.
+        The Extract API v2 accepts multiple URLs in a single request.
+
+        Args:
+            urls: List of URLs to extract from (max recommended: 10).
+            max_polls: Maximum polling attempts (default 30, ~90 seconds).
+
+        Returns:
+            Dictionary mapping URL to extracted data (or None if failed).
+        """
+        if not self.firecrawl_key or not urls:
+            return {url: None for url in urls}
+
+        self.rate_limiter.wait()
+
+        try:
+            logger.info(f"🎯 Batch Schema Extract (v2): {len(urls)} URLs")
+
+            headers = {
+                "Authorization": f"Bearer {self.firecrawl_key}",
+                "Content-Type": "application/json",
+            }
+
+            # Submit batch extraction job (v2 API)
+            payload = {
+                "urls": urls,
+                "schema": ArtworkSchema.model_json_schema(),
+                "prompt": ARTWORK_EXTRACT_PROMPT,
+            }
+
+            resp = requests.post(
+                "https://api.firecrawl.dev/v2/extract",
+                json=payload,
+                headers=headers,
+                timeout=60,
+            )
+
+            if resp.status_code != 200:
+                if resp.status_code == 429:
+                    logger.warning("Rate limited on batch extract, waiting...")
+                    time.sleep(10)
+                    return self._batch_extract_with_schema(urls, max_polls)
+                logger.warning(f"Batch Extract submit failed: {resp.status_code}")
+                return {url: None for url in urls}
+
+            result = resp.json()
+            if not result.get("success") or not result.get("id"):
+                logger.warning(f"Batch Extract job creation failed: {result}")
+                return {url: None for url in urls}
+
+            job_id = result["id"]
+            logger.debug(f"Batch extract job submitted: {job_id}")
+
+            # Poll for results (v2 API)
+            for poll_attempt in range(max_polls):
+                time.sleep(3)
+
+                poll_resp = requests.get(
+                    f"https://api.firecrawl.dev/v2/extract/{job_id}",
+                    headers=headers,
+                    timeout=30,
+                )
+
+                if poll_resp.status_code != 200:
+                    continue
+
+                poll_result = poll_resp.json()
+                status = poll_result.get("status")
+
+                if status == "completed":
+                    data = poll_result.get("data", {})
+                    # Map results back to URLs
+                    results = {}
+                    if isinstance(data, list):
+                        for i, item in enumerate(data):
+                            if i < len(urls):
+                                item["url"] = urls[i]
+                                item["source"] = "batch_schema_extract_v2"
+                                results[urls[i]] = item
+                    elif isinstance(data, dict):
+                        # Single result or keyed by URL
+                        for url in urls:
+                            if url in data:
+                                data[url]["url"] = url
+                                data[url]["source"] = "batch_schema_extract_v2"
+                                results[url] = data[url]
+                            elif len(urls) == 1:
+                                data["url"] = url
+                                data["source"] = "batch_schema_extract_v2"
+                                results[url] = data
+
+                    logger.info(f"✅ Batch Extract success: {len(results)}/{len(urls)} URLs")
+                    # Fill in None for missing URLs
+                    for url in urls:
+                        if url not in results:
+                            results[url] = None
+                    return results
+
+                elif status == "failed":
+                    logger.warning(f"Batch Extract job failed: {poll_result}")
+                    return {url: None for url in urls}
+
+                logger.debug(f"Batch job {job_id} status: {status} (poll {poll_attempt + 1}/{max_polls})")
+
+            logger.warning(f"Batch Extract timed out after {max_polls} polls")
+            return {url: None for url in urls}
+
+        except Exception as e:
+            logger.error(f"Batch Extract error: {e}")
+            return {url: None for url in urls}
+
+    def extract_work_details_v2(self, url: str) -> Optional[Dict[str, Any]]:
+        """Optimized two-layer extraction strategy for maximum completeness.
+
+        Strategy:
+        1. Layer 1: Local BS4 parsing (0 credits) - fast, free
+        2. Layer 2: Firecrawl Extract with schema (~20-50 credits, token-based) - if Layer 1 incomplete
+
+        Args:
+            url: Artwork page URL to extract from.
+
+        Returns:
+            Dictionary with extracted artwork fields, or None if extraction fails.
+        """
+        # Layer 0: Cache check
+        if self.use_cache:
+            cached = self._load_cache(url)
+            if cached:
+                if not is_artwork(cached):
+                    logger.debug(f"Cache hit (exhibition, skipped): {url}")
+                    return None
+                logger.debug(f"Cache hit: {url}")
+                return cached
+
+        # Layer 1: BS4 local parsing (0 credits)
+        local_data = None
+        if hasattr(self, "extract_metadata_bs4"):
+            local_data = self.extract_metadata_bs4(url)
+            if local_data:
+                # Skip exhibitions early
+                if not is_artwork(local_data):
+                    logger.info(f"⏭️ Skipping exhibition (local): {local_data.get('title', url)}")
+                    if self.use_cache:
+                        self._save_cache(url, local_data)
+                    return None
+
+                # Normalize year
+                if local_data.get("year"):
+                    local_data["year"] = normalize_year(local_data["year"])
+
+        # Check completeness of Layer 1 result
+        # Use type-aware required fields to reduce unnecessary API calls
+        if local_data:
+            missing = self._get_missing_fields(local_data)
+        else:
+            missing = ['title', 'year', 'type']  # Minimum required
+
+        # Always use Layer 2 to verify and supplement for 100% data accuracy
+        # Even if Layer 1 appears complete, Layer 2 double-checks for correctness
+        always_verify = True  # Set to False to only call Layer 2 when fields are missing
+        if always_verify or len(missing) >= 1:
+            logger.info(f"📝 Calling Layer 2 for verification (missing {len(missing)} field(s))...")
+            schema_data = self._extract_with_schema(url)
+
+            if schema_data:
+                if local_data:
+                    # Field priority:
+                    # - Layer 1 authoritative: year, type (from tags, ~100% accurate)
+                    # - Layer 1 exclusive: images (from slideshow container)
+                    # - Layer 2 authoritative: other text fields (AI more accurate)
+
+                    # Fields where Layer 2 takes priority (override Layer 1)
+                    layer2_priority = [
+                        'title', 'title_cn',
+                        'materials', 'size', 'duration', 'credits',
+                        'description_en', 'description_cn'
+                    ]
+                    for field in layer2_priority:
+                        if schema_data.get(field):
+                            local_data[field] = schema_data[field]
+
+                    # Fields where Layer 1 takes priority (only fill if empty)
+                    # year and type from tags are more reliable than LLM extraction
+                    layer1_priority = ['year', 'type']
+                    for field in layer1_priority:
+                        if not local_data.get(field) and schema_data.get(field):
+                            local_data[field] = schema_data[field]
+
+                    local_data['source'] = 'hybrid_verified'
+                else:
+                    local_data = schema_data
+        elif local_data:
+            logger.info(f"✅ Layer 1 complete: {local_data.get('title', 'Unknown')}")
+
+        # Cache and return
+        if local_data and self.use_cache:
+            self._save_cache(url, local_data)
+
+        return local_data
+
     def _extract_with_llm(self, url: str, retry_count: int = 0) -> Optional[Dict[str, Any]]:
-        """Extract data using Firecrawl LLM (2 credits).
+        """Extract data using Firecrawl LLM (~20-50 credits, token-based).
 
         This is the most expensive extraction method, used as last resort.
 
