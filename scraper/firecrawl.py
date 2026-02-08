@@ -25,6 +25,8 @@ from .constants import (
     FC_TIMEOUT, FULL_SCHEMA, PROMPT_TEMPLATES, QUICK_SCHEMA,
     MATERIAL_KEYWORDS, CREDITS_PATTERNS, CANONICAL_TYPES,
     ArtworkSchema, ARTWORK_EXTRACT_PROMPT,
+    SPA_WAIT_MS, SPA_EXCLUDE_TAGS,
+    BASE_URL,
 )
 from .basic import is_artwork, normalize_year, parse_size_duration, is_extraction_complete
 
@@ -142,7 +144,8 @@ class FirecrawlMixin:
         """Scrape a URL and return markdown content (1 credit).
 
         Uses Firecrawl's scrape endpoint with markdown format only,
-        which is much cheaper than LLM extraction.
+        which is much cheaper than LLM extraction. Includes SPA-aware
+        settings to handle dynamic content loading.
 
         Args:
             url: URL to scrape.
@@ -157,10 +160,14 @@ class FirecrawlMixin:
         self.rate_limiter.wait()
 
         try:
-            payload = {
+            payload: Dict[str, Any] = {
                 "url": url,
                 "formats": ["markdown"],
                 "onlyMainContent": True,
+                # Exclude sidebar navigation to reduce noise
+                "excludeTags": SPA_EXCLUDE_TAGS,
+                # Wait for SPA content to render
+                "waitFor": SPA_WAIT_MS,
                 # Enable Firecrawl server-side caching (2 days default)
                 # This can speed up repeated scrapes by up to 5x
                 "maxAge": 172800,  # 2 days in seconds
@@ -676,6 +683,9 @@ class FirecrawlMixin:
         field descriptions and prompt engineering. The Extract API v2 is async,
         so we submit a job and poll for results.
 
+        Falls back to scrape_with_json if the Extract API fails, which provides
+        synchronous extraction with SPA-aware actions.
+
         Args:
             url: URL to extract from.
             max_polls: Maximum polling attempts (default 15, ~45 seconds).
@@ -703,11 +713,18 @@ class FirecrawlMixin:
                 "Content-Type": "application/json",
             }
 
+            # Build prompt with URL context for better accuracy
+            url_slug = url.rstrip("/").split("/")[-1].replace("-", " ").replace("_", " ")
+            prompt_with_context = (
+                ARTWORK_EXTRACT_PROMPT
+                + f"\n\nURL slug for verification: '{url_slug}'"
+            )
+
             # Use Pydantic schema for structured extraction
-            payload = {
+            payload: Dict[str, Any] = {
                 "urls": [url],
                 "schema": ArtworkSchema.model_json_schema(),
-                "prompt": ARTWORK_EXTRACT_PROMPT,
+                "prompt": prompt_with_context,
             }
 
             # Step 1: Submit async extraction job (v2 API)
@@ -724,12 +741,16 @@ class FirecrawlMixin:
                     time.sleep(5)
                     return self._extract_with_schema(url)
                 logger.warning(f"Schema Extract submit failed: {resp.status_code}")
-                return None
+                # Fallback to scrape_with_json
+                logger.info(f"↩️ Falling back to Scrape+JSON for {url}")
+                return self.scrape_with_json(url)
 
             result = resp.json()
             if not result.get("success") or not result.get("id"):
                 logger.warning(f"Schema Extract job creation failed: {result}")
-                return None
+                # Fallback to scrape_with_json
+                logger.info(f"↩️ Falling back to Scrape+JSON for {url}")
+                return self.scrape_with_json(url)
 
             job_id = result["id"]
             logger.debug(f"Extract job submitted: {job_id}")
@@ -757,27 +778,44 @@ class FirecrawlMixin:
                         # v2 API may return data as a list
                         if isinstance(data, list) and len(data) > 0:
                             data = data[0]
+
+                        # Clean null/empty placeholder values
+                        for key in list(data.keys()):
+                            val = data.get(key)
+                            if isinstance(val, str) and val.lower().strip() in (
+                                "null", "none", "n/a", "not specified", "unknown",
+                            ):
+                                data[key] = ""
+
                         data["url"] = url
                         data["source"] = "schema_extract_v2"
                         logger.info(f"✅ Schema Extract success: {data.get('title', 'Unknown')}")
                         return data
                     else:
                         logger.warning(f"Schema Extract returned empty data for {url}")
-                        return None
+                        # Fallback to scrape_with_json
+                        logger.info(f"↩️ Falling back to Scrape+JSON for {url}")
+                        return self.scrape_with_json(url)
 
                 elif status == "failed":
                     logger.warning(f"Schema Extract job failed: {poll_result}")
-                    return None
+                    # Fallback to scrape_with_json
+                    logger.info(f"↩️ Falling back to Scrape+JSON for {url}")
+                    return self.scrape_with_json(url)
 
                 # Still processing, continue polling
                 logger.debug(f"Extract job {job_id} status: {status} (poll {poll_attempt + 1}/{max_polls})")
 
             logger.warning(f"Schema Extract timed out after {max_polls} polls for {url}")
-            return None
+            # Fallback to scrape_with_json on timeout
+            logger.info(f"↩️ Falling back to Scrape+JSON for {url}")
+            return self.scrape_with_json(url)
 
         except Exception as e:
             logger.error(f"Schema Extract error: {e}")
-            return None
+            # Fallback to scrape_with_json on exception
+            logger.info(f"↩️ Falling back to Scrape+JSON for {url}")
+            return self.scrape_with_json(url)
 
     def _batch_extract_with_schema(
         self, urls: List[str], max_polls: int = 30
@@ -1090,6 +1128,93 @@ class FirecrawlMixin:
         similarity = SequenceMatcher(None, norm1, norm2).ratio()
         return similarity >= threshold
 
+    def _is_description_contaminated(
+        self, description: str, url: str, local_data: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """Detect cross-contamination in description fields.
+
+        In SPA sites, the LLM may extract descriptions from adjacent/nearby
+        works instead of the current work. This method detects common
+        contamination patterns:
+
+        1. Description mentions a different artwork's title explicitly
+        2. Description references a work name that doesn't match the URL
+        3. Description starts with a pattern like '"X" is a ... artwork'
+           where X doesn't match the current work's title
+
+        Args:
+            description: The description text to validate.
+            url: URL of the current artwork page.
+            local_data: Optional Layer 1 data for cross-reference.
+
+        Returns:
+            True if description appears contaminated, False if it looks clean.
+        """
+        if not description or len(description) < 30:
+            return False
+
+        desc_lower = description.lower().strip()
+        url_slug = url.rstrip("/").split("/")[-1]
+        slug_normalized = url_slug.replace("-", " ").replace("_", " ").lower()
+
+        # Get current work's title for comparison
+        current_title = ""
+        if local_data:
+            current_title = (local_data.get("title") or "").lower()
+
+        # Pattern 1: Description starts with '"WorkTitle" is a ... artwork/installation/video'
+        # This is a strong signal of cross-contamination if WorkTitle != current title
+        quoted_title_match = re.match(
+            r'^["\u201c\u201d]([^"\u201c\u201d]+)["\u201c\u201d]\s+is\s+(?:a|an)\s+',
+            desc_lower
+        )
+        if quoted_title_match:
+            mentioned_title = quoted_title_match.group(1).strip()
+            # Check if the mentioned title matches the current work
+            if current_title and mentioned_title not in current_title:
+                if not self._validate_title_against_url(mentioned_title, url):
+                    logger.debug(
+                        f"Description contamination: mentions '{mentioned_title}' "
+                        f"but URL is '{url_slug}'"
+                    )
+                    return True
+
+        # Pattern 2: Description explicitly names a different artwork
+        # e.g., "Guard is a installation artwork..." appearing in /Sacpe-data page
+        artwork_name_pattern = re.match(
+            r'^(\w[\w\s,\.]{1,30})\s+is\s+(?:a|an)\s+(?:\w+\s+){0,3}'
+            r'(?:artwork|installation|video|performance|piece|work|project)',
+            desc_lower
+        )
+        if artwork_name_pattern:
+            mentioned_name = artwork_name_pattern.group(1).strip()
+            # Check if this name matches the current work or URL
+            if len(mentioned_name) > 2:
+                if current_title and mentioned_name not in current_title:
+                    if not self._validate_title_against_url(mentioned_name, url):
+                        logger.debug(
+                            f"Description contamination: starts with '{mentioned_name}' "
+                            f"but URL is '{url_slug}'"
+                        )
+                        return True
+
+        # Pattern 3: Description mentions another work's URL slug explicitly
+        # This is a heuristic: if desc mentions "one ritual" but URL is "Sacpe-data",
+        # that's contamination
+        known_contaminant_slugs = [
+            "guard", "one ritual", "two rituals", "absurd reality check",
+        ]
+        for contaminant in known_contaminant_slugs:
+            if contaminant in desc_lower and contaminant not in slug_normalized:
+                if current_title and contaminant not in current_title:
+                    logger.debug(
+                        f"Description contamination: mentions '{contaminant}' "
+                        f"but URL is '{url_slug}'"
+                    )
+                    return True
+
+        return False
+
     def _clean_duplicate_title(self, title: str, title_cn: str) -> Tuple[str, str]:
         """Clean up duplicate title patterns.
 
@@ -1234,14 +1359,65 @@ class FirecrawlMixin:
                         )
 
                 # === Strategy B: Layer 2 provides all content fields ===
-                # Layer 2 authoritative: title (if validated), title_cn, materials, size, duration, credits, descriptions
-                layer2_content_fields = [
-                    'materials', 'size', 'duration', 'credits',
-                    'description_en', 'description_cn'
-                ]
+                # CRITICAL: If Layer 2 title was rejected (SPA contamination detected),
+                # the materials and descriptions likely also come from the wrong work.
+                # In that case, only accept safe fields (size, duration) and skip
+                # materials and descriptions which are contamination-prone.
+                layer2_contaminated = not layer2_title_valid and layer2_title
+
+                if layer2_contaminated:
+                    logger.warning(
+                        f"⚠️ Layer 2 content likely contaminated "
+                        f"(title mismatch: '{layer2_title}'), "
+                        f"skipping materials/descriptions"
+                    )
+                    # Only accept low-risk fields when contamination is suspected
+                    layer2_content_fields = ['size', 'duration']
+                else:
+                    layer2_content_fields = [
+                        'materials', 'size', 'duration', 'credits',
+                        'description_en', 'description_cn'
+                    ]
+
                 for field in layer2_content_fields:
                     if schema_data.get(field):
-                        local_data[field] = schema_data[field]
+                        val = schema_data[field]
+                        # Skip null/placeholder values
+                        if isinstance(val, str) and val.lower().strip() in (
+                            "null", "none", "n/a", "not specified", "unknown", "",
+                        ):
+                            continue
+                        # Validate materials field
+                        if field == 'materials':
+                            val_lower = val.lower()
+                            # Skip if materials looks like credits
+                            credit_indicators = [
+                                'concept:', 'sound:', 'software:', 'hardware:',
+                                'photo:', 'video editing:', 'team:', 'director:',
+                                'collaboration', 'made possible', 'curated by',
+                            ]
+                            if any(ci in val_lower for ci in credit_indicators):
+                                logger.debug(
+                                    f"Skipping Layer 2 materials (looks like credits): "
+                                    f"{val[:50]}"
+                                )
+                                continue
+                            # Skip if materials is actually a description (too long)
+                            if len(val) > 200:
+                                logger.debug(
+                                    f"Skipping Layer 2 materials (too long, likely description): "
+                                    f"{val[:50]}"
+                                )
+                                continue
+                        # Validate description fields against URL
+                        if field in ('description_en', 'description_cn'):
+                            if self._is_description_contaminated(val, url, local_data):
+                                logger.warning(
+                                    f"⚠️ Skipping Layer 2 {field} "
+                                    f"(cross-contamination detected): {val[:60]}..."
+                                )
+                                continue
+                        local_data[field] = val
 
                 # Title: Only accept Layer 2 title if validated
                 if layer2_title_valid and layer2_title:
@@ -1291,6 +1467,21 @@ class FirecrawlMixin:
                 logger.debug(f"Title cleaned: '{title}' -> '{clean_title}', '{title_cn}' -> '{clean_cn}'")
                 local_data['title'] = clean_title
                 local_data['title_cn'] = clean_cn
+
+            # Fix title-as-type bug: if title is actually a type string (e.g., "sculpture"),
+            # use the URL slug as the real title and move the title to the type field
+            final_title = local_data.get('title', '')
+            if final_title and self._is_type_string(final_title):
+                url_slug = url.rstrip("/").split("/")[-1]
+                slug_title = url_slug.replace("-", " ").replace("_", " ")
+                logger.warning(
+                    f"⚠️ Title '{final_title}' is a type string, "
+                    f"using URL slug '{slug_title}' as title"
+                )
+                # Move to type if type is empty
+                if not local_data.get('type'):
+                    local_data['type'] = final_title.title()
+                local_data['title'] = slug_title
 
         # Cache and return
         if local_data and self.use_cache:
@@ -1359,7 +1550,7 @@ class FirecrawlMixin:
 
             url_slug = url.rstrip("/").split("/")[-1].replace("-", " ").replace("_", " ")
 
-            payload = {
+            payload: Dict[str, Any] = {
                 "url": url,
                 "formats": [
                     {
@@ -1371,10 +1562,15 @@ class FirecrawlMixin:
                             f"The page may show multiple artworks, but you must find and extract the one "
                             f"whose title or ID matches '{url_slug}'. "
                             f"Ignore navigation links and other artworks. "
-                            f"The title usually appears as 'English Title / Chinese Title'. Separate them."
+                            f"The title usually appears as 'English Title / Chinese Title'. Separate them. "
+                            f"Materials = physical materials only (LED, acrylic, wood). "
+                            f"Credits = collaborators (concept: xxx, sound: xxx). Keep them separate."
                         ),
                     }
                 ],
+                "onlyMainContent": True,
+                "excludeTags": SPA_EXCLUDE_TAGS,
+                "waitFor": SPA_WAIT_MS,
             }
 
             headers = {
@@ -1858,4 +2054,219 @@ class FirecrawlMixin:
         except Exception as e:
             logger.error(f"Discovery error: {e}")
             return []
+
+    def discover_urls_with_map(
+        self, url: Optional[str] = None, search: Optional[str] = None
+    ) -> List[str]:
+        """Discover URLs using the Firecrawl Map API (fast, ~2-3 seconds).
+
+        The Map API instantly discovers all URLs on a website without
+        scrolling or JavaScript execution. Much faster than scroll-based
+        discovery and supports up to 100k results.
+
+        Args:
+            url: Base URL to map. Defaults to BASE_URL (eventstructure.com).
+            search: Optional search term to filter discovered URLs.
+                E.g., "video installation" to find related pages.
+
+        Returns:
+            List of discovered artwork URLs, filtered by _is_valid_work_link.
+        """
+        if not self.firecrawl_key:
+            logger.warning("No Firecrawl API key for Map discovery")
+            return []
+
+        target_url = url or BASE_URL
+
+        self.rate_limiter.wait()
+
+        try:
+            logger.info(f"🗺️ Map API discovery: {target_url}")
+
+            headers = {
+                "Authorization": f"Bearer {self.firecrawl_key}",
+                "Content-Type": "application/json",
+            }
+
+            payload: Dict[str, Any] = {
+                "url": target_url,
+            }
+            if search:
+                payload["search"] = search
+
+            resp = requests.post(
+                "https://api.firecrawl.dev/v2/map",
+                json=payload,
+                headers=headers,
+                timeout=FC_TIMEOUT,
+            )
+
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("success"):
+                    all_links = data.get("links", [])
+                    # Filter to valid artwork links
+                    valid_links = []
+                    for link in all_links:
+                        link_url = link if isinstance(link, str) else link.get("url", "")
+                        if link_url and hasattr(self, "_is_valid_work_link"):
+                            if self._is_valid_work_link(link_url):
+                                valid_links.append(link_url)
+                        elif link_url:
+                            valid_links.append(link_url)
+
+                    logger.info(
+                        f"✅ Map discovered {len(valid_links)} artwork URLs "
+                        f"(from {len(all_links)} total)"
+                    )
+                    return sorted(list(set(valid_links)))
+                else:
+                    logger.warning(f"Map API returned error: {data}")
+            elif resp.status_code == 429:
+                logger.warning("Rate limited on Map API, waiting...")
+                time.sleep(5)
+                return self.discover_urls_with_map(url, search)
+            else:
+                logger.warning(f"Map API failed: {resp.status_code}")
+
+            return []
+
+        except Exception as e:
+            logger.error(f"Map API error: {e}")
+            return []
+
+    def scrape_with_json(
+        self, url: str, schema: Optional[Dict[str, Any]] = None,
+        prompt: Optional[str] = None, wait_for_spa: bool = True,
+    ) -> Optional[Dict[str, Any]]:
+        """Extract structured data using the Scrape API with JSON format.
+
+        This is a synchronous alternative to the async Extract API. It uses
+        the /v2/scrape endpoint with formats: [{"type": "json", "schema": ...}].
+        No polling required - results are returned immediately.
+
+        For single-URL extraction, this is simpler and often more accurate
+        than the Extract API because it scrapes the page fresh with
+        SPA-aware actions before extracting.
+
+        Args:
+            url: URL to scrape and extract from.
+            schema: JSON schema for structured extraction. Defaults to
+                ArtworkSchema if not provided.
+            prompt: Custom prompt for extraction. Defaults to
+                ARTWORK_EXTRACT_PROMPT if not provided.
+            wait_for_spa: If True, adds waitFor and SPA-aware actions
+                to handle dynamic content. Defaults to True.
+
+        Returns:
+            Dictionary with extracted fields, or None if extraction fails.
+        """
+        if not self.firecrawl_key:
+            logger.warning("No Firecrawl API key for JSON scrape")
+            return None
+
+        self.rate_limiter.wait()
+
+        try:
+            url_slug = url.rstrip("/").split("/")[-1].replace("-", " ").replace("_", " ")
+
+            # Build schema
+            extraction_schema = schema or ArtworkSchema.model_json_schema()
+
+            # Build prompt with URL context
+            extraction_prompt = prompt or ARTWORK_EXTRACT_PROMPT
+            extraction_prompt += f"\n\nURL slug for verification: '{url_slug}'"
+
+            # Build formats with JSON extraction
+            formats: List[Any] = [
+                "markdown",
+                {
+                    "type": "json",
+                    "schema": extraction_schema,
+                    "prompt": extraction_prompt,
+                },
+            ]
+
+            headers = {
+                "Authorization": f"Bearer {self.firecrawl_key}",
+                "Content-Type": "application/json",
+            }
+
+            payload: Dict[str, Any] = {
+                "url": url,
+                "formats": formats,
+                "onlyMainContent": True,
+                "excludeTags": SPA_EXCLUDE_TAGS,
+                "maxAge": 172800,  # 2 days cache
+            }
+
+            # Add SPA-aware settings
+            if wait_for_spa:
+                payload["waitFor"] = SPA_WAIT_MS
+                # Add actions to wait for content and dismiss overlays
+                payload["actions"] = [
+                    {"type": "wait", "milliseconds": SPA_WAIT_MS},
+                ]
+
+            logger.info(f"🔍 Scrape+JSON: {url}")
+
+            resp = requests.post(
+                "https://api.firecrawl.dev/v2/scrape",
+                json=payload,
+                headers=headers,
+                timeout=60,
+            )
+
+            if resp.status_code == 200:
+                data = resp.json()
+                json_data = data.get("data", {}).get("json")
+
+                if json_data:
+                    # Normalize field names
+                    result = {
+                        "url": url,
+                        "title": json_data.get("title", ""),
+                        "title_cn": json_data.get("title_cn", ""),
+                        "year": json_data.get("year", ""),
+                        "type": json_data.get("type", ""),
+                        "materials": json_data.get("materials", ""),
+                        "size": json_data.get("size", ""),
+                        "duration": json_data.get("duration", ""),
+                        "credits": json_data.get("credits", ""),
+                        "description_en": json_data.get("description_en", ""),
+                        "description_cn": json_data.get("description_cn", ""),
+                        "source": "scrape_json",
+                    }
+
+                    # Post-processing: clean null/empty placeholders
+                    for key in list(result.keys()):
+                        val = result[key]
+                        if isinstance(val, str) and val.lower().strip() in (
+                            "null", "none", "n/a", "not specified", "unknown", ""
+                        ):
+                            result[key] = ""
+
+                    # Normalize year
+                    if result.get("year"):
+                        result["year"] = normalize_year(result["year"])
+
+                    logger.info(
+                        f"✅ Scrape+JSON success: {result.get('title', 'Unknown')}"
+                    )
+                    return result
+
+                logger.warning(f"Scrape+JSON returned no JSON data for {url}")
+
+            elif resp.status_code == 429:
+                logger.warning("Rate limited on Scrape+JSON, waiting...")
+                time.sleep(5)
+                return self.scrape_with_json(url, schema, prompt, wait_for_spa)
+            else:
+                logger.warning(f"Scrape+JSON failed: {resp.status_code}")
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Scrape+JSON error: {e}")
+            return None
 
