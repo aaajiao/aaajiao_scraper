@@ -1128,6 +1128,93 @@ class FirecrawlMixin:
         similarity = SequenceMatcher(None, norm1, norm2).ratio()
         return similarity >= threshold
 
+    def _is_description_contaminated(
+        self, description: str, url: str, local_data: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """Detect cross-contamination in description fields.
+
+        In SPA sites, the LLM may extract descriptions from adjacent/nearby
+        works instead of the current work. This method detects common
+        contamination patterns:
+
+        1. Description mentions a different artwork's title explicitly
+        2. Description references a work name that doesn't match the URL
+        3. Description starts with a pattern like '"X" is a ... artwork'
+           where X doesn't match the current work's title
+
+        Args:
+            description: The description text to validate.
+            url: URL of the current artwork page.
+            local_data: Optional Layer 1 data for cross-reference.
+
+        Returns:
+            True if description appears contaminated, False if it looks clean.
+        """
+        if not description or len(description) < 30:
+            return False
+
+        desc_lower = description.lower().strip()
+        url_slug = url.rstrip("/").split("/")[-1]
+        slug_normalized = url_slug.replace("-", " ").replace("_", " ").lower()
+
+        # Get current work's title for comparison
+        current_title = ""
+        if local_data:
+            current_title = (local_data.get("title") or "").lower()
+
+        # Pattern 1: Description starts with '"WorkTitle" is a ... artwork/installation/video'
+        # This is a strong signal of cross-contamination if WorkTitle != current title
+        quoted_title_match = re.match(
+            r'^["\u201c\u201d]([^"\u201c\u201d]+)["\u201c\u201d]\s+is\s+(?:a|an)\s+',
+            desc_lower
+        )
+        if quoted_title_match:
+            mentioned_title = quoted_title_match.group(1).strip()
+            # Check if the mentioned title matches the current work
+            if current_title and mentioned_title not in current_title:
+                if not self._validate_title_against_url(mentioned_title, url):
+                    logger.debug(
+                        f"Description contamination: mentions '{mentioned_title}' "
+                        f"but URL is '{url_slug}'"
+                    )
+                    return True
+
+        # Pattern 2: Description explicitly names a different artwork
+        # e.g., "Guard is a installation artwork..." appearing in /Sacpe-data page
+        artwork_name_pattern = re.match(
+            r'^(\w[\w\s,\.]{1,30})\s+is\s+(?:a|an)\s+(?:\w+\s+){0,3}'
+            r'(?:artwork|installation|video|performance|piece|work|project)',
+            desc_lower
+        )
+        if artwork_name_pattern:
+            mentioned_name = artwork_name_pattern.group(1).strip()
+            # Check if this name matches the current work or URL
+            if len(mentioned_name) > 2:
+                if current_title and mentioned_name not in current_title:
+                    if not self._validate_title_against_url(mentioned_name, url):
+                        logger.debug(
+                            f"Description contamination: starts with '{mentioned_name}' "
+                            f"but URL is '{url_slug}'"
+                        )
+                        return True
+
+        # Pattern 3: Description mentions another work's URL slug explicitly
+        # This is a heuristic: if desc mentions "one ritual" but URL is "Sacpe-data",
+        # that's contamination
+        known_contaminant_slugs = [
+            "guard", "one ritual", "two rituals", "absurd reality check",
+        ]
+        for contaminant in known_contaminant_slugs:
+            if contaminant in desc_lower and contaminant not in slug_normalized:
+                if current_title and contaminant not in current_title:
+                    logger.debug(
+                        f"Description contamination: mentions '{contaminant}' "
+                        f"but URL is '{url_slug}'"
+                    )
+                    return True
+
+        return False
+
     def _clean_duplicate_title(self, title: str, title_cn: str) -> Tuple[str, str]:
         """Clean up duplicate title patterns.
 
@@ -1272,11 +1359,26 @@ class FirecrawlMixin:
                         )
 
                 # === Strategy B: Layer 2 provides all content fields ===
-                # Layer 2 authoritative: title (if validated), title_cn, materials, size, duration, credits, descriptions
-                layer2_content_fields = [
-                    'materials', 'size', 'duration', 'credits',
-                    'description_en', 'description_cn'
-                ]
+                # CRITICAL: If Layer 2 title was rejected (SPA contamination detected),
+                # the materials and descriptions likely also come from the wrong work.
+                # In that case, only accept safe fields (size, duration) and skip
+                # materials and descriptions which are contamination-prone.
+                layer2_contaminated = not layer2_title_valid and layer2_title
+
+                if layer2_contaminated:
+                    logger.warning(
+                        f"⚠️ Layer 2 content likely contaminated "
+                        f"(title mismatch: '{layer2_title}'), "
+                        f"skipping materials/descriptions"
+                    )
+                    # Only accept low-risk fields when contamination is suspected
+                    layer2_content_fields = ['size', 'duration']
+                else:
+                    layer2_content_fields = [
+                        'materials', 'size', 'duration', 'credits',
+                        'description_en', 'description_cn'
+                    ]
+
                 for field in layer2_content_fields:
                     if schema_data.get(field):
                         val = schema_data[field]
@@ -1287,8 +1389,8 @@ class FirecrawlMixin:
                             continue
                         # Validate materials field
                         if field == 'materials':
-                            # Skip if materials looks like credits
                             val_lower = val.lower()
+                            # Skip if materials looks like credits
                             credit_indicators = [
                                 'concept:', 'sound:', 'software:', 'hardware:',
                                 'photo:', 'video editing:', 'team:', 'director:',
@@ -1305,6 +1407,14 @@ class FirecrawlMixin:
                                 logger.debug(
                                     f"Skipping Layer 2 materials (too long, likely description): "
                                     f"{val[:50]}"
+                                )
+                                continue
+                        # Validate description fields against URL
+                        if field in ('description_en', 'description_cn'):
+                            if self._is_description_contaminated(val, url, local_data):
+                                logger.warning(
+                                    f"⚠️ Skipping Layer 2 {field} "
+                                    f"(cross-contamination detected): {val[:60]}..."
                                 )
                                 continue
                         local_data[field] = val
@@ -1357,6 +1467,21 @@ class FirecrawlMixin:
                 logger.debug(f"Title cleaned: '{title}' -> '{clean_title}', '{title_cn}' -> '{clean_cn}'")
                 local_data['title'] = clean_title
                 local_data['title_cn'] = clean_cn
+
+            # Fix title-as-type bug: if title is actually a type string (e.g., "sculpture"),
+            # use the URL slug as the real title and move the title to the type field
+            final_title = local_data.get('title', '')
+            if final_title and self._is_type_string(final_title):
+                url_slug = url.rstrip("/").split("/")[-1]
+                slug_title = url_slug.replace("-", " ").replace("_", " ")
+                logger.warning(
+                    f"⚠️ Title '{final_title}' is a type string, "
+                    f"using URL slug '{slug_title}' as title"
+                )
+                # Move to type if type is empty
+                if not local_data.get('type'):
+                    local_data['type'] = final_title.title()
+                local_data['title'] = slug_title
 
         # Cache and return
         if local_data and self.use_cache:

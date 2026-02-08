@@ -17,6 +17,132 @@ from .report import ReportMixin
 from .constants import CACHE_DIR, PROMPT_TEMPLATES, QUICK_SCHEMA, FULL_SCHEMA
 
 
+def _clean_cross_contamination(works: List[Dict[str, Any]]) -> int:
+    """Detect and clean cross-contaminated fields across works.
+
+    In SPA sites, the LLM sometimes extracts materials/descriptions from
+    adjacent works. This manifests as identical materials or descriptions
+    appearing in multiple unrelated works.
+
+    Detection: If the same non-trivial materials string appears in 3+ works,
+    it's likely contamination from one source work. We keep it on the work
+    whose title/URL best matches, and clear it from the rest.
+
+    Same logic applies to descriptions.
+
+    Args:
+        works: List of work dictionaries to clean.
+
+    Returns:
+        Number of fields that were cleaned.
+    """
+    import logging
+    from collections import Counter
+
+    logger = logging.getLogger(__name__)
+    cleaned = 0
+
+    # --- Materials deduplication ---
+    materials_counter: Dict[str, List[int]] = {}
+    for idx, work in enumerate(works):
+        mat = (work.get("materials") or "").strip()
+        if mat and len(mat) > 15:  # Only check non-trivial materials
+            materials_counter.setdefault(mat, []).append(idx)
+
+    for mat, indices in materials_counter.items():
+        if len(indices) >= 3:
+            # Same materials in 3+ works = contamination
+            # Find which work it actually belongs to (best URL/title match)
+            best_idx = None
+            best_score = -1
+            mat_lower = mat.lower()
+            for idx in indices:
+                work = works[idx]
+                title = (work.get("title") or "").lower()
+                url = (work.get("url") or "").lower()
+                # Heuristic: if description also exists and is unique, it's the real work
+                desc = (work.get("description_en") or "").strip()
+                score = 0
+                if desc and len(desc) > 50:
+                    # Check if this description is unique to this work
+                    desc_count = sum(
+                        1 for w in works
+                        if (w.get("description_en") or "").strip() == desc
+                    )
+                    if desc_count == 1:
+                        score += 10  # Strong signal: unique description
+                # Check if materials keyword matches the work type/title
+                if any(kw in mat_lower for kw in title.split() if len(kw) > 3):
+                    score += 5
+                if score > best_score:
+                    best_score = score
+                    best_idx = idx
+
+            # Clear materials from all except the best match
+            for idx in indices:
+                if idx != best_idx:
+                    logger.info(
+                        f"🧹 Cleaning contaminated materials from "
+                        f"'{works[idx].get('title', 'Unknown')}': {mat[:40]}..."
+                    )
+                    works[idx]["materials"] = ""
+                    cleaned += 1
+
+    # --- Description deduplication ---
+    for desc_field in ("description_en", "description_cn"):
+        desc_counter: Dict[str, List[int]] = {}
+        for idx, work in enumerate(works):
+            desc = (work.get(desc_field) or "").strip()
+            if desc and len(desc) > 50:  # Only check non-trivial descriptions
+                desc_counter.setdefault(desc, []).append(idx)
+
+        for desc, indices in desc_counter.items():
+            if len(indices) >= 2:
+                # Same description in 2+ works = contamination
+                # Find which work it belongs to by checking title mention in desc
+                desc_lower = desc.lower()
+                best_idx = None
+                best_score = -1
+
+                for idx in indices:
+                    work = works[idx]
+                    title = (work.get("title") or "").lower()
+                    url_slug = (work.get("url") or "").rstrip("/").split("/")[-1]
+                    slug = url_slug.replace("-", " ").replace("_", " ").lower()
+                    score = 0
+
+                    # Description mentions this work's title
+                    if title and len(title) > 2 and title in desc_lower:
+                        score += 10
+                    # Description mentions this work's URL slug
+                    if slug and len(slug) > 3 and slug in desc_lower:
+                        score += 8
+                    # Work has unique materials (not contaminated)
+                    mat = (work.get("materials") or "").strip()
+                    if mat:
+                        mat_count = sum(
+                            1 for w in works
+                            if (w.get("materials") or "").strip() == mat
+                        )
+                        if mat_count == 1:
+                            score += 5
+
+                    if score > best_score:
+                        best_score = score
+                        best_idx = idx
+
+                for idx in indices:
+                    if idx != best_idx:
+                        logger.info(
+                            f"🧹 Cleaning contaminated {desc_field} from "
+                            f"'{works[idx].get('title', 'Unknown')}': {desc[:40]}..."
+                        )
+                        works[idx][desc_field] = ""
+                        cleaned += 1
+
+    return cleaned
+
+
 class AaajiaoScraper(CoreScraper, BasicScraperMixin, FirecrawlMixin, CacheMixin, ReportMixin):
     """
     Facade class combining all scraper functionalities.
@@ -166,6 +292,14 @@ class AaajiaoScraper(CoreScraper, BasicScraperMixin, FirecrawlMixin, CacheMixin,
 
         # Deduplicate
         self.works = deduplicate_works(extracted_works)
+
+        # ===== Step 3.5: Cross-contamination cleanup =====
+        _progress("Checking for cross-contamination...", 0.88)
+        contamination_count = _clean_cross_contamination(self.works)
+        if contamination_count:
+            stats["contamination_cleaned"] = contamination_count
+            logger.info(f"🧹 Cleaned {contamination_count} cross-contaminated fields")
+
         stats["total"] = len(self.works)
 
         # ===== Step 4: Save outputs =====
