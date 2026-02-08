@@ -142,6 +142,34 @@ TIMEOUT: Final[int] = 15
 FC_TIMEOUT: Final[int] = 30
 """Firecrawl API request timeout in seconds (longer due to LLM processing)."""
 
+SPA_WAIT_MS: Final[int] = 3000
+"""Milliseconds to wait for SPA content to render before scraping."""
+
+SPA_EXCLUDE_TAGS: Final[List[str]] = [
+    "nav",
+    ".project_thumb:not(.active)",
+    ".sidebar",
+    ".menu",
+    "#navigation",
+    ".tags",
+]
+"""HTML tags/selectors to exclude when scraping SPA pages.
+
+Filters out sidebar navigation elements that cause title pollution.
+"""
+
+SPA_INCLUDE_TAGS: Final[List[str]] = [
+    ".project_content",
+    ".project_title",
+    ".slideshow_container",
+    "article",
+    "main",
+]
+"""HTML tags/selectors to include when scraping SPA pages.
+
+Focuses extraction on the main content area.
+"""
+
 # API Cost Estimates (for documentation and planning)
 SCRAPE_CREDITS_PER_PAGE: Final[int] = 1
 """Firecrawl Scrape API cost: 1 credit per page (markdown only)."""
@@ -365,62 +393,89 @@ class ArtworkSchema(BaseModel):
     Field descriptions guide the LLM on what to extract and expected formats.
     """
 
-    title: str = Field(description="Artwork title in English")
+    title: str = Field(
+        description=(
+            "Artwork title in English. Extract from the MAIN CONTENT AREA only, "
+            "not from sidebar navigation. Usually the most prominent heading."
+        )
+    )
     title_cn: Optional[str] = Field(
         default=None,
-        description="Chinese title, usually after '/' in bilingual format like 'Title / 标题'",
+        description=(
+            "Chinese title (中文标题). Usually after '/' in bilingual format "
+            "like 'English Title / 中文标题'. Leave empty if not present."
+        ),
     )
     year: str = Field(
-        description="Creation year, format: YYYY or YYYY-YYYY for ranges"
+        description=(
+            "Creation year (NOT exhibition dates). Format: YYYY or YYYY-YYYY for ranges. "
+            "Usually found in the metadata area near the title, or in 'Filed under' tags."
+        )
     )
     type: Optional[str] = Field(
         default=None,
-        description="Artwork type: Installation, Video, Performance, Sculpture, etc.",
+        description=(
+            "Artwork type/medium category ONLY. Examples: Installation, Video Installation, "
+            "Single Channel Video, Software, Website, Performance, Sculpture, Print. "
+            "Do NOT include materials, dimensions, or duration here."
+        ),
     )
 
     # Physical properties
     size: Optional[str] = Field(
         default=None,
         description=(
-            "Physical dimensions. Accept formats: 180 x 180 cm, 180×180×50cm, "
-            "180*180, Dimension variable, 尺寸可变"
+            "Physical dimensions ONLY. Accept formats: 180 x 180 cm, 180×180×50cm, "
+            "180*180, Dimension variable, 尺寸可变. Leave empty if not specified."
         ),
     )
     duration: Optional[str] = Field(
         default=None,
         description=(
-            "Video/sound duration. Accept formats: 6'30\", 4 minutes, 10 min, "
-            "4分30秒, 00:04:30"
+            "Video/sound duration ONLY. For video, film, animation, or sound works. "
+            "Accept formats: 6'30\", 4 minutes, 10 min, 4分30秒, 00:04:30. "
+            "Leave empty for non-video/sound works."
         ),
     )
     materials: Optional[str] = Field(
         default=None,
         description=(
-            "Materials and medium used, comma-separated. "
-            "Example: 'LED screen, acrylic, wood / LED屏幕, 亚克力, 木'"
+            "Physical materials and medium ONLY, comma-separated. "
+            "Examples: 'LED screen, acrylic, wood', 'silicone, fiberglass, artificial hair'. "
+            "Do NOT include credits, collaborators, descriptions, or dimensions here. "
+            "Do NOT include 'none', 'N/A', or 'not specified'."
         ),
     )
 
     # Descriptions
     description_en: Optional[str] = Field(
-        default=None, description="English description paragraph(s)"
+        default=None,
+        description=(
+            "English description paragraph(s). These are the essay-like texts "
+            "about the artwork concept and meaning. Not the materials list."
+        ),
     )
     description_cn: Optional[str] = Field(
-        default=None, description="Chinese description paragraph(s) (中文描述)"
+        default=None,
+        description=(
+            "Chinese description paragraph(s) (中文描述). Separate from English description. "
+            "These are the essay-like Chinese texts about the artwork."
+        ),
     )
 
     # Credits
     credits: Optional[str] = Field(
         default=None,
         description=(
-            "Credits and acknowledgments: photo by, technical support, "
-            "collaboration, made possible with, etc."
+            "Credits and acknowledgments. Format: 'role: name; role: name'. "
+            "Examples: 'Photo: John Smith', 'concept: aaajiao; sound: yang2', "
+            "'technical support: Studio XYZ'. Do NOT put this in materials field."
         ),
     )
 
 
 ARTWORK_EXTRACT_PROMPT: Final[str] = """
-Extract artwork metadata from this artist portfolio page.
+Extract artwork metadata from this artist portfolio page (eventstructure.com by aaajiao).
 
 ⚠️ CRITICAL - THIS IS A SINGLE PAGE APPLICATION (SPA):
 - The page contains a SIDEBAR with links to OTHER artworks - IGNORE THESE!
@@ -435,11 +490,18 @@ HOW TO IDENTIFY THE CORRECT ARTWORK:
 
 EXTRACTION RULES:
 1. Title format: Usually "English Title / 中文标题" - split into title and title_cn
-2. Size: 180 x 180 cm, 180×180×50cm, Dimension variable, 尺寸可变
-3. Duration: 6'30", 4 minutes, 4分30秒, 00:04:30 (for video/sound works)
-4. Materials: Physical materials only (LED, acrylic, wood, silicone, etc.)
-5. Credits: Photo credits, collaborators, technical support
-6. Descriptions: Separate English and Chinese paragraphs
+2. Size: Physical dimensions only (180 x 180 cm, 180×180×50cm, Dimension variable, 尺寸可变)
+3. Duration: Video/sound duration only (6'30", 4 minutes, 4分30秒, 00:04:30). Leave empty for non-video works
+4. Materials: Physical materials ONLY (LED, acrylic, wood, silicone, screen printing). Do NOT include credits, collaborators, or descriptions here
+5. Credits: Photo credits, collaborators, technical support (concept: xxx, sound: xxx, Photo: xxx)
+6. Descriptions: Separate English and Chinese paragraphs. These are the essay-like texts about the artwork
+7. Year: Creation year or range (2018, 2018-2022). Found in tags or metadata area, NOT exhibition dates
+
+COMMON MISTAKES TO AVOID:
+- Do NOT put description text into the materials field
+- Do NOT put credits/collaborators into the materials field
+- Do NOT extract sidebar navigation titles as the artwork title
+- Do NOT confuse exhibition dates with creation year
 
 VERIFICATION: Your extracted title should relate to the URL slug of the page.
 """
