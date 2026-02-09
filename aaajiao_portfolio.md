@@ -52,13 +52,9 @@ Through "Guard," the artist seeks to provoke contemplation on the human predicam
 
 **Size**: 75 x 75 x 140 cm
 
-**中文描述**: 以艺术家自身的面部与身体形态为蓝本，通过拍照结合 AI 算法生成粗模，再以传统工艺完成的一尊硅胶人偶。人偶身着常见的保安制服，坐在椅子上，仿佛在打盹。
+**中文描述**: 以艺术家自身的面部与身体形态为蓝本，通过拍照结合 AI 算法生成粗模，再以传统工艺完成的一尊硅胶人偶。人偶身着常见的保安制服，坐在椅子上，仿佛在打盹。在中国，保安曾经多由退伍军人或从乡村进城务工、年龄稍长的人担任。近几年，尤其是新冠疫情之后，保安也成了不少失业年轻人的选择，与保洁、保姆一起被戏称为“吉祥三宝”。简中互联网中还流行“年轻人当保安，少走四十年弯路”的迷因。瘟疫封城期间，居民大多被限制在居所与小区内，保安在行政口头授权下承担起“关键角色”，掌握出入与秩序管理等权限，成为小区层面“最小单位的法西斯”，也是很多被封居民的瘟疫创伤。与此同时，这份工作日常往往枯燥而孤独。许多年轻保安开始经营自媒体，拍 vlog 分享日常，希望借助全民注意力经济改善低收入处境并获得关注。
 
-在中国，保安曾经多由退伍军人或从乡村进城务工、年龄稍长的人担任。近几年，尤其是新冠疫情之后，保安也成了不少失业年轻人的选择，与保洁、保姆一起被戏称为“吉祥三宝”。简中互联网中还流行“年轻人当保安，少走四十年弯路”的迷因。瘟疫封城期间，居民大多被限制在居所与小区内，保安在行政口头授权下承担起“关键角色”，掌握出入与秩序管理等权限，成为小区层面“最小单位的法西斯”，也是很多被封居民的瘟疫创伤。与此同时，这份工作日常往往枯燥而孤独。许多年轻保安开始经营自媒体，拍 vlog 分享日常，希望借助全民注意力经济改善低收入处境并获得关注。
-
-**Description**: Modeled on the artist’s own face and body, a rough form was generated via photography and AI, then finished by hand into a silicone figure. Dressed in a standard security uniform, the figure sits in a chair, as if drifting into a nap.
-
-In China, security work was once largely taken by veterans and older rural migrants. Since the pandemic, it has also become a fallback for unemployed youth—jokingly grouped online with cleaners and nannies as the “Auspicious Three Treasures.” A meme on the Simplified-Chinese internet quips: “Young people becoming security guards, skipping forty years of detours.” During lockdowns, guards—under verbal administrative mandate—managed gates and order within residential compounds, becoming, at the scale of the neighborhood, “the smallest unit of fascism,” and a locus of trauma for many who were sealed in. Yet the work is often monotonous and solitary. Many young guards turned to personal channels and vlogs, hoping the attention economy might lift low wages and grant visibility.
+**Description**: Modeled on the artist’s own face and body, a rough form was generated via photography and AI, then finished by hand into a silicone figure. Dressed in a standard security uniform, the figure sits in a chair, as if drifting into a nap. In China, security work was once largely taken by veterans and older rural migrants. Since the pandemic, it has also become a fallback for unemployed youth—jokingly grouped online with cleaners and nannies as the “Auspicious Three Treasures.” A meme on the Simplified-Chinese internet quips: “Young people becoming security guards, skipping forty years of detours.” During lockdowns, guards—under verbal administrative mandate—managed gates and order within residential compounds, becoming, at the scale of the neighborhood, “the smallest unit of fascism,” and a locus of trauma for many who were sealed in. Yet the work is often monotonous and solitary. Many young guards turned to personal channels and vlogs, hoping the attention economy might lift low wages and grant visibility.
 
 ---
 ### [Nobody](https://eventstructure.com/Nobody) / 啥都不是
@@ -148,23 +144,6 @@ In China, security work was once largely taken by veterans and older rural migra
 **中文描述**: 这件作品由三部分素材拼合而成：使用孙三通的神调《哭烟魂》、Ag祖传自奶奶的地藏仪轨行为视频- Ksitigarbha，以及宫泽发布于朋友圈的生活片段，最终被重新剪辑成单一的视频。其叙事线索来自宫泽讲述的东北（哈尔滨）同辈从俱乐部文化到直播带货再到转入“出马仙”式的“心理咨询/安抚”角色的转变，并由Ag以地藏信仰与“废墟—中阴（bardo）”的城市感受为精神框架将三者串联。
 
 **Description**: Three strands are braided into a single cut: Sun Santo’s sacred tune Crying Smoke-Soul; Ag’s ritual performance of Ksitigarbha inherited from his grandmother; and everyday clips Gongze posted to his friend circle. The narrative takes its cue from Gongze’s account of peers in Harbin: drifting through club culture, turning to livestream commerce, then—amid economic shifts—entering the “chuma xian” spirit-medium system to “see/soothe,” a role akin to informal counseling. Ag threads these with a framework of Ksitigarbha devotion and an urban sensorium of “ruin—bardo.” The trajectory mirrors phases of the Simplified-Chinese internet and public discourse, charting the currents of “folk spirituality—platform economy—generational livelihood,” and placing the consolatory function of Crying Smoke-Soul in counterpoint to a social role likened to a “psychiatrist.” Ag’s method draws on a Jiangnan rite for Ksitigarbha—“inserting stick incense” into the earth—both a family lineage and a way to intervene on site. In 2016, Ag enacted it at the former “Qijia Village” in Putuo. Shanghai, in Ag’s grasp, is a “bardo/illusory city”: center and fold, underground and edge, gleam and height as a single continuum, where roles and scenes turn on the axis “ruin—bardo—vow-power.” The “temporary ruins” left by the Dinghai Bridge relocation anchor the shoot and interlock with an incense rite on Ksitigarbha’s birthday, proposing a bodily way of seeing that “finds soil’s seams in concrete.” In the post-pandemic city, driverless metros and the “ghost train” rhyme with a “headless, tailless film,” linking to a clear-eyed practice of “seeing better in the dark”—a chain of metaphors that gives the image its “bardo-in-ruins” cadence. The finished edit lays its sound bed with Crying Smoke-Soul; Ag’s ruin-body performance steers the image; and friend-circle clips puncture the surface as reality’s burrs. Folk belief, urban experience, and platformed life are made concurrent, elaborating a viewing mode and narrative in which “vow-power moves through the bardo.”
-
----
-### [Xindanwei - one company](https://eventstructure.com/Xindanwei-one-company)
-
-**Year**: 2025
-
-**Type**: video
-
-**Materials**: video / 视频
-
-**Size**: Dimension variable / 尺寸可变
-
-**Duration**: 12‘00’‘
-
-**中文描述**: 一个仪式是一件视频艺术作品，探讨当代社会中的仪式行为主题。
-
-**Description**: One ritual is a video artwork exploring themes of ritualistic behavior in contemporary society.
 
 ---
 ## 2024-2025
@@ -268,7 +247,7 @@ In China, security work was once largely taken by veterans and older rural migra
 
 **Size**: 180cm*180cm
 
-**Description**: This artwork explores the intersection of digital and traditional art forms, utilizing various techniques to create a unique visual experience.
+**Description**: a internet data center, Thangka of Shakyamuni Buddha, Tibet, c. 18th century, the internet, a data center, the internet is a mesh tech, Dunhuang frescoes, dancing buddhish monks, The Mogao Caves, lines, diagram, photography, buddhish art, chinese art, hindu art, screens, internet diagram, internet temple, 8k, high detailed, wireframe , dance, rainbows, colorful, monks and monks in old computer communication with rainbows and diagrams, flowers, barroque, complex, trees, flowers, waterfalls, montains, forrest, abstract art, animals, elephants, dolphins, jellyfish, net art, html art, computer desktop, diagram the history about comunication, metalic paper, gold paper, holographic paper, gold leaf, circle, a abstract anime pop art sculpture paint complex line geometric 3d 2d paint about experimental buildings experimental architecture screen landscape, draw, art history, contemporary art, urs fischer, a complex architecture dedicated to sustaining life and information in a flurry of complex systems, wire frame, 3d, translucid, david hockney, transludic, neon, light, mixed media, carbon, crayon, tomokazu matsuyama , diagramatic about complexity and abstract paints, collage, iridescent, hollographic, rainbow, colorful, photography, naturalism, high dynamic range, creative commons attribution, cory arcangel, petra cortright, malevich el lissisky, bold colors, iridescent rainbows, octane render, unreal engine --c 80 --q 2
 
 ---
 ### [Seed: 3339138223](https://eventstructure.com/Seed-3339138223-3632602548) / 种子: 3339138223
@@ -276,8 +255,6 @@ In China, security work was once largely taken by veterans and older rural migra
 **Year**: 2023-2024
 
 **Type**: Print
-
-**Materials**: Digital printing, manual silk screening, hand drawing on linen / 数码打印，手工丝网印刷，亚麻手绘
 
 **Size**: 200cm*200cm
 
@@ -291,8 +268,6 @@ In China, security work was once largely taken by veterans and older rural migra
 **Year**: 2024
 
 **Type**: Print
-
-**Materials**: Digital printing, manual silk screening, hand drawing on linen / 数码打印，手工丝网印刷，亚麻手绘
 
 **Size**: 60cm*60cm
 
@@ -378,8 +353,6 @@ In China, security work was once largely taken by veterans and older rural migra
 
 **Type**: Installation
 
-**Materials**: screen printing, silicone skin, acrylic, oil-based paint
-
 **Size**: 200 x 200 cm
 
 ---
@@ -388,8 +361,6 @@ In China, security work was once largely taken by veterans and older rural migra
 **Year**: 2022
 
 **Type**: Installation
-
-**Materials**: screen printing, silicone skin, acrylic, oil-based paint
 
 **Size**: 222 x 109 cm
 
@@ -401,6 +372,8 @@ In China, security work was once largely taken by veterans and older rural migra
 **Year**: 2018-2021
 
 **Type**: Crypto Art
+
+**Materials**: Hanging on the chain / 挂在链上
 
 **Size**: 0x027
 
@@ -414,6 +387,8 @@ In China, security work was once largely taken by veterans and older rural migra
 **Year**: 2009-2021
 
 **Type**: Installation
+
+**Materials**: Permanent magnet spheres / 永磁球体
 
 **Size**: Dimension variable
 
@@ -446,8 +421,6 @@ In China, security work was once largely taken by veterans and older rural migra
 
 **Type**: Installation
 
-**Materials**: LCD screen, acrylic fittings ／ LCD显示器，压克力组件
-
 **Size**: 16 x 24 x 3.8 cm
 
 **Duration**: 00’12''
@@ -458,8 +431,6 @@ In China, security work was once largely taken by veterans and older rural migra
 **Year**: 2021
 
 **Type**: Installation
-
-**Materials**: LCD screen, acrylic fittings ／ LCD显示器，压克力组件
 
 **Size**: 16 x 24 x 3.8 cm
 
@@ -488,8 +459,6 @@ In China, security work was once largely taken by veterans and older rural migra
 **Year**: 2021
 
 **Type**: Installation
-
-**Materials**: LCD screen, acrylic fittings ／ LCD显示器，压克力组件
 
 **Size**: 16 x 24 x 3.8 cm
 
@@ -524,21 +493,6 @@ In China, security work was once largely taken by veterans and older rural migra
 **中文描述**: 一组用iPhone制造的图片，用菲林打印的方式呈现在窗户上，借助自然光呈现不同的灰度，图片成了对使用手机去观看的结果，也是我尝试去描述看见的过程，那些在记忆中会闪回又模糊的构成生活的大面积空洞，失败的细节。
 
 **Description**: This group of images was made with iPhone, presented on the window by way of film printing, with the help of natural light to show different shades of grey. These images became the result of using the iPhone to see and my attempt to describe the process of seeing. Those that would flashback and blur in memory constitute a large void in life, failure details.
-
----
-### [ddrk.me](https://eventstructure.com/ddrk-me)
-
-**Year**: 2021
-
-**Type**: Installation
-
-**Materials**: Thin film, protective film on UV / 薄膜，保护膜上UV
-
-**Size**: Dimensions variable / 尺寸可变
-
-**中文描述**: ddrk.me是一个叫作低端影视的网站，观察域名不难发现，“ddrk”并不是“低端影视”的拼音首字，尝试拼出来，发现是“低端人口”，在网站的关于页面，站长写道：“我们的目标是提供最便捷的，同时支持电脑和移动设备的超清画质在线观看影视剧体验。域名ddrk.me是站长自嘲，不是指访问本站的您，请勿对号入座。”我习惯性地查看了域名的whois信息并记录了下来，把这些信息打印在工业薄膜上，放进空间中，薄膜很容易产生静电，会黏在皮肤上，地上墙上，也会吸附灰尘。
-
-**Description**: ddrk.me is a website called Low-End Film and TV. It is not difficult to figure that “ddrk” is not the pinyin initials of "Low-End Film and TV", but of "Low-End Population" (dī duān rén kǒu). On the About page of the website, the webmaster writes that “Our goal is to provide the most convenient online viewing experience for both computers and mobile devices with ultra-clear picture quality. The domain name ddrk.me is self-deprecating and does not refer to you as a visitor to the site, so please do not take it personally." I habitually checked the domain name's whois information, recorded it, later printed it on industrial films, and included them in the space. These films easily generate static electricity, stick to the skin, the floor and walls, and absorb dust.
 
 ---
 ## 2020-2021
@@ -577,6 +531,21 @@ In China, security work was once largely taken by veterans and older rural migra
 ---
 ## 2021
 
+### [ddrk.me](https://eventstructure.com/ddrk-me) / 低端人口
+
+**Year**: 2021
+
+**Type**: Installation
+
+**Materials**: Thin film, protective film on UV
+
+**Size**: Dimension variable
+
+**中文描述**: ddrk.me是一个叫作低端影视的网站，观察域名不难发现，“ddrk”并不是“低端影视”的拼音首字，尝试拼出来，发现是“低端人口”，在网站的关于页面，站长写道：“我们的目标是提供最便捷的，同时支持电脑和移动设备的超清画质在线观看影视剧体验。域名ddrk.me是站长自嘲，不是指访问本站的您，请勿对号入座。”我习惯性地查看了域名的whois信息并记录了下来，把这些信息打印在工业薄膜上，放进空间中，薄膜很容易产生静电，会黏在皮肤上，地上墙上，也会吸附灰尘。
+
+**Description**: ddrk.me is a website called Low-End Film and TV. It is not difficult to figure that “ddrk” is not the pinyin initials of "Low-End Film and TV", but of "Low-End Population" (dī duān rén kǒu). On the About page of the website, the webmaster writes that “Our goal is to provide the most convenient online viewing experience for both computers and mobile devices with ultra-clear picture quality. The domain name ddrk.me is self-deprecating and does not refer to you as a visitor to the site, so please do not take it personally." I habitually checked the domain name's whois information, recorded it, later printed it on industrial films, and included them in the space. These films easily generate static electricity, stick to the skin, the floor and walls, and absorb dust.
+
+---
 ### [rhizomes](https://eventstructure.com/rhizomes) / 根茎
 
 **Year**: 2021
@@ -626,6 +595,8 @@ In China, security work was once largely taken by veterans and older rural migra
 
 **Type**: Game
 
+**Materials**: “好，注意听了，游荡的人。
+
 **Video**: https://player.vimeo.com/video/463557085
 
 **中文描述**: 深渊模拟器由aaajiao创作，探索了元游戏的概念，邀请用户参与各种工具，以增强他们对现实的体验。
@@ -645,6 +616,10 @@ In China, security work was once largely taken by veterans and older rural migra
 ### [Simulate Simulator](https://eventstructure.com/Simulate-Simulator) / 模拟模拟器
 
 **Year**: 2020
+
+**Type**: null
+
+**Materials**: Ag，漫游的写作者，1985年生于上海。工作涉及短篇小说、评论、策展与电影。《模拟模拟器》是Ag受aaajiao邀请，由展览“Cave simulator / 洞穴模拟器” 为借口的短篇小说。
 
 **中文描述**: Ag，漫游的写作者，1985年生于上海。工作涉及短篇小说、评论、策展与电影。《模拟模拟器》是Ag受aaajiao邀请，由展览“Cave simulator / 洞穴模拟器” 为借口的短篇小说。
 
@@ -670,11 +645,9 @@ In China, security work was once largely taken by veterans and older rural migra
 
 **Type**: Print
 
-**Materials**: silicone, fiberglass, artificial hair, clothing, seat / 硅胶，玻璃纤维，人造毛发，衣物，座椅
+**Materials**: SLA UV resin, PLA polylactide, TPU thermoplastic polyurethane, magnet
 
 **Size**: 75 x 75 x 140 cm
-
-**Description**: "Guard" is a installation artwork created u...
 
 ---
 ## 2019-2020
@@ -698,8 +671,6 @@ In China, security work was once largely taken by veterans and older rural migra
 
 **Type**: Installation
 
-**Materials**: Screen printing, chevron board, metal frame, acrylic paint / 丝网印刷, 雪弗板, 金属框, 水性漆
-
 **Size**: 95 × 95 cm
 
 ---
@@ -709,8 +680,6 @@ In China, security work was once largely taken by veterans and older rural migra
 
 **Type**: Installation
 
-**Materials**: Led screen, gif / LED屏幕, gif
-
 **Size**: 16 x 16 x 6 cm
 
 ---
@@ -719,8 +688,6 @@ In China, security work was once largely taken by veterans and older rural migra
 **Year**: 2019-2020
 
 **Type**: Installation
-
-**Materials**: Led screen, gif / LED屏幕, gif
 
 **Size**: 64 x 128 x 6 cm
 
@@ -799,8 +766,6 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 
 **Type**: Installation
 
-**Materials**: Screen printing, chevron board, metal frame, acrylic paint / 丝网印刷, 雪弗板, 金属框, 水性漆
-
 **Size**: 99 x 99 cm
 
 ---
@@ -822,6 +787,8 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 **Year**: 2017-2019
 
 **Type**: Installation
+
+**Materials**: Memory Foam, Net Bag, PVC, Car Film, Aluminum Plate, Natural Rosin, Foam Packaging, Tinfoil Insulation Material, Soda Crackers / 记忆海绵, 网兜, PVC, ⻋膜, 铝塑版, 天然松香, 泡沫包装, 锡纸保温材料, 苏打饼干
 
 **Size**: Dimension variable / 尺寸可变
 
@@ -860,6 +827,8 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 
 **Type**: Website
 
+**Materials**: This piece was done in collaboration with XuCong. / 作品是与许聪共同完成。
+
 **Size**: Dimension variable / 尺寸可变
 
 **Video**: https://player.vimeo.com/video/357517262
@@ -885,6 +854,8 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 **Year**: 2019
 
 **Type**: Video
+
+**Materials**: Social movements, even the plague of this time (COVID-19), traditional media, social media, and self-media, all indulge in the media landscape they have co-created. For an individual, there is no longer the ability to see the social truth through the media; on one hand is the huge change in the way information circulates, on the other hand is the rapid deterioration of the current media situation. It is both a feast and an apocalypse for the media. / 社会运动甚至是这次的瘟疫（新冠病毒），传统媒体，社交媒体，自媒体都沉浸在他们共建的媒体图景之中，而对于一个体，不再有能力通过媒体看到社会真相，一方面是信息的流通方式的巨变，另一方面是现在媒体状况的急剧恶化，这是媒体的盛宴，也是媒体的末日。
 
 **Size**: Dimension variable / 尺寸可变
 
@@ -916,21 +887,6 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 ---
 ## 2017-2018
 
-### [bots](https://eventstructure.com/bots) / 观察者们
-
-**Year**: 2017-2018
-
-**Type**: Installation
-
-**Materials**: PVC inflatables / PVC 气体模型
-
-**Size**: Dimension variable / 尺寸可变
-
-**中文描述**: 作品是与许聪共同完成。
-
-**Description**: This piece was done in collaboration with XuCong.
-
----
 ### [bot](https://eventstructure.com/bot) / 观察者
 
 **Year**: 2017-2018
@@ -948,6 +904,21 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 **中文描述**: 《观察者》（bot，）展示了一个深深交织于数字过去和当下的环境。在这片交汇处，本地与全球网络、社交媒体、园林结构、公园、以及最终出现的自然本身，都合并至一种数字化的超表象（hyper-representation）之中。作品从角色扮演动作游戏借鉴了大量的美学元素，反映出一个既熟悉又略显反乌托邦的世界。在这个数字空间中，物理与虚拟的界限变得模糊，引导观众思考机器学习时代下的记忆的本质。
 
 **Description**: aaajiao displays an environment deeply intertwined with a digital past as well as its present counterpart. Reflecting on this intersection, local and global networks, social media, gardening structures, parks, and nature all become amalgamated into a digital hyper-representation. The work borrows aesthetics from existing role-playing action games, reflecting a world that is at once familiar yet slightly dystopian. In this digital space, the boundaries between the physical and the virtual blur, leading viewers to question the nature of memory in the age of machine learning.
+
+---
+### [bots](https://eventstructure.com/bots) / 观察者们
+
+**Year**: 2017-2018
+
+**Type**: Installation
+
+**Materials**: PVC inflatables / PVC 气体模型
+
+**Size**: Dimension variable / 尺寸可变
+
+**中文描述**: 作品是与许聪共同完成。
+
+**Description**: This piece was done in collaboration with XuCong.
 
 ---
 ## 2018
@@ -974,7 +945,7 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 ---
 ## 2017
 
-### [404 / 404](https://eventstructure.com/404404404) / 404 / 404
+### [404](https://eventstructure.com/404404404) / 404
 
 **Year**: 2017
 
@@ -1019,21 +990,6 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 **Description**: Video based on / 视频根据 http://www.abstractbrowsing.net/
 
 ---
-### [Collective Behavior](https://eventstructure.com/Collective-Behavior) / 集群行为
-
-**Year**: 2017
-
-**Type**: Installation
-
-**Materials**: Circular stereo / 圆形音响
-
-**Size**: Dimension variable / 尺寸可变
-
-**中文描述**: 作品是与声音艺术家谭硕欣共同完成。
-
-**Description**: A collaboration of sound artist Tan Shuoxin.
-
----
 ### [Column](https://eventstructure.com/Column) / 柱
 
 **Year**: 2017
@@ -1053,6 +1009,21 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 **Description**: Anxieties over identity have prompted us to find a new role: the user. With this identity as background, we used a graphics processing software to draw a column; each time we finished a section we would modify the computer system time — it could head towards the future, and so it could trace back in history. But the computer’s sense of time that seems infinite has to do with a limitation we programmed based on an overall evaluation (1969- 2038, OS X), and this state of conflict between the finite and the infinite is precisely the psychological reality we experience the moment the body and media melt together.
 
 ---
+### [Collective Behavior](https://eventstructure.com/Collective-Behavior) / 集群行为
+
+**Year**: 2017
+
+**Type**: Installation
+
+**Materials**: Circular stereo / 圆形音响
+
+**Size**: Dimension variable / 尺寸可变
+
+**中文描述**: 作品是与声音艺术家谭硕欣共同完成。
+
+**Description**: A collaboration of sound artist Tan Shuoxin.
+
+---
 ### [I hate people but I love you](https://eventstructure.com/I-hate-people-but-I-love-you) / 我憎恨人但我爱你
 
 **Year**: 2017
@@ -1070,6 +1041,19 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 **Description**: I Hate People but I Love You, is a large format single channel video installation. Set in Mac OS, the video features two cyborgs, one of which is an anticipated Asian female android, the other in disguise of a floating Möbius strip composed of pop-up windows. Both immerse themselves in a reiterated deadpan conversation: “…May I be your friend? Do I look real to you? I hope so…” “I hate people but I love you.” The classic sci-fi paradigm of dystopian sentiments regarding social interaction and loneliness is not only proven in today's social media life, but also redefines the boundaries of interpersonal emotion between users and operations.
 
 ---
+### [Membranization](https://eventstructure.com/Membranization) / 膜化
+
+**Year**: 2017
+
+**Type**: Installation
+
+**Materials**: PVC sheet, solar film / PVC 板、车膜
+
+**Size**: 120 x 52 cm
+
+**Video**: https://player.vimeo.com/video/226569797
+
+---
 ### [Lorem Ipsum](https://eventstructure.com/Lorem-Ipsum) / 乱数假文
 
 **Year**: 2017
@@ -1083,19 +1067,6 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 **Duration**: 20'05
 
 **Description**: aaajiao’s “lorem ipsum” proposes a prototype of an ideal user interface, seemingly perfect and compatible with any language, and any website or application.
-
----
-### [Membranization](https://eventstructure.com/Membranization) / 膜化
-
-**Year**: 2017
-
-**Type**: Installation
-
-**Materials**: PVC sheet, solar film / PVC 板、车膜
-
-**Size**: 120 x 52 cm
-
-**Video**: https://player.vimeo.com/video/226569797
 
 ---
 ### [Progress Bar](https://eventstructure.com/Progress-Bar) / 进度条
@@ -1245,21 +1216,6 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 ---
 ## 2016
 
-### [Overlap](https://eventstructure.com/Overlap) / 双重
-
-**Year**: 2016
-
-**Type**: Installation
-
-**Materials**: LED installation / LED 装置, PVC sheet / PVC 卷材
-
-**Video**: https://vimeo.com/197024846
-
-**中文描述**: 在渲染中为了提供效率，我们会先渲染出光子文件（maya的扩展名是.pamp文件），而光子文件是完全依据物理学中光运动的原理 （
-
-**Description**: Overlap - 用光来描摹并不可见的现场状态，与现场再并置，不稳定和不准确感由此构成。
-
----
 ### [Org.a](https://eventstructure.com/Org-a) / 装置
 
 **Year**: 2016
@@ -1273,6 +1229,21 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 **中文描述**: REFORMERart荣幸邀请到艺术家aaajiao(徐文恺)特别为湖南路5号新媒体空间定制新作《org.a》。展览作品将中国主流新闻门户网站之一自1999年至2016年的首页线框结构图（wireframe）视觉化，aaajiao将数据结构作为可对比观赏的横幅景观，以此考察在信息数据与日常生活紧密关联的当下，人对信息的消化与消费的变与不变。作品名称“org.a”像是一种组织（organization）或行动（operation）的代码，似乎潜含着一道程序命令（code），并具备延续性。本项目首次呈现于湖南路REFORMERart城市公共艺术空间。
 
 **Description**: aaajiao(Xu Wenkai) is a media artist and a media and internet activist, he created his new work by visualizing Chinese mainstream news portals wireframe from 1999 to 2016. This work is expressed as a digital landscape of banners that give physical form to the works abstract description. Ultimately this work expresses objection to the consumption of information occurring in todays ‘digital world’, a form of ‘cheap and useless’ consumption that does not create anything meaningful. aaajiao makes data structure into changing comparative digital forms or ‘banners’ to investigate whether people change through consuming and digesting information in this age where information data and daily life are binding ever more closely. The title of this work like a code name of an organization or operation, sounds like a code command, concealing its double intent. We welcome ’s first occupation of REFORMERart city public art space on Hunan Road.
+
+---
+### [Overlap](https://eventstructure.com/Overlap) / 双重
+
+**Year**: 2016
+
+**Type**: Installation
+
+**Materials**: LED installation / LED 装置, PVC sheet / PVC 卷材
+
+**Video**: https://vimeo.com/197024846
+
+**中文描述**: 在渲染中为了提供效率，我们会先渲染出光子文件（maya的扩展名是.pamp文件），而光子文件是完全依据物理学中光运动的原理 （
+
+**Description**: Overlap - 用光来描摹并不可见的现场状态，与现场再并置，不稳定和不准确感由此构成。
 
 ---
 ### [Space](https://eventstructure.com/Space) / 空间
@@ -1328,6 +1299,8 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 
 **Type**: Installation
 
+**Materials**: USB installation (automatic font file copy to plug in the usb flash drive) / USB 装置, 10' LED screen (custom can play video directly) x1 / 10 寸 LED 屏幕, typeface file / 字体文件, wallpaper / 墙纸
+
 **Size**: Dimension variable / 尺寸可变
 
 **中文描述**: 没有含义的字体:利用人工神经网络算法教机器学习书法。
@@ -1372,8 +1345,6 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 
 **中文描述**: 枯山水 (karesansui) for KeeClub 历峰双墅：位于淮海中路796号，为两栋新古典主义双子别墅，分别建于1921年及1927年。曾是上海民航局、电影局办公楼旧址，浓缩了近一个世纪上海东西方文化交融的历史。
 
-**Description**: Karesansui or "dry landscape" is made possible with the collaboration of Xu Cong (media artist).
-
 ---
 ### [Limited Landscape, Unlimited Floating](https://eventstructure.com/Limited-Landscape-Unlimited-Floating) / 有限的风景，无限的漂浮
 
@@ -1401,21 +1372,6 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 **Size**: 360cm * 130cm
 
 ---
-### [Limited Landscape, Unlimited Wave](https://eventstructure.com/Limited-Landscape-Unlimited-Wave) / 有限的风景，无限的波浪
-
-**Year**: 2015
-
-**Type**: Installation
-
-**Materials**: 8*46' DID LCD screen, metal constructions / 8个46寸DID LCD显示器，金属结构
-
-**Size**: 410cm * 136cm * 260cm
-
-**中文描述**: 作品是与刘晓光完成
-
-**Description**: Made possible with the collaboration of Liu Xiongguang.
-
----
 ### [Limited Landscape, Unlimited Wave 3](https://eventstructure.com/Limited-Landscape-Unlimited-Wave-3) / 无限波浪，有限风景 3
 
 **Year**: 2015
@@ -1435,13 +1391,26 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 **Description**: Made possible with the collaboration of Liu Xiaoguang.
 
 ---
-### [Untitled](https://eventstructure.com/Untitled) / 未命名
+### [Limited Landscape, Unlimited Wave](https://eventstructure.com/Limited-Landscape-Unlimited-Wave) / 有限的风景，无限的波浪
 
 **Year**: 2015
 
 **Type**: Installation
 
-**Materials**: LCD screen, acrylic fittings / LCD显示器，压克力组件
+**Materials**: 8*46' DID LCD screen, metal constructions / 8个46寸DID LCD显示器，金属结构
+
+**Size**: 410cm * 136cm * 260cm
+
+**中文描述**: 作品是与刘晓光完成
+
+**Description**: Made possible with the collaboration of Liu Xiongguang.
+
+---
+### [Untitled](https://eventstructure.com/Untitled) / 未命名
+
+**Year**: 2015
+
+**Type**: Installation
 
 **Size**: 16 x 24 x 3.4cm
 
@@ -1475,8 +1444,6 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 
 **Type**: Installation
 
-**Materials**: LCD screen, acrylic fittings / LCD显示器，压克力组件
-
 **Size**: 16 x 24 x 3.4cm
 
 **Duration**: 4'00''
@@ -1491,8 +1458,6 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 **Year**: 2015
 
 **Type**: Installation
-
-**Materials**: LCD screen, acrylic fittings / LCD显示器，压克力组件
 
 **Size**: 16 x 24 x 3.4cm
 
@@ -1533,7 +1498,7 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 **Description**: Based on the 2013 video/program work Meta, the real-time generative 3D shape of Meta is shredded and constitutes 2D information bits.
 
 ---
-### [sculpture](https://eventstructure.com/exist) / 雕塑
+### [Exist](https://eventstructure.com/exist)
 
 **Year**: 2015
 
@@ -1546,23 +1511,6 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 **中文描述**: 作品是与许聪共同完成。
 
 **Description**: This piece was done in collaboration with Xu Cong.
-
----
-### [observe](https://eventstructure.com/observe)
-
-**Year**: 2015
-
-**Type**: Print
-
-**Materials**: digital printing / 数码打印, acrylic fittings / 压克力组件
-
-**Size**: Dimension variable / 尺寸可变
-
-**Duration**: 12‘00’‘
-
-**中文描述**: 一个仪式是一个探索仪式和表演主题的视频艺术作品。
-
-**Description**: One ritual is a video artwork exploring themes of ritual and performance.
 
 ---
 ### [Totem](https://eventstructure.com/totem) / 图腾
@@ -1578,6 +1526,15 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 **中文描述**: 高度信息化的新族群的图腾
 
 **Description**: Highly informative new ethnic totem
+
+---
+### [observe](https://eventstructure.com/observe)
+
+**Year**: 2015
+
+**Type**: Print
+
+**Materials**: digital printing / 数码打印
 
 ---
 ## 2014
@@ -1612,6 +1569,17 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 **Duration**: 8'27''
 
 ---
+### [Obj.3](https://eventstructure.com/Obj-3)
+
+**Year**: 2014
+
+**Type**: Installation
+
+**Size**: size variable / 尺寸可变 - 10-11’ screening
+
+**Duration**: 8'00''
+
+---
 ### [Obj. 1. 2](https://eventstructure.com/Obj-1-2)
 
 **Year**: 2014
@@ -1622,45 +1590,7 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 
 **Size**: size variable
 
-**Duration**: 8'00''
-
-**中文描述**: 在屏幕中造物，赏物。
-
-**Description**: Create objects in the screen, enjoy objects.
-
----
-### [Obj.3](https://eventstructure.com/Obj-3)
-
-**Year**: 2014
-
-**Type**: Installation
-
-**Materials**: LCD screen, acrylic fittings / LCD显示器，压克力组件
-
-**Size**: size variable / 尺寸可变 - 10-11’ screening
-
-**Duration**: 8'00''
-
-**中文描述**: 在屏幕中造物，赏物。
-
-**Description**: Create objects in the screen, enjoy objects.
-
----
-### [Obj.4](https://eventstructure.com/Obj-4)
-
-**Year**: 2014
-
-**Type**: Installation
-
-**Materials**: LCD screen, wood fittings / LCD显示器，木质组件
-
-**Size**: size variable / 尺寸可变
-
 **Duration**: 8’00''
-
-**中文描述**: 在屏幕中造物，赏物。
-
-**Description**: Create objects in the screen, enjoy objects.
 
 ---
 ### [Obj.5](https://eventstructure.com/Obj-5)
@@ -1675,9 +1605,18 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 
 **Duration**: 8’00''
 
-**中文描述**: 在屏幕中造物，赏物。
+---
+### [Obj.4](https://eventstructure.com/Obj-4)
 
-**Description**: Create objects in the screen, enjoy objects.
+**Year**: 2014
+
+**Type**: Installation
+
+**Materials**: LCD screen, wood fittings / LCD显示器，木质组件
+
+**Size**: size variable / 尺寸可变
+
+**Duration**: 8’00''
 
 ---
 ### [The Screen Generation](https://eventstructure.com/The-Screen-Generation-9m-Museum) / 屏幕一代
@@ -1689,6 +1628,8 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 **Materials**: jewelry / 首饰
 
 **Size**: Dimension variable
+
+**Duration**: 21.02.2014 – 15.03.2014
 
 **Video**: https://player.vimeo.com/video/88977098
 
@@ -1719,6 +1660,8 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 **Year**: 2013
 
 **Type**: Installation
+
+**Materials**: team: aaajiao, liu xiaoguang, xu cong
 
 **Size**: 280cm × 102cm × 30cm
 
@@ -1770,6 +1713,8 @@ The basic idea of my work is happen within this “blue” dimension. In this ar
 **Year**: 2013
 
 **Type**: Installation
+
+**Materials**: RGB colour build this world with all dynamic visual information, separating RGB display changes should be purely sacred. / RGB 三原色构建了这个世界一切动态可视化信息,分离的展示RGB的变化应该是神圣纯粹的。
 
 **Size**: 280cm × 102cm × 30cm
 
@@ -1829,6 +1774,10 @@ The basic idea of my work is happen within this “blue” dimension. In this ar
 
 **Type**: Installation
 
+**Materials**: Venue	chi K11 art space (Shanghai K11 Art Mall, B3, 300 Huaihai Zhong Lu）
+
+**Duration**: Dec 14, 2013 - Feb 15, 2014
+
 **Video**: https://player.vimeo.com/video/88982072
 
 **中文描述**: chi K11艺术空间荣幸地带来本年度的压轴展览，艺术家aaajiao（徐文恺）个展《屏幕一代》。作为K11 Art Foundation 大力扶持的中国前沿的媒体艺术家，aaajiao的作品专注于对数据的挖掘与实用，并试图以多种形式将其呈现，以此在数据与现实的“调制解调”之中完成对作品内涵的完整表达。他在电脑软件的艺术应用方面，扮演了国内外最新趋势的交流者与先行者角色。本次展览将呈现aaajiao的6件新作，区别于艺术家之前的两次关于对数据本身理性研究的个展，这一次的呈现将会是一次柔软的体验。展览将于2013年12月14日开幕，展至2014年2月15日，期间将会在chi K11艺术空间以及民生现代美术馆举办一系列公共教育活动与讨论会。
@@ -1863,12 +1812,8 @@ The basic idea of my work is happen within this “blue” dimension. In this ar
 
 **Size**: 480cm × 120cm × 60cm
 
-**中文描述**: 徐文恺的机器风景，可以被看作媒体艺术领域在自然融合方面的贡献，其中包含来自分形理论的因素，算法构建的机械装置，如同海浪或生物。艺术家为虚拟模拟和算法进行了物理性延伸，作品的镜面和实际发生的运动所构成的图像，将与观众互动，形成一个不断变化和蔓延的空间。艺术家徐文恺的作品简单直接作用于艺术与科技，并延续他之前作品一贯的科技悖论之线索。——李振华
-
-**Description**: The Robotic Landscape of aaajiao serves as media art’s contribution to our integration with nature. The work is a mechanical installation that operates on fractal algorithms. The organic or wave-like structure of the work can be seen as the physical extension of a virtual simulation and algorithms. The image created by the reflective surface of the robot as it assumes motion generates points of interaction with the audience, forming an ever changing and expanding space. aaajiao’s work acts directly on art and technology, and has persistently engaged various paradoxes within the development of science. －Li Zhenhua
-
 ---
-### [meta](https://eventstructure.com/meta)
+### [meta](https://eventstructure.com/meta) / 元数据
 
 **Year**: 2013
 
@@ -1880,9 +1825,9 @@ The basic idea of my work is happen within this “blue” dimension. In this ar
 
 **Duration**: 12'30''
 
-**中文描述**: 数据的可视化过程。作品是与许聪共同完成。Meta是对信息（data）在未来如何呈现的猜想,它并聚焦在视觉的部分，而是通过呈现视觉构成的过程来研究我们所面对的可视化问题，即可视化的数据和真相是否有关，还只是另一种视觉腐败（语言腐败; 1984，“decay of the language”/“decline of the language”）的过程。
+**中文描述**: 作品是与许聪共同完成。Meta是对信息（data）在未来如何呈现的猜想,它并聚焦在视觉的部分，而是通过呈现视觉构成的过程来研究我们所面对的可视化问题，即可视化的数据和真相是否有关，还只是另一种视觉腐败（语言腐败; 1984，“decay of the language”/“decline of the language”）的过程。
 
-**Description**: Data visualization process. This piece was done in collaboration with Xu Cong. Meta is a conjecture on how data is presented in the future. It focuses on the visual part, but through the process of presenting visual composition to study the visualization problems we face, whether the visualized data is related to the truth or not. It's just another process for decay of the visual (1984 - George Orwell, "decay of the language" / "decline of the language").
+**Description**: This piece was done in collaboration with Xu Cong. Meta is a conjecture on how data is presented in the future. It focuses on the visual part, but through the process of presenting visual composition to study the visualization problems we face, whether the visualized data is related to the truth or not. It's just another process for decay of the visual (1984 - George Orwell, "decay of the language" / "decline of the language").
 
 ---
 ## 2012
@@ -1943,17 +1888,6 @@ computer graphics : aaajiao,liu xiaoguang
 ---
 ## 2011
 
-### [BDSQ III](https://eventstructure.com/BDSQ-III)
-
-**Year**: 2011
-
-**Type**: Painting
-
-**Materials**: acrylics painting on PMMA, metal material
-
-**Size**: 180cm x 130 cm
-
----
 ### [BDSQ II](https://eventstructure.com/BDSQ-II)
 
 **Year**: 2011
@@ -1980,6 +1914,17 @@ computer graphics : aaajiao,liu xiaoguang
 **Duration**: 4'4''
 
 **Description**: datamosh for 北斗の拳 ケンシロウVSサウザー 決着
+
+---
+### [BDSQ III](https://eventstructure.com/BDSQ-III)
+
+**Year**: 2011
+
+**Type**: Painting
+
+**Materials**: acrylics painting on PMMA, metal material
+
+**Size**: 180cm x 130 cm
 
 ---
 ### [HAL](https://eventstructure.com/HAL)
@@ -2030,11 +1975,9 @@ algorithm generated Turritopsis nutricula
 
 **Type**: Print
 
-**Materials**: digital printing, bracket / 数码打印，支架
+**Materials**: digital printing,bracket
 
-**Size**: Dimension variable / 尺寸可变
-
-**Duration**: 12‘00’‘
+**Size**: 75 x 75 x 140 cm
 
 ---
 ### [infinite](https://eventstructure.com/infinite)
@@ -2134,19 +2077,6 @@ algorithm generated Turritopsis nutricula
 **Description**: Measuring the volume of the email list of artmailart.com in reality.
 
 ---
-### [aaajiao: ‘Cybernetics’ exhibition catalog](https://eventstructure.com/aaajiao-Cybernetics-exhibition-catalog)
-
-**Year**: 2010
-
-**Type**: Installation
-
-**Materials**: silicone, fiberglass, artificial hair, clothing, seat / 硅胶，玻璃纤维，人造毛发，衣物，座椅
-
-**Size**: 75 x 75 x 140 cm
-
-**Description**: "Guard" is a installation artwork created u...
-
----
 ### [anti-cybernetics](https://eventstructure.com/anti-cybernetics)
 
 **Year**: 2010
@@ -2158,19 +2088,6 @@ algorithm generated Turritopsis nutricula
 **Size**: 36 x 12 x 22 cm
 
 **Description**: caution: automatic open and close wood box, with a high volume led light
-
----
-### [berlin@transmediale](https://eventstructure.com/berlin-transmediale)
-
-**Year**: 2010
-
-**Type**: Performance
-
-**Materials**: silicone, fiberglass, artificial hair, clothing, seat / 硅胶，玻璃纤维，人造毛发，衣物，座椅
-
-**Size**: 75 x 75 x 140 cm
-
-**Description**: "Guard" is a installation artwork created u...
 
 ---
 ### [cloud.data app](https://eventstructure.com/cloud-data-app) / 云数据应用
@@ -2186,6 +2103,30 @@ algorithm generated Turritopsis nutricula
 **Video**: https://player.vimeo.com/video/15233120
 
 **Description**: In the ancient legend, gestures have different mysterious powers. With these gestures and singings, people may get courage, mercy, intelligence or calm. Collecting the gesture and touch data to generate and control the cloud. With the music sound, it will give you the mental and emotional balance.
+
+---
+### [aaajiao: ‘Cybernetics’ exhibition catalog](https://eventstructure.com/aaajiao-Cybernetics-exhibition-catalog)
+
+**Year**: 2010
+
+**Type**: Installation
+
+**Size**: 75 x 75 x 140 cm
+
+**Description**: Placebo is a new series by Xu Wenkai, which consists of BDSQ, HAL, Text Format and Poor Mining. Together shown with this series are works from a different series, titled Cybernetics, made by the artist in 2009 and 2010. These works form a small documents, aiming at systematic and thorough examining the way of thinking, art making, expressing and presenting of this young and active media artist, so as to manifest his capability.
+
+In Cybernetics series, the artist tries to reconsider data, the object of information technology inquiry, and comes up with an interesting and witty presentation on data’s existence, form, and perceptibility with Cloud Data, Water Measure and Blog Archaeology. In the latest Placebo series, artist turns to the stream of data flow, which engenders new structures, as well as the visual inertia and placebo effect.
+
+Therefore this exhibition seems to be made up of a biography and a prequel of this biography. Such structure facilitates our understanding of artist’s distinct trait: on one hand, unique artwork construction methods, and on the other hand, the artistic conversion of artist’s know-how and thoughts in certain fields.
+
+---
+### [berlin@transmediale](https://eventstructure.com/berlin-transmediale)
+
+**Year**: 2010
+
+**Type**: Performance
+
+**Size**: 75 x 75 x 140 cm
 
 ---
 ## 2009
@@ -2229,32 +2170,19 @@ algorithm generated Turritopsis nutricula
 **Description**: Concept: aaajiao, B6, Stephania Rossetti, Alizia Borsari. Sound: B6. Computer graphics: aaajiao. Dancer: Stephania Rossetti. Actress: Alizia Borsari. Support by arthub.
 
 ---
-### [blogArchaeological 0](https://eventstructure.com/blogArchaeological-0)
+### [Xindanwei - one company](https://eventstructure.com/Xindanwei-one-company)
 
 **Year**: 2009
 
 **Type**: Installation
 
-**Materials**: silicone, fiberglass, artificial hair, clothing, seat / 硅胶，玻璃纤维，人造毛发，衣物，座椅
+**中文描述**: ”是中国最早的协作式工作空间和中国最先锋的草根创意社群之一。我们在中国和世界范围聚合并支持乐于“分享与合作”初期创业者和创新者，通过建立协作式工作空间与创意社区，致力于共同创造崭新的模式和方法来改变世界。
 
-**Size**: 75 x 75 x 140 cm
+新单位协作式工作空间与创意社区将工作单位的效率性、功能性，网络平台的庞大、实时性与创意空间的社会性、活力、创意、趣味相结合， 让社区成员不必支付高昂的租金，就可以在一个真实的集体办公环境中工作, 拥有与他人面对面分享与合作的机会，让我们的工作与创造过程更有效率，更多灵感，更加快乐。
 
-**中文描述**: 的数据称重，选择RobotWisdom.com不仅是因为Jorn Barger创造了weblog一词，而是他本人除了是一名程序员之外还是 还是一位未来派艺术家和詹姆斯•乔伊斯研究者，其blog内容更私人，涉及的信息更为广泛，且blog运行至今。
+**Description**: is the first and largest multidisciplinary coworking community and one of the most important grass-root creative centers in China. We mingle, catalyze and support creative leaders, startups and innovators locally and around the world. We create community workspaces, accelerate serendipity, facilitate knowledge sharing and collaboration, showcase and co-develop new models and projects with world-changing potential.
 
-**Description**: "Guard" is a installation artwork created u...
-
----
-### [hm.data](https://eventstructure.com/hm-data)
-
-**Year**: 2009
-
-**Type**: Installation
-
-**Materials**: silicone, fiberglass, artificial hair, clothing, seat / 硅胶，玻璃纤维，人造毛发，衣物，座椅
-
-**Size**: 75 x 75 x 140 cm
-
-**Description**: "Guard" is a installation artwork created u...
+Xindanwei combines the best elements of a workspace (productive, functional) with a social media platform (hybrid, real-time, efficient) and a creative hub (social, energetic, creative). This gives people their own workspace in a community, while also providing opportunities to share knowledge and get inspired face-to-face and succeed through collaboration with other members.
 
 ---
 ### [Memory Vending Machines](https://eventstructure.com/memory-vending-machines) / 记忆贩卖机
@@ -2270,6 +2198,32 @@ algorithm generated Turritopsis nutricula
 **中文描述**: 记忆贩卖机（2009），是艺术家基于可预见的科技进步（纳米技术、生物科技）所提出的一项“发明”。装置的外形与基本功能类似于扭蛋机，这是一种简易自助式贩售系统，在遍布全市的便利店都可以找到。与普通扭蛋机不同，根据艺术家的设想，记忆贩卖机所售出的每一枚扭蛋看似中空，其实封装有无数个微小的纳米级机器人。随着用户吸入扭蛋内的空气，这些携带特殊信息的纳米机器人就进入脑部，附着繁殖，形成记忆区域,并且同样购买并服用“记忆扭蛋”的个体之间，可以通过记忆区域相互通讯。这实际上意味着：人们可以进入彼此的记忆，完全获取包括视觉、听觉、触觉、味觉、嗅觉……在内的感官经验，并在自己的机体上获得全部“真实”的体验（还原）。装置上的电子屏幕播放着说明性的动画，向观众介绍这项“发明”的原理和用途。
 
 **Description**: Memory Vending Machines (2009) is an “invention” proposed by the artist based on the predicted scientific advancement (nano, biotech). The appearance and basic functions of this installation are similar to that of Capsule Vending Machine. This kind of easy-to-use self-service vending machines can be found in convenience shops across the entire city. Different from general Capsule Vending Machines, this Memory Vending Machine sells capsules, which, based on the conception by the artist, seem empty inside but have actually encapsulated numerous tiny nano-robots. Inhaled by the user of the air inside the capsule, these nano-robots carrying special data will enter and colonize the human brains, and propagate themselves to form memory zones. In addition, different individuals can communicate with each other, which actually means people can enter each other’s memories and fully read sensory information including vision, hearing, feeling, tasting, olfaction, etc., and acquire the whole “real” experience (revivification) on its own organic body. Descriptive animation is played on the electronic screen of the installation, elaborating the visitors on the principles and purposes of this “invention”.
+
+---
+### [blogArchaeological 0](https://eventstructure.com/blogArchaeological-0)
+
+**Year**: 2009
+
+**Type**: Installation
+
+**Size**: 75 x 75 x 140 cm
+
+**中文描述**: 的数据称重，选择RobotWisdom.com不仅是因为Jorn Barger创造了weblog一词，而是他本人除了是一名程序员之外还是 还是一位未来派艺术家和詹姆斯•乔伊斯研究者，其blog内容更私人，涉及的信息更为广泛，且blog运行至今。
+
+**Description**: . The choice of the site is not only because his author Jorn Barger created the word weblog, but also because he is a programmer, artist and expert at same time. His blog is more personal oriented, its contents covers a wilder field and on the run even today.
+
+Weighting is to try to explore how measure standard of data represents under the most traditional metrology system. Making it an openning words, we study the permanence of data
+
+---
+### [hm.data](https://eventstructure.com/hm-data)
+
+**Year**: 2009
+
+**Type**: Installation
+
+**Materials**: computer graphics, video editing : aaajiao
+
+**Size**: 75 x 75 x 140 cm
 
 ---
 ## 2008
@@ -2319,8 +2273,6 @@ algorithm generated Turritopsis nutricula
 
 **Type**: Installation
 
-**Materials**: computer graphics, video editing / 计算机图形，视频编辑
-
 **Size**: Dimension variable / 尺寸可变
 
 **Video**: http://vimeo.com/1197387
@@ -2328,26 +2280,13 @@ algorithm generated Turritopsis nutricula
 **Description**: Video Installation for greenpix. Concept: aaajiao. Hardwave: greenpix. Support by arthub. Curated by Defne Ayas.
 
 ---
-### [Patience for the man](https://eventstructure.com/Patience-for-the-man-1)
-
-**Year**: 2008
-
-**Type**: Performance
-
-**Materials**: silicone, fiberglass, artificial hair, clothing, seat
-
-**Size**: 75 x 75 x 140 cm
-
-**Video**: https://player.vimeo.com/video/421021196
-
-**Description**: "Guard" is a installation artwork created u...
-
----
 ### [Mixer Installation for Virtual City](https://eventstructure.com/SoundEmbedded) / 虚拟城市的混音装置
 
 **Year**: 2008
 
 **Type**: Installation
+
+**Materials**: sound: B6, hardwave: aaajiao, majian
 
 **Description**: Mixer Installation for Virtual City (New Power – China Contemporary Art Biennale 2008)
 
@@ -2361,6 +2300,17 @@ algorithm generated Turritopsis nutricula
 **Materials**: Bamboo / 竹子
 
 **Description**: Waving Bamboo is a self generated structure. A dynamic environment is created by strategically arrange the bamboos and connect them according to specific algorithm. The various spaces offer people different experience within a continuous environment. Bamboo is chosen to construct the structure due to its special material charity as well as its natural feature. Waving Bamboo reconstructs the social structure of Acorn Woodpecker according to building structure and merges the language of birds into architectures, meanwhile, connecting the language of birds with architectures by wave.
+
+---
+### [Patience for the man](https://eventstructure.com/Patience-for-the-man-1)
+
+**Year**: 2008
+
+**Type**: Performance
+
+**Video**: https://player.vimeo.com/video/421021196
+
+**Description**: "Patience for the man" is a performance artwork created by aaajiao, exploring themes of patience and human interaction. The performance involves various elements including sound and visual components, engaging the audience in a unique experience.
 
 ---
 ## 2007
@@ -2382,8 +2332,6 @@ algorithm generated Turritopsis nutricula
 
 **Type**: Sound Art
 
-**Materials**: computer graphics, video editing / 计算机图形，视频编辑
-
 **Duration**: 15′00”
 
 **Video**: hhttp://vimeo.com/1197451
@@ -2398,8 +2346,6 @@ Photo credits: © Tabula Rasa Gallery and aaajiao
 **Year**: 2007
 
 **Type**: Installation
-
-**Materials**: computer graphics, video editing / 计算机图形，视频编辑
 
 **Video**: http://vimeo.com/256225
 
@@ -2425,12 +2371,10 @@ Photo credits: © Tabula Rasa Gallery and aaajiao
 
 **Type**: Sound Art
 
-**Materials**: silicone, fiberglass, artificial hair, clothing, seat / 硅胶，玻璃纤维，人造毛发，衣物，座椅
+**Materials**: computer graphics, video editing : aaajiao
 
 **Size**: 75 x 75 x 140 cm
 
 **Video**: http://vimeo.com/256215
-
-**Description**: "Guard" is a installation artwork created u...
 
 ---
