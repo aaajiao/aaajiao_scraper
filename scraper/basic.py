@@ -1028,7 +1028,8 @@ class BasicScraperMixin:
         skip_patterns = [
             "thumbnail",
             "thumb_",
-            "icon",
+            "favicon",
+            "/icons/",
             "logo",
             "avatar",
             "placeholder",
