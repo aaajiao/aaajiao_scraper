@@ -3,7 +3,7 @@ aaajiao 作品集抓取工具 - Streamlit GUI
 
 简化的单页界面，用于从 eventstructure.com 抓取作品数据。
 功能：
-- 一键抓取，两层混合提取策略 (v6.3.0)
+- 一键抓取，两层混合提取策略 (v6.6.0)
 - 自动过滤展览和画册
 - 图片整合工具
 """
@@ -203,7 +203,7 @@ st.markdown("""
 - **第1层：** 本地 BeautifulSoup 解析（0 credits）
 - **第2层：** Firecrawl Extract v2（~5 credits/页，比 v1 便宜 10 倍）
 
-*v6.3.0 新架构：使用 Firecrawl v2 API，智能合并两层结果，完整度可达 90%+*
+*v6.6.0 新架构：使用 Firecrawl v2 API，智能合并两层结果，完整度可达 90%+*
 """)
 
 # 高级选项（默认折叠）
@@ -623,7 +623,7 @@ else:
 with st.sidebar:
     st.markdown("### 控制台")
     st.markdown("---")
-    st.markdown("**两层混合策略 (v6.3.0)：**")
+    st.markdown("**两层混合策略 (v6.6.0)：**")
     st.markdown("- 第1层：0 credits（BS4 本地）")
     st.markdown("- 第2层：~5 credits（Extract v2）")
     st.markdown("- 智能合并：90%+ 完整度")
