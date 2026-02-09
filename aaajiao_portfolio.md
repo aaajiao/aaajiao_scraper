@@ -209,7 +209,7 @@ Through "Guard," the artist seeks to provoke contemplation on the human predicam
 
 **Type**: Video
 
-**Materials**: video / 视频
+**Materials**: Single channel video, color, sound
 
 **Duration**: 17'16
 
@@ -317,8 +317,6 @@ Through "Guard," the artist seeks to provoke contemplation on the human predicam
 **Size**: Dimension variable / 尺寸可变
 
 **中文描述**: 作品是与 许聪 共同完成。
-
-**Description**: This piece was done in collaboration with XuCong.
 
 ---
 ## 2018-2022
@@ -827,15 +825,11 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 
 **Type**: Website
 
-**Materials**: This piece was done in collaboration with XuCong. / 作品是与许聪共同完成。
-
 **Size**: Dimension variable / 尺寸可变
 
 **Video**: https://player.vimeo.com/video/357517262
 
 **中文描述**: 作品是与许聪共同完成。
-
-**Description**: This piece was done in collaboration with XuCong.
 
 ---
 ### [protester/cursor/emoji](https://eventstructure.com/protester-cursor-emoji) / 抗议者/光标/表情符号
@@ -917,8 +911,6 @@ DO IT YOURSELF - You will also be able to purchase a special DIY set during the 
 **Size**: Dimension variable / 尺寸可变
 
 **中文描述**: 作品是与许聪共同完成。
-
-**Description**: This piece was done in collaboration with XuCong.
 
 ---
 ## 2018
