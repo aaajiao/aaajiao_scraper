@@ -888,6 +888,99 @@ class TestCrossContaminationCleanup:
         assert works[1]["materials"] == "silicone, fiberglass"
 
 
+class TestLooksLikeCredits:
+    """Test suite for _looks_like_credits static method."""
+
+    def test_looks_like_credits_collaboration(self, scraper_with_mock_cache):
+        """Collaboration statement should be detected as credits."""
+        assert scraper_with_mock_cache._looks_like_credits(
+            "This piece was done in collaboration with XuCong."
+        ) is True
+
+    def test_looks_like_credits_venue(self, scraper_with_mock_cache):
+        """Venue text should be detected as credits."""
+        assert scraper_with_mock_cache._looks_like_credits(
+            "Venue: Museum of Modern Art"
+        ) is True
+
+    def test_looks_like_credits_normal_desc(self, scraper_with_mock_cache):
+        """Normal description text should not be detected as credits."""
+        assert scraper_with_mock_cache._looks_like_credits(
+            "An interactive video installation exploring digital identity."
+        ) is False
+
+    def test_looks_like_credits_empty(self, scraper_with_mock_cache):
+        """Empty text should return False."""
+        assert scraper_with_mock_cache._looks_like_credits("") is False
+
+    def test_description_credits_not_stored_as_desc(self, scraper_with_mock_cache):
+        """Layer 2 credits text returned as description should be moved to credits field."""
+        url = "https://eventstructure.com/party"
+
+        # Mock Layer 1 local extraction
+        local_data = {
+            "url": url,
+            "title": "party",
+            "title_cn": "",
+            "year": "2015",
+            "type": "Video Installation",
+            "materials": "",
+            "description_en": "",
+            "description_cn": "",
+            "credits": "",
+            "size": "",
+            "duration": "",
+            "images": [],
+            "tags": [],
+        }
+        scraper_with_mock_cache.extract_metadata_bs4 = MagicMock(return_value=local_data.copy())
+
+        # Mock Layer 2 _extract_with_schema returning credits text as description
+        schema_data = {
+            "title": "party",
+            "title_cn": "",
+            "materials": "",
+            "description_en": "This piece was done in collaboration with XuCong.",
+            "description_cn": "",
+            "credits": "",
+            "size": "",
+            "duration": "",
+        }
+        scraper_with_mock_cache._extract_with_schema = MagicMock(return_value=schema_data)
+
+        result = scraper_with_mock_cache.extract_work_details_v2(url)
+
+        assert result is not None
+        # Description should not contain credits text
+        assert result.get("description_en", "") != "This piece was done in collaboration with XuCong."
+        # Credits field should contain the collaboration text
+        assert "collaboration" in result.get("credits", "").lower()
+
+
+class TestCrossContaminationShortDesc:
+    """Test for short description cross-contamination cleanup."""
+
+    def test_cross_contamination_short_desc(self):
+        """Verify that ~40 char duplicate descriptions are cleaned (threshold > 30)."""
+        from scraper import _clean_cross_contamination
+
+        short_desc = "A short repeated desc about 40 chars!!"  # 40 chars
+        works = [
+            {"title": "Work A", "url": "https://eventstructure.com/work-a",
+             "materials": "LED", "description_en": short_desc},
+            {"title": "Work B", "url": "https://eventstructure.com/work-b",
+             "materials": "screen", "description_en": short_desc},
+        ]
+
+        cleaned = _clean_cross_contamination(works)
+
+        # Should detect the duplicate and clean one of them
+        assert cleaned >= 1
+        # At least one should be cleared
+        descs = [w["description_en"] for w in works]
+        assert "" in descs
+
+
 class TestCleanDuplicateTitle:
     """Test suite for _clean_duplicate_title method."""
 

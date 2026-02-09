@@ -93,7 +93,7 @@ def _clean_cross_contamination(works: List[Dict[str, Any]]) -> int:
         desc_counter: Dict[str, List[int]] = {}
         for idx, work in enumerate(works):
             desc = (work.get(desc_field) or "").strip()
-            if desc and len(desc) > 50:  # Only check non-trivial descriptions
+            if desc and len(desc) > 30:  # Only check non-trivial descriptions
                 desc_counter.setdefault(desc, []).append(idx)
 
         for desc, indices in desc_counter.items():

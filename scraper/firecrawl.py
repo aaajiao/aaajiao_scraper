@@ -540,17 +540,8 @@ class FirecrawlMixin:
         """
         result = base_data.copy()
 
-        # Helper: check if a string looks like credits (not materials)
-        def looks_like_credits(text: str) -> bool:
-            if not text:
-                return False
-            text_lower = text.lower()
-            # Credits patterns: "concept:", "sound:", "software:", etc.
-            credit_indicators = ['concept:', 'sound:', 'software:', 'hardware:',
-                                 'photo:', 'video editing:', 'team:', 'director:',
-                                 'collaboration', 'made possible', 'curated by',
-                                 'this piece was done', 'venue', '© ']
-            return any(ci in text_lower for ci in credit_indicators)
+        # Use class method for credits detection
+        looks_like_credits = self._looks_like_credits
 
         # Helper: check if materials value is actually empty/placeholder or invalid
         def is_empty_materials(text: str) -> bool:
@@ -946,6 +937,20 @@ class FirecrawlMixin:
         "two rituals",
         "两个仪式",
     ]
+
+    @staticmethod
+    def _looks_like_credits(text: str) -> bool:
+        """Check if text looks like credits rather than materials or description."""
+        if not text:
+            return False
+        text_lower = text.lower()
+        credit_indicators = [
+            'concept:', 'sound:', 'software:', 'hardware:',
+            'photo:', 'video editing:', 'team:', 'director:',
+            'collaboration', 'made possible', 'curated by',
+            'this piece was done', 'venue', '© ',
+        ]
+        return any(ci in text_lower for ci in credit_indicators)
 
     def _is_type_string(self, title: str) -> bool:
         """Check if a title is actually an artwork type string.
@@ -1419,14 +1424,8 @@ class FirecrawlMixin:
                             continue
                         # Validate materials field
                         if field == 'materials':
-                            val_lower = val.lower()
                             # Skip if materials looks like credits
-                            credit_indicators = [
-                                'concept:', 'sound:', 'software:', 'hardware:',
-                                'photo:', 'video editing:', 'team:', 'director:',
-                                'collaboration', 'made possible', 'curated by',
-                            ]
-                            if any(ci in val_lower for ci in credit_indicators):
+                            if self._looks_like_credits(val):
                                 logger.debug(
                                     f"Skipping Layer 2 materials (looks like credits): "
                                     f"{val[:50]}"
@@ -1439,8 +1438,15 @@ class FirecrawlMixin:
                                     f"{val[:50]}"
                                 )
                                 continue
-                        # Validate description fields against URL
+                        # Validate description fields
                         if field in ('description_en', 'description_cn'):
+                            # Short text that looks like credits → move to credits
+                            if len(val) < 100 and self._looks_like_credits(val):
+                                if not local_data.get('credits') or val.lower() not in local_data['credits'].lower():
+                                    existing = local_data.get('credits', '')
+                                    local_data['credits'] = (existing + '. ' + val).strip('. ') if existing else val
+                                logger.debug(f"Moving Layer 2 {field} to credits (looks like credits): {val[:50]}")
+                                continue
                             if self._is_description_contaminated(val, url, local_data):
                                 logger.warning(
                                     f"⚠️ Skipping Layer 2 {field} "
