@@ -13,7 +13,7 @@ This file provides guidance for Claude Code when working with this repository.
 - **Web Scraping**: BeautifulSoup4 (local parsing), Firecrawl API v2 (AI extraction)
 - **Schema Validation**: Pydantic v2 (structured extraction schemas)
 - **Dependencies**: requests, tqdm, pandas, python-dotenv, pydantic
-- **Testing**: pytest with coverage (99 tests, 55%+ coverage)
+- **Testing**: pytest with coverage (106 tests, 55%+ coverage)
 - **Linting**: ruff, black, mypy
 
 ## Project Structure
@@ -37,7 +37,7 @@ aaajiao_scraper/
 │   ├── test_firecrawl.py       # API integration tests (incl. Map, Scrape+JSON, contamination)
 │   └── test_report.py          # Report generation tests
 ├── scripts/                     # Utility scripts
-│   ├── batch_update_works.py   # Bulk markdown scraping (1 credit/page)
+│   ├── batch_update_works.py   # Bulk two-layer extraction (supports dry-run, --force)
 │   ├── clean_size_materials.py # Extract size/duration from materials
 │   ├── clean_materials_credits.py # Clean materials and credits fields
 │   ├── generate_web_report.py  # Web report generation
@@ -121,7 +121,7 @@ AaajiaoScraper
 
 The extraction strategy maximizes accuracy through mandatory AI verification with SPA content validation:
 
-1. **Layer 0**: Cache check (free)
+1. **Layer 0**: Cache check (free) — also applies title validation and type-as-title fix to stale cached data
 2. **Layer 1**: Local BeautifulSoup parsing (0 credits) - filtering non-artwork pages + extracting authoritative fields + title baseline for validation
 3. **Layer 2**: Firecrawl Extract API **v2** with Pydantic schema (~5 credits/extract) - provides content fields, with fallback to Scrape+JSON
 4. **Post-pipeline**: Cross-contamination cleanup - deduplicates leaked materials/descriptions across works
@@ -168,6 +168,7 @@ All Firecrawl API calls include SPA-aware parameters (configured in `constants.p
 - **`discover_urls_with_map()`** - Fast URL discovery using Map API (~2-3 seconds)
 - **`discover_urls_with_scroll()`** - Infinite-scroll URL discovery (legacy, slower)
 - **`agent_search(urls)`** - Batch/agent mode intelligent search
+- **`get_credit_usage()`** - Check Firecrawl API credit balance
 
 ### Title Validation Methods
 
