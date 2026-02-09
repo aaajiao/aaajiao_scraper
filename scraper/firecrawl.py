@@ -1255,6 +1255,12 @@ class FirecrawlMixin:
                         else:
                             clean_cn = title_cn  # Keep original
 
+                    # Deduplicate title_cn (e.g., "观察者 / 观察者" → "观察者")
+                    if clean_cn and '/' in clean_cn:
+                        cn_parts = [p.strip() for p in clean_cn.split('/')]
+                        if len(cn_parts) >= 2 and cn_parts[0] == cn_parts[-1]:
+                            clean_cn = cn_parts[0]
+
                     return clean_title, clean_cn
 
                 elif all(not hc for hc in has_chinese):
@@ -1270,6 +1276,11 @@ class FirecrawlMixin:
                                 clean_cn = parts[1]
                             else:
                                 clean_cn = title_cn
+                            # Deduplicate title_cn (e.g., "404 / 404" → "404")
+                            if clean_cn and '/' in clean_cn:
+                                cn_parts = [p.strip() for p in clean_cn.split('/')]
+                                if len(cn_parts) >= 2 and cn_parts[0] == cn_parts[-1]:
+                                    clean_cn = cn_parts[0]
                             return clean_title, clean_cn
 
         # Check if title_cn is a duplicate (e.g., "观察者 / 观察者")
@@ -1305,6 +1316,25 @@ class FirecrawlMixin:
                 if not is_artwork(cached):
                     logger.debug(f"Cache hit (exhibition, skipped): {url}")
                     return None
+                # Apply title validation to cached data (may predate fixes)
+                title = cached.get('title', '')
+                title_cn = cached.get('title_cn', '')
+                clean_title, clean_cn = self._clean_duplicate_title(title, title_cn)
+                if clean_title != title or clean_cn != title_cn:
+                    cached['title'] = clean_title
+                    cached['title_cn'] = clean_cn
+                    if self.use_cache:
+                        self._save_cache(url, cached)
+                final_title = cached.get('title', '')
+                if final_title and self._is_type_string(final_title):
+                    url_slug = url.rstrip("/").split("/")[-1]
+                    slug_title = url_slug.replace("-", " ").replace("_", " ").title()
+                    if not cached.get('type'):
+                        cached['type'] = final_title.title()
+                    cached['title'] = slug_title
+                    cached['title_cn'] = ''
+                    if self.use_cache:
+                        self._save_cache(url, cached)
                 logger.debug(f"Cache hit: {url}")
                 return cached
 
@@ -1451,7 +1481,7 @@ class FirecrawlMixin:
                     )
                     # Fallback: Use URL slug as title
                     url_slug = url.rstrip("/").split("/")[-1]
-                    schema_data['title'] = url_slug.replace("-", " ").replace("_", " ")
+                    schema_data['title'] = url_slug.replace("-", " ").replace("_", " ").title()
                 local_data = schema_data
         elif local_data:
             # Layer 2 failed, use Layer 1 data only
@@ -1473,7 +1503,7 @@ class FirecrawlMixin:
             final_title = local_data.get('title', '')
             if final_title and self._is_type_string(final_title):
                 url_slug = url.rstrip("/").split("/")[-1]
-                slug_title = url_slug.replace("-", " ").replace("_", " ")
+                slug_title = url_slug.replace("-", " ").replace("_", " ").title()
                 logger.warning(
                     f"⚠️ Title '{final_title}' is a type string, "
                     f"using URL slug '{slug_title}' as title"

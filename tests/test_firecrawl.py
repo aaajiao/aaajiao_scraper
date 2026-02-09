@@ -886,3 +886,86 @@ class TestCrossContaminationCleanup:
         assert cleaned == 0
         assert works[0]["materials"] == "LED, acrylic, wood"
         assert works[1]["materials"] == "silicone, fiberglass"
+
+
+class TestCleanDuplicateTitle:
+    """Test suite for _clean_duplicate_title method."""
+
+    def test_en_cn_split(self, scraper_with_mock_cache):
+        """Test splitting bilingual 'bot / 观察者' into English and Chinese."""
+        title, title_cn = scraper_with_mock_cache._clean_duplicate_title(
+            "bot / 观察者", ""
+        )
+        assert title == "bot"
+        assert title_cn == "观察者"
+
+    def test_all_english_dup_with_title_cn(self, scraper_with_mock_cache):
+        """Test '404 / 404' with title_cn='404 / 404' deduplicates both."""
+        title, title_cn = scraper_with_mock_cache._clean_duplicate_title(
+            "404 / 404", "404 / 404"
+        )
+        assert title == "404"
+        assert title_cn == "404"
+
+    def test_bilingual_seed(self, scraper_with_mock_cache):
+        """Test 'Seed: 123 / 种子: 123' splits into English and Chinese."""
+        title, title_cn = scraper_with_mock_cache._clean_duplicate_title(
+            "Seed: 123 / 种子: 123", ""
+        )
+        assert title == "Seed: 123"
+        assert title_cn == "种子: 123"
+
+
+class TestIsTypeString:
+    """Test suite for _is_type_string method."""
+
+    def test_sculpture_is_type(self, scraper_with_mock_cache):
+        """Test that 'sculpture' is detected as a type string."""
+        assert scraper_with_mock_cache._is_type_string("sculpture") is True
+
+    def test_normal_title_not_type(self, scraper_with_mock_cache):
+        """Test that 'Exist' is NOT detected as a type string."""
+        assert scraper_with_mock_cache._is_type_string("Exist") is False
+
+
+class TestCacheHitCleansTitle:
+    """Test that cache hits apply title cleaning and type-as-title fixes."""
+
+    def test_cache_hit_cleans_dirty_title(self, scraper_with_mock_cache):
+        """Cached data with 'bot / 观察者' gets cleaned on cache hit."""
+        url = "https://eventstructure.com/bot"
+        dirty_data = {
+            "url": url,
+            "title": "bot / 观察者",
+            "title_cn": "",
+            "year": "2020",
+            "type": "Software",
+        }
+
+        # Populate cache with dirty data
+        scraper_with_mock_cache._save_cache(url, dirty_data)
+
+        result = scraper_with_mock_cache.extract_work_details_v2(url)
+
+        assert result is not None
+        assert result["title"] == "bot"
+        assert result["title_cn"] == "观察者"
+
+    def test_cache_hit_fixes_type_as_title(self, scraper_with_mock_cache):
+        """Cached data with type-as-title 'sculpture' gets fixed on cache hit."""
+        url = "https://eventstructure.com/exist"
+        dirty_data = {
+            "url": url,
+            "title": "sculpture",
+            "title_cn": "",
+            "year": "2019",
+            "type": "",
+        }
+
+        scraper_with_mock_cache._save_cache(url, dirty_data)
+
+        result = scraper_with_mock_cache.extract_work_details_v2(url)
+
+        assert result is not None
+        assert result["title"] == "Exist"
+        assert result["type"] == "Sculpture"
