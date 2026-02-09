@@ -180,6 +180,66 @@ class CoreScraper:
         return session
 
 
+    def get_credit_usage(self) -> Optional[Dict[str, Any]]:
+        """Get current Firecrawl API credit usage and remaining balance.
+
+        Calls the Firecrawl /v2/team/credit-usage endpoint to retrieve
+        account billing information.
+
+        Returns:
+            Dictionary with credit information:
+                - remaining_credits: Credits available
+                - plan_credits: Total credits in plan
+                - billing_period_start: Start of billing cycle (ISO date)
+                - billing_period_end: End of billing cycle (ISO date)
+            Returns None if API key is missing or request fails.
+
+        Example:
+            >>> scraper = AaajiaoScraper()
+            >>> usage = scraper.get_credit_usage()
+            >>> print(f"Remaining: {usage['remaining_credits']} credits")
+        """
+        if not self.firecrawl_key:
+            logger.warning("No API key, cannot get credit usage")
+            return None
+
+        try:
+            resp = requests.get(
+                "https://api.firecrawl.dev/v1/team/credit-usage",
+                headers={
+                    "Authorization": f"Bearer {self.firecrawl_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=10,
+            )
+
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("success"):
+                    # API returns data in nested 'data' object
+                    info = data.get("data", data)
+                    result = {
+                        "remaining_credits": info.get("remaining_credits", 0),
+                        "plan_credits": info.get("plan_credits", 0),
+                        "billing_period_start": info.get("billing_period_start", ""),
+                        "billing_period_end": info.get("billing_period_end", ""),
+                    }
+                    logger.info(
+                        f"💰 Credits: {result['remaining_credits']:,}/{result['plan_credits']:,} remaining"
+                    )
+                    return result
+                else:
+                    logger.warning(f"Credit usage API error: {data}")
+            else:
+                logger.warning(f"Credit usage request failed: {resp.status_code}")
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Failed to get credit usage: {e}")
+            return None
+
+
 def deduplicate_works(works: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Remove duplicate works based on URL.
 

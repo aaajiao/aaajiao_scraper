@@ -28,12 +28,12 @@ def main():
     
     print(f"   🆕 发现 {len(work_urls)} 个新增/更新的作品\n")
     
-    # 2. 仅提取更新的作品
+    # 2. 仅提取更新的作品（使用两层混合策略）
     print("📥 提取更新的作品...")
     for i, url in enumerate(work_urls, 1):
         print(f"   [{i}/{len(work_urls)}] 处理中...")
-        
-        work_data = scraper.extract_work_details(url)
+
+        work_data = scraper.extract_work_details_v2(url)
         if work_data:
             title = work_data.get('title', 'Unknown')
             print(f"      ✅ {title}")

@@ -21,11 +21,11 @@ def main():
     work_urls = scraper.get_all_work_links(incremental=False)
     print(f"   找到 {len(work_urls)} 个作品")
     
-    # 3. 提取单个作品详情（AI 模式）
+    # 3. 提取单个作品详情（两层混合策略）
     if work_urls:
         print("\n🎨 提取第一个作品的详情...")
         first_url = work_urls[0]
-        work_data = scraper.extract_work_details(first_url)
+        work_data = scraper.extract_work_details_v2(first_url)
         
         if work_data:
             print(f"   ✅ 成功提取：{work_data.get('title', 'Unknown')}")
