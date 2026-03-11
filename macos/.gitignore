@@ -7,3 +7,4 @@ Seed/aaajiao_works.json
 Seed/aaajiao_portfolio.md
 App/*.app
 DerivedData/
+.build/
