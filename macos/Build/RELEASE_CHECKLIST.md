@@ -36,6 +36,7 @@ Expected result:
 
 ```bash
 ./macos/Build/run_acceptance_checks.sh
+./macos/Build/run_git_transaction_checks.sh
 ```
 
 Expected result:
@@ -45,6 +46,7 @@ Expected result:
 - `getApplyPreview` works
 - `applyAcceptedRecords --dry-run` regenerates workspace files
 - `resetWorkspace` recreates the workspace from bundled seed
+- `applyAcceptedRecords` can commit and push in a temporary git sandbox
 
 ## 5. Optional live validation
 

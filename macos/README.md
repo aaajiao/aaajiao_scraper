@@ -43,6 +43,7 @@ Build scripts:
 ./macos/Build/build_local_app.sh
 ./macos/Build/smoke_test_app.sh
 ./macos/Build/run_acceptance_checks.sh
+./macos/Build/run_git_transaction_checks.sh
 ```
 
 Release checklist:

@@ -40,14 +40,16 @@ struct AaajiaoHelper {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: pythonPath)
         process.arguments = [enginePath] + Array(CommandLine.arguments.dropFirst())
-        process.environment = [
-            "AAAJIAO_IMPORTER_BUNDLE_ROOT": resourcesURL.path,
-            "AAAJIAO_REPO_ROOT": "/Users/aaajiao/Documents/aaajiao_scraper",
-            "PYTHONNOUSERSITE": "1",
-            "PYTHONPATH": sitePackages
-        ].merging(ProcessInfo.processInfo.environment) { new, old in
-            new.isEmpty ? old : new
+        var environment = ProcessInfo.processInfo.environment
+        environment["AAAJIAO_IMPORTER_BUNDLE_ROOT"] = resourcesURL.path
+        if environment["AAAJIAO_REPO_ROOT"]?.isEmpty ?? true {
+            environment["AAAJIAO_REPO_ROOT"] = "/Users/aaajiao/Documents/aaajiao_scraper"
         }
+        environment["PYTHONNOUSERSITE"] = "1"
+        environment["PYTHONPATH"] = sitePackages
+        environment.removeValue(forKey: "PYTHONHOME")
+        environment.removeValue(forKey: "PYTHONEXECUTABLE")
+        process.environment = environment
         process.standardOutput = FileHandle.standardOutput
         process.standardError = FileHandle.standardError
 
