@@ -1,0 +1,11 @@
+dist/
+build/
+DerivedData/
+*.DS_Store
+__pycache__/
+Vendor/python_snapshot/
+Vendor/python_runtime/
+Seed/cache/
+Seed/aaajiao_works.json
+Seed/aaajiao_portfolio.md
+App/*.app
