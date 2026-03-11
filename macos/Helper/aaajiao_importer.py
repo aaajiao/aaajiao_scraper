@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 APP_NAME = "AaajiaoImporter"
 DEFAULT_REPO_ROOT = Path("/Users/aaajiao/Documents/aaajiao_scraper")
-DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
+DEFAULT_OPENAI_MODEL = "gpt-4.1"
 REPO_WORKS = "aaajiao_works.json"
 REPO_PORTFOLIO = "aaajiao_portfolio.md"
 TARGET_FILES = (REPO_WORKS, REPO_PORTFOLIO)
@@ -661,13 +661,60 @@ def _blank_ai_validation(base_data: Dict[str, Any], rejection_reason: str) -> AI
     )
 
 
+def _openai_model() -> str:
+    return _normalize_string(os.environ.get("OPENAI_MODEL")) or DEFAULT_OPENAI_MODEL
+
+
+def _openai_model_source() -> str:
+    source = _normalize_string(os.environ.get("OPENAI_MODEL_SOURCE")).lower()
+    if source in {"default", "preset", "custom"}:
+        return source
+    return "default" if _openai_model() == DEFAULT_OPENAI_MODEL else "custom"
+
+
 def _validation_response_format() -> Dict[str, Any]:
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [
+            "page_type",
+            "title",
+            "title_cn",
+            "year",
+            "type",
+            "materials",
+            "size",
+            "duration",
+            "credits",
+            "description_en",
+            "description_cn",
+            "confidence",
+            "should_apply",
+            "rejection_reason",
+        ],
+        "properties": {
+            "page_type": {"type": "string", "enum": ["artwork", "exhibition", "unknown"]},
+            "title": {"type": "string"},
+            "title_cn": {"type": "string"},
+            "year": {"type": "string"},
+            "type": {"type": "string"},
+            "materials": {"type": "string"},
+            "size": {"type": "string"},
+            "duration": {"type": "string"},
+            "credits": {"type": "string"},
+            "description_en": {"type": "string"},
+            "description_cn": {"type": "string"},
+            "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+            "should_apply": {"type": "boolean"},
+            "rejection_reason": {"type": "string"},
+        },
+    }
     return {
         "type": "json_schema",
         "json_schema": {
             "name": AI_VALIDATION_NAME,
             "strict": True,
-            "schema": AIValidationResult.model_json_schema(),
+            "schema": schema,
         },
     }
 
@@ -697,6 +744,48 @@ def _post_openai_validation(
     )
 
 
+def _openai_error_detail(response: requests.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            message = _normalize_string(error.get("message"))
+            error_type = _normalize_string(error.get("type"))
+            error_param = _normalize_string(error.get("param"))
+            detail = message or _normalize_string(response.text)
+            extras = []
+            if error_type:
+                extras.append(f"type={error_type}")
+            if error_param:
+                extras.append(f"param={error_param}")
+            if extras:
+                return f"{detail} [{' '.join(extras)}]".strip()
+            return detail
+    return _normalize_string(response.text) or f"HTTP {response.status_code}"
+
+
+def _should_retry_with_json_object(response: requests.Response) -> bool:
+    if response.status_code != 400:
+        return False
+    detail = _openai_error_detail(response).lower()
+    if "json_schema" not in detail and "structured outputs" not in detail:
+        return False
+    return any(
+        needle in detail
+        for needle in (
+            "not supported",
+            "unsupported",
+            "not compatible",
+            "does not support",
+            "only supports",
+        )
+    )
+
+
 def _call_openai_validation(
     url: str,
     base_data: Dict[str, Any],
@@ -710,7 +799,7 @@ def _call_openai_validation(
             error_state="ai_unavailable",
         )
 
-    model = os.environ.get("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
+    model = _openai_model()
     payload = {
         "url": url,
         "slug": _slug(url),
@@ -729,14 +818,16 @@ def _call_openai_validation(
             payload=payload,
             response_format=_validation_response_format(),
         )
-        if response.status_code == 400 and "json_schema" in response.text.lower():
+        if _should_retry_with_json_object(response):
             response = _post_openai_validation(
                 api_key=api_key,
                 model=model,
                 payload=payload,
                 response_format={"type": "json_object"},
             )
-        response.raise_for_status()
+        if response.status_code >= 400:
+            detail = _openai_error_detail(response)
+            raise RequestException(f"AI validation failed [{model}]: {detail}")
         content = response.json()["choices"][0]["message"]["content"]
         parsed = AIValidationResult.model_validate_json(content)
         return AIValidationCallResult(payload=parsed, available=True, error_state="")
@@ -744,14 +835,14 @@ def _call_openai_validation(
         return AIValidationCallResult(
             payload=_blank_ai_validation(
                 base_data,
-                f"AI validation failed: invalid structured output ({exc.errors()[0]['type']})",
+                f"AI validation failed [{model}]: invalid structured output ({exc.errors()[0]['type']})",
             ),
             available=False,
             error_state="ai_invalid_output",
         )
     except (RequestException, KeyError, IndexError, TypeError, ValueError) as exc:
         return AIValidationCallResult(
-            payload=_blank_ai_validation(base_data, f"AI validation failed: {exc}"),
+            payload=_blank_ai_validation(base_data, str(exc)),
             available=False,
             error_state="ai_request_failed",
         )
@@ -1014,6 +1105,8 @@ def _settings_payload() -> Dict[str, Any]:
         "workspace_path": str(workspace_root()),
         "repo_path": str(repo_root()),
         "has_openai_key": bool(os.environ.get("OPENAI_API_KEY", "").strip()),
+        "openai_model": _openai_model(),
+        "openai_model_source": _openai_model_source(),
         "workspace_status": _normalize_string(workspace_manifest.get("workspace_status")) or "missing",
         "workspace_seed_version": _normalize_string(workspace_manifest.get("workspace_seed_version")),
         "bundle_seed_version": _normalize_string(seed_manifest.get("seed_version")),

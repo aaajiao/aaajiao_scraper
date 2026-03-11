@@ -50,6 +50,8 @@ struct AppSettings: Codable, Hashable {
     let workspace_path: String
     let repo_path: String
     let has_openai_key: Bool
+    let openai_model: String
+    let openai_model_source: String
     let workspace_status: String?
     let workspace_seed_version: String?
     let bundle_seed_version: String?
@@ -58,6 +60,8 @@ struct AppSettings: Codable, Hashable {
         workspace_path: "",
         repo_path: "",
         has_openai_key: false,
+        openai_model: "",
+        openai_model_source: "",
         workspace_status: nil,
         workspace_seed_version: nil,
         bundle_seed_version: nil

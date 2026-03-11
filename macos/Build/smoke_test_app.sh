@@ -64,6 +64,8 @@ binary_data = Path(os.environ["APP_BINARY"]).read_bytes()
 
 assert bootstrap["status"] in {"initialized", "ready"}, bootstrap
 assert overview["settings"]["workspace_path"] == str(workspace_root), overview
+assert overview["settings"]["openai_model"] == "gpt-4.1", overview
+assert overview["settings"]["openai_model_source"] == "default", overview
 assert workspace_manifest["workspace_status"] in {"ready", "seed_version_mismatch"}, workspace_manifest
 assert (workspace_root / "aaajiao_works.json").exists()
 assert (workspace_root / "aaajiao_portfolio.md").exists()

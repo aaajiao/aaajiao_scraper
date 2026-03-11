@@ -16,6 +16,8 @@ final class AppModel: ObservableObject {
     @Published var statusMessage = "Ready"
     @Published var settings = AppSettings.empty
     @Published var settingsDraftOpenAIKey = ""
+    @Published var settingsDraftOpenAIModelPreset = OpenAIModelPreset.defaultPreset
+    @Published var settingsDraftCustomOpenAIModel = ""
     @Published var settingsStatusMessage = ""
 
     private let helper = HelperClient()
@@ -23,7 +25,10 @@ final class AppModel: ObservableObject {
 
     init() {
         let savedKey = KeychainStore.load()
+        let modelSelection = OpenAIModelSettingsStore.load()
         settingsDraftOpenAIKey = savedKey
+        settingsDraftOpenAIModelPreset = modelSelection.preset
+        settingsDraftCustomOpenAIModel = modelSelection.customModel
     }
 
     var selectedRecord: ProposedRecord? {
@@ -34,6 +39,10 @@ final class AppModel: ObservableObject {
         KeychainStore.load()
     }
 
+    var savedOpenAIModelSelection: OpenAIModelSelection {
+        OpenAIModelSettingsStore.load()
+    }
+
     var hasSavedOpenAIKey: Bool {
         !savedOpenAIKey.isEmpty
     }
@@ -42,8 +51,33 @@ final class AppModel: ObservableObject {
         settingsDraftOpenAIKey.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    var trimmedDraftCustomOpenAIModel: String {
+        settingsDraftCustomOpenAIModel.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var draftOpenAIModelSelection: OpenAIModelSelection {
+        OpenAIModelSelection(
+            preset: settingsDraftOpenAIModelPreset,
+            customModel: trimmedDraftCustomOpenAIModel
+        )
+    }
+
+    var effectiveOpenAIModel: String {
+        let configured = settings.openai_model.trimmingCharacters(in: .whitespacesAndNewlines)
+        return configured.isEmpty ? savedOpenAIModelSelection.effectiveModel : configured
+    }
+
+    var effectiveOpenAIModelSource: String {
+        let configured = settings.openai_model_source.trimmingCharacters(in: .whitespacesAndNewlines)
+        return configured.isEmpty ? savedOpenAIModelSelection.source : configured
+    }
+
+    var canSaveSettings: Bool {
+        isSettingsDirty && draftOpenAIModelSelection.isValid
+    }
+
     var isSettingsDirty: Bool {
-        trimmedDraftOpenAIKey != savedOpenAIKey
+        trimmedDraftOpenAIKey != savedOpenAIKey || draftOpenAIModelSelection != savedOpenAIModelSelection
     }
 
     var canRunProtectedActions: Bool {
@@ -59,9 +93,13 @@ final class AppModel: ObservableObject {
     func bootstrapAndRefresh() {
         Task {
             do {
-                let response = try helper.bootstrapWorkspace(openAIKey: savedOpenAIKey)
+                let response = try helper.bootstrapWorkspace(
+                    openAIKey: savedOpenAIKey,
+                    openAIModel: savedOpenAIModelSelection.effectiveModel,
+                    openAIModelSource: savedOpenAIModelSelection.source
+                )
                 settings = response.settings
-                syncDraftWithSavedKeyIfNeeded()
+                syncDraftWithSavedSettingsIfNeeded()
                 try await refresh()
                 if response.status == "initialized" {
                     statusMessage = "Workspace initialized from bundled seed"
@@ -85,11 +123,15 @@ final class AppModel: ObservableObject {
     }
 
     func refresh() async throws {
-        let response = try helper.listPendingRecords(openAIKey: savedOpenAIKey)
+        let response = try helper.listPendingRecords(
+            openAIKey: savedOpenAIKey,
+            openAIModel: savedOpenAIModelSelection.effectiveModel,
+            openAIModelSource: savedOpenAIModelSelection.source
+        )
         settings = response.settings
         batches = response.batches
         pendingRecords = response.pending_records
-        syncDraftWithSavedKeyIfNeeded()
+        syncDraftWithSavedSettingsIfNeeded()
 
         if let selectedRecordID, pendingRecords.contains(where: { $0.id == selectedRecordID }) {
             self.selectedRecordID = selectedRecordID
@@ -116,7 +158,11 @@ final class AppModel: ObservableObject {
         }
         Task {
             do {
-                let result = try helper.startIncrementalSync(openAIKey: savedOpenAIKey)
+                let result = try helper.startIncrementalSync(
+                    openAIKey: savedOpenAIKey,
+                    openAIModel: savedOpenAIModelSelection.effectiveModel,
+                    openAIModelSource: savedOpenAIModelSelection.source
+                )
                 try await refresh()
                 statusMessage = "Synced \(result.urls_processed) URLs into batch #\(result.batch_id)"
             } catch {
@@ -132,7 +178,11 @@ final class AppModel: ObservableObject {
     func confirmWorkspaceReset() {
         Task {
             do {
-                let response = try helper.resetWorkspace(openAIKey: savedOpenAIKey)
+                let response = try helper.resetWorkspace(
+                    openAIKey: savedOpenAIKey,
+                    openAIModel: savedOpenAIModelSelection.effectiveModel,
+                    openAIModelSource: savedOpenAIModelSelection.source
+                )
                 settings = response.settings
                 isShowingResetConfirmation = false
                 try await refresh()
@@ -152,7 +202,12 @@ final class AppModel: ObservableObject {
         guard !trimmed.isEmpty else { return }
         Task {
             do {
-                let result = try helper.submitManualURL(trimmed, openAIKey: savedOpenAIKey)
+                let result = try helper.submitManualURL(
+                    trimmed,
+                    openAIKey: savedOpenAIKey,
+                    openAIModel: savedOpenAIModelSelection.effectiveModel,
+                    openAIModelSource: savedOpenAIModelSelection.source
+                )
                 manualURL = ""
                 try await refresh()
                 statusMessage = "Queued \(result.url) in batch #\(result.batch_id)"
@@ -166,7 +221,12 @@ final class AppModel: ObservableObject {
         guard let record = selectedRecord else { return }
         Task {
             do {
-                _ = try helper.acceptRecord(id: record.id, openAIKey: savedOpenAIKey)
+                _ = try helper.acceptRecord(
+                    id: record.id,
+                    openAIKey: savedOpenAIKey,
+                    openAIModel: savedOpenAIModelSelection.effectiveModel,
+                    openAIModelSource: savedOpenAIModelSelection.source
+                )
                 try await refresh()
                 statusMessage = "Accepted record #\(record.id)"
             } catch {
@@ -179,7 +239,12 @@ final class AppModel: ObservableObject {
         guard let record = selectedRecord else { return }
         Task {
             do {
-                _ = try helper.rejectRecord(id: record.id, openAIKey: savedOpenAIKey)
+                _ = try helper.rejectRecord(
+                    id: record.id,
+                    openAIKey: savedOpenAIKey,
+                    openAIModel: savedOpenAIModelSelection.effectiveModel,
+                    openAIModelSource: savedOpenAIModelSelection.source
+                )
                 try await refresh()
                 statusMessage = "Rejected record #\(record.id)"
             } catch {
@@ -191,7 +256,12 @@ final class AppModel: ObservableObject {
     func loadApplyPreview(for batch: BatchSummary) {
         Task {
             do {
-                let preview = try helper.getApplyPreview(batchID: batch.id, openAIKey: savedOpenAIKey)
+                let preview = try helper.getApplyPreview(
+                    batchID: batch.id,
+                    openAIKey: savedOpenAIKey,
+                    openAIModel: savedOpenAIModelSelection.effectiveModel,
+                    openAIModelSource: savedOpenAIModelSelection.source
+                )
                 previewBatchID = batch.id
                 applyPreview = preview
                 statusMessage = preview.error_message.isEmpty ? "Preview ready for batch #\(batch.id)" : preview.error_message
@@ -214,7 +284,12 @@ final class AppModel: ObservableObject {
         guard let batch = pendingApplyBatch else { return }
         Task {
             do {
-                let result = try helper.applyAcceptedRecords(batchID: batch.id, openAIKey: savedOpenAIKey)
+                let result = try helper.applyAcceptedRecords(
+                    batchID: batch.id,
+                    openAIKey: savedOpenAIKey,
+                    openAIModel: savedOpenAIModelSelection.effectiveModel,
+                    openAIModelSource: savedOpenAIModelSelection.source
+                )
                 isShowingApplyConfirmation = false
                 pendingApplyBatch = nil
                 applyPreview = result.preview
@@ -229,14 +304,24 @@ final class AppModel: ObservableObject {
 
     func saveSettings() {
         let newValue = trimmedDraftOpenAIKey
+        let modelSelection = draftOpenAIModelSelection
+        guard modelSelection.isValid else {
+            settingsStatusMessage = "Enter a custom model name or choose a preset."
+            return
+        }
         do {
             if newValue.isEmpty {
                 try KeychainStore.delete()
             } else {
                 try KeychainStore.save(newValue)
             }
+            OpenAIModelSettingsStore.save(modelSelection)
             settingsDraftOpenAIKey = newValue
-            settingsStatusMessage = newValue.isEmpty ? "OpenAI key cleared from macOS Keychain." : "OpenAI key saved to macOS Keychain."
+            settingsDraftOpenAIModelPreset = modelSelection.preset
+            settingsDraftCustomOpenAIModel = modelSelection.customModel
+            settingsStatusMessage = newValue.isEmpty
+                ? "OpenAI key cleared. Model selection saved."
+                : "OpenAI settings saved."
             refreshFromUI()
         } catch {
             settingsStatusMessage = display(error)
@@ -245,6 +330,8 @@ final class AppModel: ObservableObject {
 
     func revertSettings() {
         settingsDraftOpenAIKey = savedOpenAIKey
+        settingsDraftOpenAIModelPreset = savedOpenAIModelSelection.preset
+        settingsDraftCustomOpenAIModel = savedOpenAIModelSelection.customModel
         settingsStatusMessage = "Reverted unsaved changes."
     }
 
@@ -263,9 +350,11 @@ final class AppModel: ObservableObject {
         NSApplication.shared.terminate(nil)
     }
 
-    private func syncDraftWithSavedKeyIfNeeded() {
+    private func syncDraftWithSavedSettingsIfNeeded() {
         guard !isSettingsDirty else { return }
         settingsDraftOpenAIKey = savedOpenAIKey
+        settingsDraftOpenAIModelPreset = savedOpenAIModelSelection.preset
+        settingsDraftCustomOpenAIModel = savedOpenAIModelSelection.customModel
     }
 
     private func display(_ error: Error) -> String {
@@ -354,11 +443,20 @@ private struct StatusSummaryView: View {
                         tint: model.pendingRecords.isEmpty ? .secondary : .blue
                     )
                     StatusBadge(
+                        title: "Model",
+                        value: model.effectiveOpenAIModel,
+                        tint: .secondary
+                    )
+                    StatusBadge(
                         title: "Workspace",
                         value: workspaceLabel(model.settings.workspace_status),
                         tint: model.settings.workspace_status == "seed_version_mismatch" ? .orange : .secondary
                     )
                 }
+
+                Text("Effective model: \(model.effectiveOpenAIModel) (\(modelSourceLabel(model.effectiveOpenAIModelSource)))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
 
                 if !model.settings.workspace_path.isEmpty {
                     Text(model.settings.workspace_path)
@@ -395,6 +493,17 @@ private struct StatusSummaryView: View {
             return "Unknown"
         }
     }
+
+    private func modelSourceLabel(_ source: String) -> String {
+        switch source {
+        case "custom":
+            return "custom"
+        case "preset":
+            return "preset"
+        default:
+            return "default"
+        }
+    }
 }
 
 private struct SettingsInlineView: View {
@@ -406,11 +515,27 @@ private struct SettingsInlineView: View {
                 HStack(alignment: .center, spacing: 8) {
                     SecureField("OpenAI API Key", text: $model.settingsDraftOpenAIKey)
                         .textFieldStyle(.roundedBorder)
+                }
 
+                VStack(alignment: .leading, spacing: 8) {
+                    Picker("Model", selection: $model.settingsDraftOpenAIModelPreset) {
+                        ForEach(OpenAIModelPreset.allCases) { preset in
+                            Text(preset.displayName).tag(preset)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    if model.settingsDraftOpenAIModelPreset == .custom {
+                        TextField("Custom model name", text: $model.settingsDraftCustomOpenAIModel)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                }
+
+                HStack(alignment: .center, spacing: 8) {
                     Button("Save") {
                         model.saveSettings()
                     }
-                    .disabled(!model.isSettingsDirty)
+                    .disabled(!model.canSaveSettings)
 
                     Button("Revert") {
                         model.revertSettings()
@@ -423,7 +548,11 @@ private struct SettingsInlineView: View {
                     .disabled(!model.hasSavedOpenAIKey && model.trimmedDraftOpenAIKey.isEmpty)
                 }
 
-                Text("The key is stored only in your macOS Keychain and injected into the bundled Python helper at runtime.")
+                Text("The key is stored only in your macOS Keychain. The selected model is stored in local app preferences and injected into the bundled Python helper at runtime.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+
+                Text("Current effective model: \(model.effectiveOpenAIModel)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
 

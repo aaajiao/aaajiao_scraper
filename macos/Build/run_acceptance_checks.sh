@@ -130,6 +130,8 @@ reset_result = json.loads(Path(os.environ["RESET_JSON"]).read_text(encoding="utf
 workspace_root = Path(os.environ["WORKSPACE_ROOT"])
 
 assert bootstrap["status"] in {"initialized", "ready"}
+assert bootstrap["settings"]["openai_model"] == "gpt-4.1", bootstrap
+assert bootstrap["settings"]["openai_model_source"] == "default", bootstrap
 assert len(listing["pending_records"]) == 1, listing
 assert listing["pending_records"][0]["title"] == "Codex Fixture Work", listing
 assert accepted["status"] == "accepted", accepted

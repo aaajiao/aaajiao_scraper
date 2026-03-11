@@ -18,48 +18,109 @@ enum HelperClientError: LocalizedError {
 }
 
 final class HelperClient {
-    func bootstrapWorkspace(openAIKey: String) throws -> BootstrapResponse {
-        try runCommand(arguments: ["bootstrapWorkspace"], openAIKey: openAIKey, as: BootstrapResponse.self)
+    func bootstrapWorkspace(openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> BootstrapResponse {
+        try runCommand(
+            arguments: ["bootstrapWorkspace"],
+            openAIKey: openAIKey,
+            openAIModel: openAIModel,
+            openAIModelSource: openAIModelSource,
+            as: BootstrapResponse.self
+        )
     }
 
-    func listPendingRecords(openAIKey: String) throws -> PendingRecordsResponse {
-        try runCommand(arguments: ["listPendingRecords"], openAIKey: openAIKey, as: PendingRecordsResponse.self)
+    func listPendingRecords(openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> PendingRecordsResponse {
+        try runCommand(
+            arguments: ["listPendingRecords"],
+            openAIKey: openAIKey,
+            openAIModel: openAIModel,
+            openAIModelSource: openAIModelSource,
+            as: PendingRecordsResponse.self
+        )
     }
 
-    func resetWorkspace(openAIKey: String) throws -> BootstrapResponse {
-        try runCommand(arguments: ["resetWorkspace"], openAIKey: openAIKey, as: BootstrapResponse.self)
+    func resetWorkspace(openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> BootstrapResponse {
+        try runCommand(
+            arguments: ["resetWorkspace"],
+            openAIKey: openAIKey,
+            openAIModel: openAIModel,
+            openAIModelSource: openAIModelSource,
+            as: BootstrapResponse.self
+        )
     }
 
-    func startIncrementalSync(openAIKey: String) throws -> StartSyncResponse {
-        try runCommand(arguments: ["startIncrementalSync"], openAIKey: openAIKey, as: StartSyncResponse.self)
+    func startIncrementalSync(openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> StartSyncResponse {
+        try runCommand(
+            arguments: ["startIncrementalSync"],
+            openAIKey: openAIKey,
+            openAIModel: openAIModel,
+            openAIModelSource: openAIModelSource,
+            as: StartSyncResponse.self
+        )
     }
 
-    func submitManualURL(_ url: String, openAIKey: String) throws -> SubmitURLResponse {
-        try runCommand(arguments: ["submitManualURL", "--url", url], openAIKey: openAIKey, as: SubmitURLResponse.self)
+    func submitManualURL(_ url: String, openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> SubmitURLResponse {
+        try runCommand(
+            arguments: ["submitManualURL", "--url", url],
+            openAIKey: openAIKey,
+            openAIModel: openAIModel,
+            openAIModelSource: openAIModelSource,
+            as: SubmitURLResponse.self
+        )
     }
 
-    func acceptRecord(id: Int, openAIKey: String) throws -> RecordStatusResponse {
-        try runCommand(arguments: ["acceptRecord", "--id", "\(id)"], openAIKey: openAIKey, as: RecordStatusResponse.self)
+    func acceptRecord(id: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> RecordStatusResponse {
+        try runCommand(
+            arguments: ["acceptRecord", "--id", "\(id)"],
+            openAIKey: openAIKey,
+            openAIModel: openAIModel,
+            openAIModelSource: openAIModelSource,
+            as: RecordStatusResponse.self
+        )
     }
 
-    func rejectRecord(id: Int, openAIKey: String) throws -> RecordStatusResponse {
-        try runCommand(arguments: ["rejectRecord", "--id", "\(id)"], openAIKey: openAIKey, as: RecordStatusResponse.self)
+    func rejectRecord(id: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> RecordStatusResponse {
+        try runCommand(
+            arguments: ["rejectRecord", "--id", "\(id)"],
+            openAIKey: openAIKey,
+            openAIModel: openAIModel,
+            openAIModelSource: openAIModelSource,
+            as: RecordStatusResponse.self
+        )
     }
 
-    func getApplyPreview(batchID: Int, openAIKey: String) throws -> ApplyPreview {
-        try runCommand(arguments: ["getApplyPreview", "--batch-id", "\(batchID)"], openAIKey: openAIKey, as: ApplyPreview.self)
+    func getApplyPreview(batchID: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> ApplyPreview {
+        try runCommand(
+            arguments: ["getApplyPreview", "--batch-id", "\(batchID)"],
+            openAIKey: openAIKey,
+            openAIModel: openAIModel,
+            openAIModelSource: openAIModelSource,
+            as: ApplyPreview.self
+        )
     }
 
-    func applyAcceptedRecords(batchID: Int, openAIKey: String) throws -> ApplyResponse {
-        try runCommand(arguments: ["applyAcceptedRecords", "--batch-id", "\(batchID)"], openAIKey: openAIKey, as: ApplyResponse.self)
+    func applyAcceptedRecords(batchID: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> ApplyResponse {
+        try runCommand(
+            arguments: ["applyAcceptedRecords", "--batch-id", "\(batchID)"],
+            openAIKey: openAIKey,
+            openAIModel: openAIModel,
+            openAIModelSource: openAIModelSource,
+            as: ApplyResponse.self
+        )
     }
 
     private func runCommand<T: Decodable>(
         arguments: [String],
         openAIKey: String,
+        openAIModel: String,
+        openAIModelSource: String,
         as type: T.Type
     ) throws -> T {
-        let data = try runRawCommand(arguments: arguments, openAIKey: openAIKey)
+        let data = try runRawCommand(
+            arguments: arguments,
+            openAIKey: openAIKey,
+            openAIModel: openAIModel,
+            openAIModelSource: openAIModelSource
+        )
         do {
             return try JSONDecoder().decode(type, from: data)
         } catch {
@@ -68,7 +129,7 @@ final class HelperClient {
         }
     }
 
-    private func runRawCommand(arguments: [String], openAIKey: String) throws -> Data {
+    private func runRawCommand(arguments: [String], openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> Data {
         let helperURL = Bundle.main.bundleURL
             .appendingPathComponent("Contents/MacOS/AaajiaoHelper", isDirectory: false)
         guard FileManager.default.isExecutableFile(atPath: helperURL.path) else {
@@ -78,7 +139,9 @@ final class HelperClient {
         process.executableURL = helperURL
         process.arguments = arguments
         process.environment = [
-            "OPENAI_API_KEY": openAIKey
+            "OPENAI_API_KEY": openAIKey,
+            "OPENAI_MODEL": openAIModel,
+            "OPENAI_MODEL_SOURCE": openAIModelSource
         ].merging(ProcessInfo.processInfo.environment) { new, _ in new }
 
         let stdout = Pipe()
