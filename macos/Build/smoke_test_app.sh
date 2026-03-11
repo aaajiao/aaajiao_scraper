@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MACOS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${MACOS_DIR}/.." && pwd)"
 
-APP_NAME="Aaajiao Importer"
+APP_NAME="aaajiao Importer"
 APP_BUNDLE="${REPO_ROOT}/dist/${APP_NAME}.app"
 APP_RESOURCES="${APP_BUNDLE}/Contents/Resources"
 APP_BINARY="${APP_BUNDLE}/Contents/MacOS/AaajiaoImporter"
@@ -69,7 +69,7 @@ assert (workspace_root / "aaajiao_works.json").exists()
 assert (workspace_root / "aaajiao_portfolio.md").exists()
 assert info_plist["CFBundleIconFile"] == "jiaozip", info_plist
 assert b"Settings" in binary_data, "Settings entry missing from app binary"
-assert b"Quit Aaajiao Importer" in binary_data, "Quit entry missing from app binary"
+assert b"Quit aaajiao Importer" in binary_data, "Quit entry missing from app binary"
 PY
 
 echo "Smoke test passed"

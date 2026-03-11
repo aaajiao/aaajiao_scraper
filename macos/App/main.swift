@@ -318,7 +318,7 @@ private struct HeaderView: View {
     var body: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("Aaajiao Importer")
+                Text("aaajiao Importer")
                     .font(.headline)
                 Text("Local review workspace for portfolio imports")
                     .font(.caption)
@@ -622,7 +622,7 @@ private struct FooterCommandsView: View {
     var body: some View {
         Divider()
         HStack {
-            Button("Quit Aaajiao Importer") {
+            Button("Quit aaajiao Importer") {
                 model.quitApplication()
             }
             Spacer()
@@ -718,7 +718,7 @@ private struct AppCommands: Commands {
         }
 
         CommandGroup(replacing: .appTermination) {
-            Button("Quit Aaajiao Importer") {
+            Button("Quit aaajiao Importer") {
                 model.quitApplication()
             }
             .keyboardShortcut("q", modifiers: [.command])
@@ -731,7 +731,7 @@ struct AaajiaoImporterApp: App {
     @StateObject private var model = AppModel()
 
     var body: some Scene {
-        MenuBarExtra("Aaajiao Importer", systemImage: "tray.full") {
+        MenuBarExtra("aaajiao Importer", systemImage: "tray.full") {
             ContentView()
                 .environmentObject(model)
         }

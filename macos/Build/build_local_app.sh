@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MACOS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${MACOS_DIR}/.." && pwd)"
 
-APP_NAME="Aaajiao Importer"
+APP_NAME="aaajiao Importer"
 APP_BUNDLE="${REPO_ROOT}/dist/${APP_NAME}.app"
 APP_CONTENTS="${APP_BUNDLE}/Contents"
 APP_RESOURCES="${APP_CONTENTS}/Resources"

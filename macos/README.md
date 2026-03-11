@@ -1,4 +1,4 @@
-# Aaajiao Importer for macOS
+# aaajiao Importer for macOS
 
 This directory contains a local-only macOS importer app and its bundled Python engine.
 
@@ -68,4 +68,4 @@ Build locally with:
 ./macos/Build/build_local_app.sh
 ```
 
-The resulting app bundle is written to `dist/Aaajiao Importer.app`.
+The resulting app bundle is written to `dist/aaajiao Importer.app`.

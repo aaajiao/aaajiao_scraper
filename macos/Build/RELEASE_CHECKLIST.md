@@ -1,6 +1,6 @@
 # macOS Importer Release Checklist
 
-Use this checklist before shipping a new local build of `Aaajiao Importer.app`.
+Use this checklist before shipping a new local build of `aaajiao Importer.app`.
 
 ## 1. Freeze inputs
 
@@ -29,7 +29,7 @@ Expected result:
 Expected result:
 
 - `macos/Seed/seed_manifest.json` is regenerated
-- `dist/Aaajiao Importer.app` is rebuilt and ad-hoc signed
+- `dist/aaajiao Importer.app` is rebuilt and ad-hoc signed
 - `smoke_test_app.sh` passes automatically
 
 ## 4. Run acceptance checks
