@@ -41,6 +41,7 @@ mkdir -p "${BUILD_DIR}" "${APP_RESOURCES}" "${APP_MACOS}"
 
 echo "Copying app resources..."
 cp "${MACOS_DIR}/App/Info.plist" "${APP_CONTENTS}/Info.plist"
+cp "${MACOS_DIR}/jiaozip.icns" "${APP_RESOURCES}/jiaozip.icns"
 cp -R "${MACOS_DIR}/Helper" "${APP_RESOURCES}/engine"
 cp -R "${MACOS_DIR}/Vendor/python_snapshot" "${APP_RESOURCES}/python_snapshot"
 cp -R "${MACOS_DIR}/Vendor/python_runtime" "${APP_RESOURCES}/python_runtime"
@@ -66,6 +67,9 @@ xcrun swiftc \
   -sdk "${SDK_PATH}" \
   "${MACOS_DIR}/HelperBridge/AaajiaoHelper.swift" \
   -o "${APP_MACOS}/AaajiaoHelper"
+
+echo "Clearing extended attributes from app bundle..."
+xattr -cr "${APP_BUNDLE}"
 
 echo "Ad-hoc signing app bundle..."
 codesign --force --deep --sign - "${APP_BUNDLE}"

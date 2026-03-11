@@ -4,14 +4,16 @@ import Security
 enum KeychainStore {
     private static let service = "com.aaajiao.importer"
     private static let account = "openai_api_key"
-
-    static func save(_ value: String) throws {
-        let data = Data(value.utf8)
-        let query: [String: Any] = [
+    private static var query: [String: Any] {
+        [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
+    }
+
+    static func save(_ value: String) throws {
+        let data = Data(value.utf8)
         SecItemDelete(query as CFDictionary)
         var attrs = query
         attrs[kSecValueData as String] = data
@@ -22,13 +24,9 @@ enum KeychainStore {
     }
 
     static func load() -> String {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
+        var query = query
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
 
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
@@ -36,5 +34,12 @@ enum KeychainStore {
             return ""
         }
         return value
+    }
+
+    static func delete() throws {
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+        }
     }
 }
