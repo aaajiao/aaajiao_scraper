@@ -13,6 +13,7 @@ final class AppModel: ObservableObject {
     @Published var previewBatchID: Int?
     @Published var pendingApplyBatch: BatchSummary?
     @Published var isShowingApplyConfirmation = false
+    @Published var isShowingResetConfirmation = false
     @Published var statusMessage = "Ready"
     @Published var settings = AppSettings.empty
 
@@ -33,6 +34,11 @@ final class AppModel: ObservableObject {
                 let response = try helper.bootstrapWorkspace(openAIKey: openAIKey)
                 settings = response.settings
                 try await refresh()
+                if response.status == "initialized" {
+                    statusMessage = "Workspace initialized from bundled seed"
+                } else if response.status == "seed_version_mismatch" {
+                    statusMessage = "Workspace seed differs from bundled seed. Manual reset required."
+                }
             } catch {
                 statusMessage = display(error)
             }
@@ -66,6 +72,24 @@ final class AppModel: ObservableObject {
                 let result = try helper.startIncrementalSync(openAIKey: openAIKey)
                 try await refresh()
                 statusMessage = "Synced \(result.urls_processed) URLs into batch #\(result.batch_id)"
+            } catch {
+                statusMessage = display(error)
+            }
+        }
+    }
+
+    func requestWorkspaceReset() {
+        isShowingResetConfirmation = true
+    }
+
+    func confirmWorkspaceReset() {
+        Task {
+            do {
+                let response = try helper.resetWorkspace(openAIKey: openAIKey)
+                settings = response.settings
+                isShowingResetConfirmation = false
+                try await refresh()
+                statusMessage = "Workspace reset from bundled seed"
             } catch {
                 statusMessage = display(error)
             }
@@ -174,6 +198,7 @@ struct ContentView: View {
 
             HStack {
                 Button("Start Sync") { model.startSync() }
+                Button("Reset Workspace") { model.requestWorkspaceReset() }
                 Button("Refresh") {
                     Task {
                         do {
@@ -200,6 +225,11 @@ struct ContentView: View {
                     Text(model.settings.has_openai_key ? "OpenAI key available" : "OpenAI key missing")
                         .font(.caption2)
                         .foregroundColor(model.settings.has_openai_key ? .secondary : .orange)
+                    if let workspaceStatus = model.settings.workspace_status, workspaceStatus == "seed_version_mismatch" {
+                        Text("Workspace seed differs from bundle seed")
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                    }
                 }
             }
 
@@ -352,6 +382,14 @@ struct ContentView: View {
             if let batch = model.pendingApplyBatch {
                 Text("Batch #\(batch.id) will update aaajiao_works.json and aaajiao_portfolio.md, then commit and push.")
             }
+        }
+        .alert("Reset workspace from bundled seed?", isPresented: $model.isShowingResetConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Reset", role: .destructive) {
+                model.confirmWorkspaceReset()
+            }
+        } message: {
+            Text("This removes the local importer workspace and recreates it from the bundled seed.")
         }
     }
 }

@@ -13,11 +13,7 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
-!macos/Build/
-!macos/Build/*.sh
 develop-eggs/
-dist/
 downloads/
 eggs/
 .eggs/
@@ -67,6 +63,10 @@ Thumbs.db
 # ====================
 # Project Specific
 # ====================
+# App bundles
+*.app
+*.app/
+
 # Cache files
 .cache/
 

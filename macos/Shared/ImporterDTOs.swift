@@ -50,8 +50,18 @@ struct AppSettings: Codable, Hashable {
     let workspace_path: String
     let repo_path: String
     let has_openai_key: Bool
+    let workspace_status: String?
+    let workspace_seed_version: String?
+    let bundle_seed_version: String?
 
-    static let empty = AppSettings(workspace_path: "", repo_path: "", has_openai_key: false)
+    static let empty = AppSettings(
+        workspace_path: "",
+        repo_path: "",
+        has_openai_key: false,
+        workspace_status: nil,
+        workspace_seed_version: nil,
+        bundle_seed_version: nil
+    )
 }
 
 struct BootstrapResponse: Codable {

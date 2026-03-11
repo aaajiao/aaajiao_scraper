@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import importlib
 import json
 import os
@@ -29,6 +30,9 @@ REPO_WORKS = "aaajiao_works.json"
 REPO_PORTFOLIO = "aaajiao_portfolio.md"
 TARGET_FILES = (REPO_WORKS, REPO_PORTFOLIO)
 AUTO_APPLY_CONFIDENCE = 0.85
+SEED_MANIFEST_NAME = "seed_manifest.json"
+WORKSPACE_MANIFEST_NAME = "workspace_manifest.json"
+MANIFEST_VERSION = 1
 
 RECORD_READY_FOR_REVIEW = "ready_for_review"
 RECORD_ACCEPTED = "accepted"
@@ -126,6 +130,14 @@ def seed_snapshot_root() -> Path:
     return bundle_root() / "python_snapshot"
 
 
+def seed_manifest_path() -> Path:
+    return seed_root() / SEED_MANIFEST_NAME
+
+
+def workspace_manifest_path() -> Path:
+    return workspace_root() / WORKSPACE_MANIFEST_NAME
+
+
 def _normalize_string(value: Any) -> str:
     if value is None:
         return ""
@@ -146,23 +158,122 @@ def _safe_slug(value: str) -> str:
     return re.sub(r"[-_]+", " ", slug).strip().lower()
 
 
-def ensure_workspace() -> None:
-    root = workspace_root()
-    root.mkdir(parents=True, exist_ok=True)
-    snapshot_root().mkdir(parents=True, exist_ok=True)
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
+
+def _load_json(path: Path) -> Dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Expected JSON object in {path}")
+    return payload
+
+
+def _write_json_atomic(path: Path, payload: Dict[str, Any]) -> None:
+    temp_path = path.with_suffix(f"{path.suffix}.tmp")
+    with open(temp_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    temp_path.replace(path)
+
+
+def _fallback_seed_manifest() -> Dict[str, Any]:
+    works_path = seed_root() / REPO_WORKS
+    portfolio_path = seed_root() / REPO_PORTFOLIO
+    works_sha = _file_sha256(works_path)
+    portfolio_sha = _file_sha256(portfolio_path)
+    return {
+        "manifest_version": MANIFEST_VERSION,
+        "generated_at": "",
+        "source_commit": "unknown",
+        "seed_version": f"fallback-{works_sha[:12]}-{portfolio_sha[:12]}",
+        "files": {
+            REPO_WORKS: {"sha256": works_sha, "size": works_path.stat().st_size},
+            REPO_PORTFOLIO: {"sha256": portfolio_sha, "size": portfolio_path.stat().st_size},
+        },
+        "snapshot": {
+            "scraper_files": len(list((seed_snapshot_root() / "scraper").rglob("*"))),
+            "cache_files": len(list((seed_root() / "cache").rglob("*"))),
+        },
+        "python_runtime": {"mode": "unknown"},
+    }
+
+
+def _load_seed_manifest() -> Dict[str, Any]:
+    path = seed_manifest_path()
+    if path.exists():
+        return _load_json(path)
+    return _fallback_seed_manifest()
+
+
+def _copy_seed_payload() -> None:
+    snapshot_root().mkdir(parents=True, exist_ok=True)
     if not (snapshot_root() / "scraper").exists():
         shutil.copytree(seed_snapshot_root() / "scraper", snapshot_root() / "scraper", dirs_exist_ok=True)
-
-    if not (root / ".cache").exists():
-        shutil.copytree(seed_root() / "cache", root / ".cache", dirs_exist_ok=True)
-
+    if not (workspace_root() / ".cache").exists():
+        shutil.copytree(seed_root() / "cache", workspace_root() / ".cache", dirs_exist_ok=True)
     for name in TARGET_FILES:
-        target = root / name
+        target = workspace_root() / name
         if not target.exists():
             shutil.copy2(seed_root() / name, target)
 
+
+def _write_workspace_manifest(
+    seed_manifest: Dict[str, Any],
+    *,
+    workspace_status: str,
+    workspace_seed_version: str,
+    initialized_at: Optional[str] = None,
+) -> None:
+    manifest = {
+        "manifest_version": MANIFEST_VERSION,
+        "app_name": APP_NAME,
+        "workspace_root": str(workspace_root()),
+        "initialized_at": initialized_at or now_iso(),
+        "last_bootstrap_at": now_iso(),
+        "workspace_status": workspace_status,
+        "workspace_seed_version": workspace_seed_version,
+        "bundle_seed_version": _normalize_string(seed_manifest.get("seed_version")),
+        "source_commit": _normalize_string(seed_manifest.get("source_commit")),
+        "tracked_files": [REPO_WORKS, REPO_PORTFOLIO],
+    }
+    _write_json_atomic(workspace_manifest_path(), manifest)
+
+
+def ensure_workspace() -> str:
+    root = workspace_root()
+    root.mkdir(parents=True, exist_ok=True)
+    seed_manifest = _load_seed_manifest()
+    if not workspace_manifest_path().exists():
+        _copy_seed_payload()
+        init_db()
+        _write_workspace_manifest(
+            seed_manifest,
+            workspace_status="ready",
+            workspace_seed_version=_normalize_string(seed_manifest.get("seed_version")),
+        )
+        return "initialized"
+
+    _copy_seed_payload()
     init_db()
+    workspace_manifest = _load_json(workspace_manifest_path())
+    workspace_seed_version = _normalize_string(workspace_manifest.get("workspace_seed_version"))
+    bundle_seed_version = _normalize_string(seed_manifest.get("seed_version"))
+    if not workspace_seed_version:
+        workspace_seed_version = bundle_seed_version
+    workspace_status = "ready" if workspace_seed_version == bundle_seed_version else "seed_version_mismatch"
+    _write_workspace_manifest(
+        seed_manifest,
+        workspace_status=workspace_status,
+        workspace_seed_version=workspace_seed_version,
+        initialized_at=_normalize_string(workspace_manifest.get("initialized_at")) or now_iso(),
+    )
+    return workspace_status
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -756,10 +867,17 @@ def _batch_summaries(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
 
 
 def _settings_payload() -> Dict[str, Any]:
+    workspace_manifest: Dict[str, Any] = {}
+    if workspace_manifest_path().exists():
+        workspace_manifest = _load_json(workspace_manifest_path())
+    seed_manifest = _load_seed_manifest()
     return {
         "workspace_path": str(workspace_root()),
         "repo_path": str(repo_root()),
         "has_openai_key": bool(os.environ.get("OPENAI_API_KEY", "").strip()),
+        "workspace_status": _normalize_string(workspace_manifest.get("workspace_status")) or "missing",
+        "workspace_seed_version": _normalize_string(workspace_manifest.get("workspace_seed_version")),
+        "bundle_seed_version": _normalize_string(seed_manifest.get("seed_version")),
     }
 
 
@@ -790,8 +908,16 @@ def _merge_accepted_records(batch_id: int) -> Tuple[List[Dict[str, Any]], int, i
 
 
 def bootstrap_workspace() -> Dict[str, Any]:
-    ensure_workspace()
-    return {"settings": _settings_payload(), "status": "ok"}
+    status = ensure_workspace()
+    return {"settings": _settings_payload(), "status": status}
+
+
+def reset_workspace() -> Dict[str, Any]:
+    root = workspace_root()
+    if root.exists():
+        shutil.rmtree(root)
+    status = ensure_workspace()
+    return {"settings": _settings_payload(), "status": status}
 
 
 def start_incremental_sync() -> Dict[str, Any]:
@@ -983,6 +1109,7 @@ def parse_args() -> argparse.Namespace:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("bootstrapWorkspace", aliases=["bootstrap"])
+    sub.add_parser("resetWorkspace")
     sub.add_parser("listPendingRecords", aliases=["overview"])
     sub.add_parser("startIncrementalSync", aliases=["start-incremental-sync"])
 
@@ -1011,6 +1138,8 @@ def main() -> None:
     args = parse_args()
     if args.command in {"bootstrapWorkspace", "bootstrap"}:
         result = bootstrap_workspace()
+    elif args.command == "resetWorkspace":
+        result = reset_workspace()
     elif args.command in {"listPendingRecords", "overview"}:
         result = list_pending_records()
     elif args.command in {"startIncrementalSync", "start-incremental-sync"}:

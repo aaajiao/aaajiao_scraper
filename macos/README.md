@@ -18,6 +18,7 @@ Current flow:
 The helper now exposes the planned command surface:
 
 - `bootstrapWorkspace`
+- `resetWorkspace`
 - `startIncrementalSync`
 - `submitManualURL`
 - `listPendingRecords`
@@ -25,6 +26,18 @@ The helper now exposes the planned command surface:
 - `rejectRecord`
 - `getApplyPreview`
 - `applyAcceptedRecords`
+
+Build scripts:
+
+```bash
+./macos/Build/prepare_seed.sh
+./macos/Build/build_local_app.sh
+./macos/Build/smoke_test_app.sh
+```
+
+`prepare_seed.sh` now writes `macos/Seed/seed_manifest.json`.
+At runtime the helper writes `workspace_manifest.json` into the local workspace and validates
+the bundled seed version before reusing the workspace.
 
 Build locally with:
 

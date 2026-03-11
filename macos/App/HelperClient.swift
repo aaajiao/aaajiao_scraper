@@ -26,6 +26,10 @@ final class HelperClient {
         try runCommand(arguments: ["listPendingRecords"], openAIKey: openAIKey, as: PendingRecordsResponse.self)
     }
 
+    func resetWorkspace(openAIKey: String) throws -> BootstrapResponse {
+        try runCommand(arguments: ["resetWorkspace"], openAIKey: openAIKey, as: BootstrapResponse.self)
+    }
+
     func startIncrementalSync(openAIKey: String) throws -> StartSyncResponse {
         try runCommand(arguments: ["startIncrementalSync"], openAIKey: openAIKey, as: StartSyncResponse.self)
     }
@@ -65,29 +69,15 @@ final class HelperClient {
     }
 
     private func runRawCommand(arguments: [String], openAIKey: String) throws -> Data {
-        guard let resourcesURL = Bundle.main.resourceURL else {
+        let helperURL = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/MacOS/AaajiaoHelper", isDirectory: false)
+        guard FileManager.default.isExecutableFile(atPath: helperURL.path) else {
             throw HelperClientError.missingResources
         }
-
-        let pythonCandidates = [
-            resourcesURL.appendingPathComponent("python_runtime/bin/python3").path,
-            resourcesURL.appendingPathComponent("python_runtime/bin/python3.9").path,
-            resourcesURL.appendingPathComponent("python_runtime/bin/python").path
-        ]
-        guard let pythonPath = pythonCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
-            throw HelperClientError.missingResources
-        }
-
-        let enginePath = resourcesURL.appendingPathComponent("engine/aaajiao_importer.py").path
-        let sitePackages = resourcesURL.appendingPathComponent("python_runtime/lib/python3.9/site-packages").path
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: pythonPath)
-        process.arguments = [enginePath] + arguments
+        process.executableURL = helperURL
+        process.arguments = arguments
         process.environment = [
-            "AAAJIAO_IMPORTER_BUNDLE_ROOT": resourcesURL.path,
-            "AAAJIAO_REPO_ROOT": "/Users/aaajiao/Documents/aaajiao_scraper",
-            "PYTHONNOUSERSITE": "1",
-            "PYTHONPATH": sitePackages,
             "OPENAI_API_KEY": openAIKey
         ].merging(ProcessInfo.processInfo.environment) { new, _ in new }
 
