@@ -2,6 +2,44 @@ import AppKit
 import Foundation
 import SwiftUI
 
+private let settingsWindowID = "settings"
+private let importerWindowID = "importer"
+
+private func presentSettingsWindow(_ openWindow: OpenWindowAction) {
+    NSApp.activate(ignoringOtherApps: true)
+    DispatchQueue.main.async {
+        openWindow(id: settingsWindowID)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+private func presentImporterWindow(_ openWindow: OpenWindowAction) {
+    NSApp.activate(ignoringOtherApps: true)
+    DispatchQueue.main.async {
+        openWindow(id: importerWindowID)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+private func closeSettingsWindow() {
+    if let settingsWindow = NSApp.windows.first(where: { $0.title == "Settings" }) {
+        settingsWindow.performClose(nil)
+        return
+    }
+    NSApp.keyWindow?.performClose(nil)
+}
+
+private func openAIModelSourceLabel(_ source: String) -> String {
+    switch source {
+    case "custom":
+        return "custom"
+    case "preset":
+        return "preset"
+    default:
+        return "default"
+    }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var manualURL = ""
@@ -73,7 +111,7 @@ final class AppModel: ObservableObject {
     }
 
     var canSaveSettings: Bool {
-        isSettingsDirty && draftOpenAIModelSelection.isValid
+        draftOpenAIModelSelection.isValid
     }
 
     var isSettingsDirty: Bool {
@@ -302,12 +340,17 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func saveSettings() {
+    @discardableResult
+    func saveSettings() -> Bool {
         let newValue = trimmedDraftOpenAIKey
         let modelSelection = draftOpenAIModelSelection
         guard modelSelection.isValid else {
             settingsStatusMessage = "Enter a custom model name or choose a preset."
-            return
+            return false
+        }
+        if !isSettingsDirty {
+            settingsStatusMessage = ""
+            return true
         }
         do {
             if newValue.isEmpty {
@@ -323,8 +366,10 @@ final class AppModel: ObservableObject {
                 ? "OpenAI key cleared. Model selection saved."
                 : "OpenAI settings saved."
             refreshFromUI()
+            return true
         } catch {
             settingsStatusMessage = display(error)
+            return false
         }
     }
 
@@ -366,17 +411,25 @@ struct ContentView: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HeaderView()
-            StatusSummaryView()
-            SettingsInlineView()
-            PrimaryActionsView()
-            ReviewSectionView()
-            BatchesSectionView()
-            FooterCommandsView()
+        VStack(spacing: 0) {
+            WindowHeaderView()
+            Divider()
+            ImportActionsView()
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
+            Divider()
+            NavigationSplitView {
+                ReviewSidebarView()
+            } detail: {
+                DetailWorkspaceView()
+            }
+            .navigationSplitViewStyle(.balanced)
+            Divider()
+            WorkspaceFooterView()
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
         }
-        .padding(14)
-        .frame(width: 680)
+        .frame(width: 960, height: 720)
         .onAppear { model.bootstrapIfNeeded() }
         .alert("Apply accepted records and push to git?", isPresented: $model.isShowingApplyConfirmation) {
             Button("Cancel", role: .cancel) {
@@ -401,69 +454,92 @@ struct ContentView: View {
     }
 }
 
-private struct HeaderView: View {
+private struct WindowHeaderView: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 3) {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text("aaajiao Importer")
-                    .font(.headline)
-                Text("Local review workspace for portfolio imports")
-                    .font(.caption)
+                    .font(.title3.weight(.semibold))
+                Text("Review imported portfolio records, then explicitly apply accepted changes.")
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
 
             Spacer()
 
-            Text(model.statusMessage)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.trailing)
-                .frame(maxWidth: 220, alignment: .trailing)
+            VStack(alignment: .trailing, spacing: 8) {
+                HStack(spacing: 8) {
+                    Button("Refresh") {
+                        model.refreshFromUI()
+                    }
+                    .keyboardShortcut("r", modifiers: [.command])
+                }
+
+                Text(model.statusMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: 260, alignment: .trailing)
+            }
         }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
     }
 }
 
-private struct StatusSummaryView: View {
+private struct ImportActionsView: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        GroupBox("Status") {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .top, spacing: 16) {
-                    StatusBadge(
-                        title: "OpenAI",
-                        value: model.hasSavedOpenAIKey ? "Configured" : "Missing",
-                        tint: model.hasSavedOpenAIKey ? .green : .orange
-                    )
-                    StatusBadge(
-                        title: "Review Queue",
-                        value: "\(model.pendingRecords.count) pending",
-                        tint: model.pendingRecords.isEmpty ? .secondary : .blue
-                    )
-                    StatusBadge(
-                        title: "Model",
-                        value: model.effectiveOpenAIModel,
-                        tint: .secondary
-                    )
-                    StatusBadge(
-                        title: "Workspace",
-                        value: workspaceLabel(model.settings.workspace_status),
-                        tint: model.settings.workspace_status == "seed_version_mismatch" ? .orange : .secondary
-                    )
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                SummaryTile(
+                    title: "OpenAI",
+                    value: model.hasSavedOpenAIKey ? "Configured" : "Missing",
+                    systemImage: model.hasSavedOpenAIKey ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
+                    tint: model.hasSavedOpenAIKey ? .green : .orange
+                )
+                SummaryTile(
+                    title: "Model",
+                    value: model.effectiveOpenAIModel,
+                    systemImage: "cpu",
+                    tint: .secondary
+                )
+                SummaryTile(
+                    title: "Queue",
+                    value: "\(model.pendingRecords.count) records",
+                    systemImage: "tray.full",
+                    tint: model.pendingRecords.isEmpty ? .secondary : .blue
+                )
+                SummaryTile(
+                    title: "Workspace",
+                    value: workspaceLabel(model.settings.workspace_status),
+                    systemImage: "externaldrive",
+                    tint: model.settings.workspace_status == "seed_version_mismatch" ? .orange : .secondary
+                )
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 10) {
+                    Button("Start Sync") { model.startSync() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!model.canRunProtectedActions)
+
+                    TextField("Paste an eventstructure.com artwork URL", text: $model.manualURL)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit {
+                            model.submitURL()
+                        }
+
+                    Button("Import URL") { model.submitURL() }
+                        .disabled(!model.canRunProtectedActions || model.manualURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
 
-                Text("Effective model: \(model.effectiveOpenAIModel) (\(modelSourceLabel(model.effectiveOpenAIModelSource)))")
+                Text("Current model: \(model.effectiveOpenAIModel) (\(openAIModelSourceLabel(model.effectiveOpenAIModelSource)))")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-
-                if !model.settings.workspace_path.isEmpty {
-                    Text(model.settings.workspace_path)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
 
                 if let workspaceStatus = model.settings.workspace_status, workspaceStatus == "seed_version_mismatch" {
                     Text("Workspace seed differs from the bundled seed. Reset the workspace if you want to realign the local snapshot.")
@@ -493,346 +569,447 @@ private struct StatusSummaryView: View {
             return "Unknown"
         }
     }
+}
 
-    private func modelSourceLabel(_ source: String) -> String {
-        switch source {
-        case "custom":
-            return "custom"
-        case "preset":
-            return "preset"
-        default:
-            return "default"
+private struct ReviewSidebarView: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        Group {
+            if model.pendingRecords.isEmpty {
+                ContentUnavailablePanel(
+                    title: "No review records",
+                    message: model.hasSavedOpenAIKey ? "Run a sync or import a URL to populate the review queue." : "Save an OpenAI key in Settings to enable imports."
+                )
+            } else {
+                List(selection: $model.selectedRecordID) {
+                    Section("Review Queue") {
+                        ForEach(model.pendingRecords) { record in
+                            ReviewRow(record: record)
+                                .tag(record.id)
+                        }
+                    }
+                }
+                .listStyle(.sidebar)
+            }
+        }
+        .frame(minWidth: 280)
+    }
+
+}
+
+private struct DetailWorkspaceView: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                if let record = model.selectedRecord {
+                    RecordDetailCard(record: record)
+                } else {
+                    ContentUnavailablePanel(
+                        title: "No record selected",
+                        message: "Choose a record from the sidebar to inspect its proposed fields."
+                    )
+                }
+
+                BatchActivityCard()
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
 
-private struct SettingsInlineView: View {
+private struct RecordDetailCard: View {
     @EnvironmentObject private var model: AppModel
+    let record: ProposedRecord
 
     var body: some View {
-        GroupBox("OpenAI") {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .center, spacing: 8) {
-                    SecureField("OpenAI API Key", text: $model.settingsDraftOpenAIKey)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Picker("Model", selection: $model.settingsDraftOpenAIModelPreset) {
-                        ForEach(OpenAIModelPreset.allCases) { preset in
-                            Text(preset.displayName).tag(preset)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-
-                    if model.settingsDraftOpenAIModelPreset == .custom {
-                        TextField("Custom model name", text: $model.settingsDraftCustomOpenAIModel)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                }
-
-                HStack(alignment: .center, spacing: 8) {
-                    Button("Save") {
-                        model.saveSettings()
-                    }
-                    .disabled(!model.canSaveSettings)
-
-                    Button("Revert") {
-                        model.revertSettings()
-                    }
-                    .disabled(!model.isSettingsDirty)
-
-                    Button("Clear", role: .destructive) {
-                        model.clearSavedKey()
-                    }
-                    .disabled(!model.hasSavedOpenAIKey && model.trimmedDraftOpenAIKey.isEmpty)
-                }
-
-                Text("The key is stored only in your macOS Keychain. The selected model is stored in local app preferences and injected into the bundled Python helper at runtime.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-
-                Text("Current effective model: \(model.effectiveOpenAIModel)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-
-                if !model.settingsStatusMessage.isEmpty {
-                    Text(model.settingsStatusMessage)
-                        .font(.caption2)
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(record.displayTitle)
+                    .font(.title3.weight(.semibold))
+                if !record.title_cn.isEmpty {
+                    Text(record.title_cn)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
             }
-        }
-    }
-}
 
-private struct PrimaryActionsView: View {
-    @EnvironmentObject private var model: AppModel
+            QuickFactsGrid(record: record)
 
-    var body: some View {
-        GroupBox("Actions") {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Button("Start Sync") { model.startSync() }
-                        .disabled(!model.canRunProtectedActions)
-                    Button("Refresh") { model.refreshFromUI() }
-                    Button("Reset Workspace") { model.requestWorkspaceReset() }
+            Form {
+                Section("Metadata") {
+                    DetailContentRow(label: "URL", value: record.url)
+                    DetailContentRow(label: "Year", value: record.year)
+                    DetailContentRow(label: "Type", value: record.type)
+                    DetailContentRow(label: "Materials", value: record.materials)
+                    DetailContentRow(label: "Size", value: record.size)
+                    DetailContentRow(label: "Duration", value: record.duration)
+                    DetailContentRow(label: "Credits", value: record.credits)
+                    DetailContentRow(label: "Mode", value: record.is_update ? "Update" : "New record")
                 }
 
-                HStack {
-                    TextField("Manual URL", text: $model.manualURL)
-                        .textFieldStyle(.roundedBorder)
-                    Button("Import URL") { model.submitURL() }
-                        .disabled(!model.canRunProtectedActions || model.manualURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
-        }
-    }
-}
-
-private struct ReviewSectionView: View {
-    @EnvironmentObject private var model: AppModel
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            GroupBox("Review Queue") {
-                if model.pendingRecords.isEmpty {
-                    EmptyStateView(
-                        title: "No records pending review",
-                        message: model.hasSavedOpenAIKey ? "Run a sync or import a manual URL to create review items." : "Save an OpenAI key in Settings to enable imports."
-                    )
-                } else {
-                    List(model.pendingRecords, selection: $model.selectedRecordID) { record in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(record.displayTitle)
-                                .font(.headline)
-                                .lineLimit(2)
-                            Text("\(record.status) · \(record.page_type) · \(String(format: "%.2f", record.confidence))")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                            Text(record.url)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                        }
-                        .padding(.vertical, 4)
+                if !record.description_en.isEmpty {
+                    Section("Description EN") {
+                        Text(record.description_en)
+                            .textSelection(.enabled)
                     }
-                    .frame(minWidth: 240, minHeight: 280)
                 }
-            }
 
-            GroupBox("Record Detail") {
-                if let record = model.selectedRecord {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text(record.displayTitle)
-                                .font(.headline)
-                            if !record.title_cn.isEmpty {
-                                Text(record.title_cn)
-                                    .font(.subheadline)
-                            }
-
-                            DetailLine(label: "Status", value: record.status)
-                            DetailLine(label: "Batch", value: "#\(record.batch_id)")
-                            DetailLine(label: "Confidence", value: String(format: "%.2f", record.confidence))
-                            DetailLine(label: "URL", value: record.url)
-                            DetailLine(label: "Year", value: record.year)
-                            DetailLine(label: "Type", value: record.type)
-                            DetailLine(label: "Materials", value: record.materials)
-                            DetailLine(label: "Size", value: record.size)
-                            DetailLine(label: "Duration", value: record.duration)
-                            DetailLine(label: "Credits", value: record.credits)
-                            DetailLine(label: "Mode", value: record.is_update ? "Update" : "New record")
-
-                            if !record.description_en.isEmpty {
-                                DetailBlock(label: "Description EN", value: record.description_en)
-                            }
-                            if !record.description_cn.isEmpty {
-                                DetailBlock(label: "Description CN", value: record.description_cn)
-                            }
-                            if let errorMessage = record.error_message, !errorMessage.isEmpty {
-                                DetailBlock(label: "Validation Note", value: errorMessage)
-                            }
-
-                            HStack {
-                                Button("Accept") { model.acceptSelectedRecord() }
-                                    .disabled(record.status == "accepted")
-                                Button("Reject") { model.rejectSelectedRecord() }
-                                    .disabled(record.status == "rejected")
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                if !record.description_cn.isEmpty {
+                    Section("Description CN") {
+                        Text(record.description_cn)
+                            .textSelection(.enabled)
                     }
-                } else {
-                    EmptyStateView(
-                        title: "No record selected",
-                        message: "Select a record to inspect its proposed fields."
-                    )
+                }
+
+                if let errorMessage = record.error_message, !errorMessage.isEmpty {
+                    Section("Validation Note") {
+                        Text(errorMessage)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 280)
+
+            HStack(spacing: 10) {
+                Button("Accept") { model.acceptSelectedRecord() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(record.status == "accepted")
+                Button("Reject") { model.rejectSelectedRecord() }
+                    .disabled(record.status == "rejected")
+            }
         }
     }
 }
 
-private struct BatchesSectionView: View {
+private struct BatchActivityCard: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            GroupBox("Batches") {
-                if model.batches.isEmpty {
-                    EmptyStateView(
-                        title: "No batches yet",
-                        message: "Run a sync or import a URL to create a batch."
-                    )
-                } else {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(model.batches) { batch in
-                            HStack(alignment: .top) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("#\(batch.id) \(batch.mode)")
-                                        .font(.headline)
-                                    Text("\(batch.status) · accepted \(batch.accepted_records) / ready \(batch.ready_records) / total \(batch.total_records)")
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                    if !batch.last_error.isEmpty {
-                                        Text(batch.last_error)
-                                            .font(.caption2)
-                                            .foregroundStyle(.orange)
-                                            .lineLimit(2)
-                                    }
+            Text("Batch Activity")
+                .font(.headline)
+
+            if model.batches.isEmpty {
+                ContentUnavailablePanel(
+                    title: "No batches yet",
+                    message: "Run a sync or import a URL to create a batch."
+                )
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(model.batches) { batch in
+                        HStack(alignment: .top, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("#\(batch.id) \(batch.mode.capitalized)")
+                                    .font(.body.weight(.semibold))
+                                Text("\(batch.status) · accepted \(batch.accepted_records) · ready \(batch.ready_records) · total \(batch.total_records)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                if !batch.last_error.isEmpty {
+                                    Text(batch.last_error)
+                                        .font(.caption)
+                                        .foregroundStyle(.orange)
+                                        .lineLimit(2)
                                 }
-                                Spacer()
-                                Button("Preview") { model.loadApplyPreview(for: batch) }
-                                    .disabled(batch.accepted_records == 0)
                             }
+                            Spacer()
+                            Button("Preview") { model.loadApplyPreview(for: batch) }
+                                .disabled(batch.accepted_records == 0)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
 
             if let preview = model.applyPreview, let batch = model.batches.first(where: { $0.id == preview.batch_id }) {
-                GroupBox("Apply Preview") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        DetailLine(label: "Batch", value: "#\(preview.batch_id)")
-                        DetailLine(label: "Accepted", value: "\(preview.accepted_count)")
-                        DetailLine(label: "New", value: "\(preview.new_count)")
-                        DetailLine(label: "Updated", value: "\(preview.updated_count)")
-                        DetailLine(label: "Will Push", value: preview.will_push ? "Yes" : "No")
+                Form {
+                    Section("Apply Preview") {
+                        DetailContentRow(label: "Batch", value: "#\(preview.batch_id)")
+                        DetailContentRow(label: "Accepted", value: "\(preview.accepted_count)")
+                        DetailContentRow(label: "New", value: "\(preview.new_count)")
+                        DetailContentRow(label: "Updated", value: "\(preview.updated_count)")
+                        DetailContentRow(label: "Will Push", value: preview.will_push ? "Yes" : "No")
+                    }
 
+                    Section("Target Files") {
                         ForEach(preview.target_files, id: \.self) { file in
                             Text(file)
-                                .font(.caption2)
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
                         }
+                    }
 
-                        if !preview.error_message.isEmpty {
+                    if !preview.error_message.isEmpty {
+                        Section("Preview Note") {
                             Text(preview.error_message)
-                                .font(.caption2)
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
                         }
+                    }
 
+                    Section {
                         Button("Apply Accepted Records") { model.requestApply(batch: batch) }
+                            .buttonStyle(.borderedProminent)
                             .disabled(!model.canRunProtectedActions || !preview.will_push || preview.accepted_count == 0)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }
     }
 }
 
-private struct FooterCommandsView: View {
+private struct WorkspaceFooterView: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        Divider()
         HStack {
-            Button("Quit aaajiao Importer") {
-                model.quitApplication()
+            VStack(alignment: .leading, spacing: 4) {
+                Text(model.settings.workspace_path.isEmpty ? "Workspace unavailable" : model.settings.workspace_path)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                Text("The importer runs against a local workspace snapshot until you explicitly apply accepted records.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
             Spacer()
+            Button("Quit") {
+                model.quitApplication()
+            }
+            Menu("Workspace") {
+                Button("Reset Workspace", role: .destructive) {
+                    model.requestWorkspaceReset()
+                }
+                Divider()
+                Button("Quit aaajiao Importer") {
+                    model.quitApplication()
+                }
+            }
         }
     }
 }
 
-private struct StatusBadge: View {
+private struct SummaryTile: View {
     let title: String
     let value: String
+    let systemImage: String
     let tint: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.caption2)
+        VStack(alignment: .leading, spacing: 8) {
+            Label(title, systemImage: systemImage)
+                .font(.caption)
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.callout.weight(.semibold))
+                .font(.headline)
                 .foregroundStyle(tint)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 
-private struct EmptyStateView: View {
+private struct ReviewRow: View {
+    let record: ProposedRecord
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(record.displayTitle)
+                .font(.body.weight(.medium))
+                .lineLimit(2)
+            Text("\(record.status) · \(record.page_type) · \(String(format: "%.2f", record.confidence))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(record.url)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .lineLimit(2)
+        }
+        .padding(.vertical, 3)
+    }
+}
+
+private struct ContentUnavailablePanel: View {
     let title: String
     let message: String
 
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
+            Image(systemName: "tray")
+                .font(.title2)
+                .foregroundStyle(.secondary)
             Text(title)
-                .font(.callout.weight(.semibold))
+                .font(.headline)
             Text(message)
-                .font(.caption)
+                .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.vertical, 24)
+        .padding(32)
     }
 }
 
-private struct DetailLine: View {
+private struct QuickFactsGrid: View {
+    let record: ProposedRecord
+
+    var body: some View {
+        HStack(spacing: 12) {
+            FactChip(label: "Status", value: record.status)
+            FactChip(label: "Batch", value: "#\(record.batch_id)")
+            FactChip(label: "Confidence", value: String(format: "%.2f", record.confidence))
+        }
+    }
+}
+
+private struct FactChip: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.body.weight(.medium))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+private struct DetailContentRow: View {
     let label: String
     let value: String
 
     var body: some View {
         if !value.isEmpty {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+            LabeledContent(label) {
                 Text(value)
-                    .font(.caption)
                     .textSelection(.enabled)
+                    .multilineTextAlignment(.trailing)
             }
         }
     }
 }
 
-private struct DetailBlock: View {
-    let label: String
-    let value: String
+private struct SettingsView: View {
+    @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.caption)
-                .textSelection(.enabled)
+        VStack(spacing: 0) {
+            Form {
+                Section("OpenAI") {
+                    SecureField("OpenAI API Key", text: $model.settingsDraftOpenAIKey)
+                    Picker("Model", selection: $model.settingsDraftOpenAIModelPreset) {
+                        ForEach(OpenAIModelPreset.allCases) { preset in
+                            Text(preset.displayName).tag(preset)
+                        }
+                    }
+                    if model.settingsDraftOpenAIModelPreset == .custom {
+                        TextField("Custom model name", text: $model.settingsDraftCustomOpenAIModel)
+                    }
+                }
+
+                Section("Current Configuration") {
+                    LabeledContent("Effective model") {
+                        Text(model.effectiveOpenAIModel)
+                    }
+                    LabeledContent("Model source") {
+                        Text(model.effectiveOpenAIModelSource)
+                    }
+                    LabeledContent("Workspace") {
+                        Text(model.settings.workspace_path.isEmpty ? "Unavailable" : model.settings.workspace_path)
+                            .textSelection(.enabled)
+                    }
+                }
+
+                Section {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("The OpenAI key is stored only in macOS Keychain. The selected model is stored in local app preferences.")
+                        if !model.settingsStatusMessage.isEmpty {
+                            Text(model.settingsStatusMessage)
+                        }
+                    }
+                }
+            }
+            .formStyle(.grouped)
+
+            Divider()
+
+            HStack {
+                Button("Clear Key", role: .destructive) {
+                    model.clearSavedKey()
+                }
+                .disabled(!model.hasSavedOpenAIKey && model.trimmedDraftOpenAIKey.isEmpty)
+
+                Spacer()
+
+                Button("Revert") {
+                    model.revertSettings()
+                }
+                .disabled(!model.isSettingsDirty)
+
+                Button(model.isSettingsDirty ? "Save" : "Done") {
+                    if model.saveSettings() {
+                        closeSettingsWindow()
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!model.canSaveSettings)
+            }
+            .padding(20)
+        }
+        .frame(width: 520)
+    }
+}
+
+private struct MenuBarMenuView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                presentImporterWindow(openWindow)
+            } label: {
+                Label("Open Importer", systemImage: "square.and.arrow.down")
+            }
+
+            Button {
+                presentSettingsWindow(openWindow)
+            } label: {
+                Label("Settings…", systemImage: "gearshape")
+            }
+
+            Divider()
+
+            Button {
+                model.quitApplication()
+            } label: {
+                Label("Quit aaajiao Importer", systemImage: "power")
+            }
         }
     }
 }
 
 private struct AppCommands: Commands {
     @ObservedObject var model: AppModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") {
+                presentSettingsWindow(openWindow)
+            }
+            .keyboardShortcut(",", modifiers: [.command])
+        }
+
         CommandMenu("Actions") {
             Button("Refresh") {
                 model.refreshFromUI()
@@ -861,13 +1038,22 @@ struct AaajiaoImporterApp: App {
 
     var body: some Scene {
         MenuBarExtra("aaajiao Importer", systemImage: "tray.full") {
+            MenuBarMenuView()
+                .environmentObject(model)
+        }
+
+        Window("Importer", id: importerWindowID) {
             ContentView()
                 .environmentObject(model)
         }
-        .menuBarExtraStyle(.window)
-
         .commands {
             AppCommands(model: model)
         }
+
+        Window("Settings", id: settingsWindowID) {
+            SettingsView()
+                .environmentObject(model)
+        }
+        .windowResizability(.contentSize)
     }
 }
