@@ -1,0 +1,87 @@
+import Foundation
+
+struct ProposedRecord: Codable, Identifiable, Hashable {
+    let id: Int
+    let batch_id: Int
+    let url: String
+    let slug: String
+    let status: String
+    let page_type: String
+    let confidence: Double
+    let is_update: Bool
+    let title: String
+    let title_cn: String
+    let year: String
+    let type: String
+    let materials: String
+    let size: String
+    let duration: String
+    let credits: String
+    let description_en: String
+    let description_cn: String
+    let error_message: String?
+
+    var displayTitle: String {
+        title.isEmpty ? slug : title
+    }
+}
+
+struct BatchSummary: Codable, Identifiable, Hashable {
+    let id: Int
+    let mode: String
+    let status: String
+    let total_records: Int
+    let accepted_records: Int
+    let ready_records: Int
+    let last_error: String
+}
+
+struct ApplyPreview: Codable, Hashable {
+    let batch_id: Int
+    let accepted_count: Int
+    let new_count: Int
+    let updated_count: Int
+    let target_files: [String]
+    let will_push: Bool
+    let error_message: String
+}
+
+struct AppSettings: Codable, Hashable {
+    let workspace_path: String
+    let repo_path: String
+    let has_openai_key: Bool
+
+    static let empty = AppSettings(workspace_path: "", repo_path: "", has_openai_key: false)
+}
+
+struct BootstrapResponse: Codable {
+    let settings: AppSettings
+    let status: String
+}
+
+struct PendingRecordsResponse: Codable {
+    let settings: AppSettings
+    let batches: [BatchSummary]
+    let pending_records: [ProposedRecord]
+}
+
+struct RecordStatusResponse: Codable {
+    let id: Int
+    let status: String
+}
+
+struct StartSyncResponse: Codable {
+    let batch_id: Int
+    let urls_processed: Int
+}
+
+struct SubmitURLResponse: Codable {
+    let batch_id: Int
+    let url: String
+}
+
+struct ApplyResponse: Codable {
+    let batch_id: Int
+    let applied_commit_sha: String
+    let preview: ApplyPreview
+}

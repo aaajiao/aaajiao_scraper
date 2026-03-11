@@ -1,5 +1,6 @@
 #!/bin/zsh
 set -euo pipefail
+setopt null_glob
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MACOS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -52,7 +53,7 @@ cp -R "${MACOS_DIR}/Seed" "${APP_RESOURCES}/Seed"
 
 echo "Compiling menu bar app..."
 SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
-SWIFT_FILES=("${MACOS_DIR}/App/main.swift" "${MACOS_DIR}/App/Keychain.swift")
+SWIFT_FILES=("${MACOS_DIR}"/App/*.swift "${MACOS_DIR}"/Shared/*.swift)
 xcrun swiftc \
   -parse-as-library \
   -target arm64-apple-macos13.0 \

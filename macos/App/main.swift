@@ -2,93 +2,72 @@ import AppKit
 import Foundation
 import SwiftUI
 
-struct ProposedRecord: Codable, Identifiable {
-    let id: Int
-    let batch_id: Int
-    let url: String
-    let slug: String
-    let status: String
-    let page_type: String
-    let confidence: Double
-    let is_update: Bool
-    let title: String
-    let title_cn: String
-    let year: String
-    let type: String
-    let materials: String
-    let size: String
-    let duration: String
-    let credits: String
-    let description_en: String
-    let description_cn: String
-    let error_message: String?
-}
-
-struct BatchSummary: Codable, Identifiable {
-    let id: Int
-    let mode: String
-    let status: String
-    let total_records: Int
-    let accepted_records: Int
-    let ready_records: Int
-}
-
-struct OverviewResponse: Codable {
-    let batches: [BatchSummary]
-    let pending_records: [ProposedRecord]
-    let workspace: String
-}
-
-enum PythonCommandError: Error {
-    case missingResources
-    case nonZeroExit(String)
-    case decodeFailure(String)
-}
-
 @MainActor
 final class AppModel: ObservableObject {
     @Published var manualURL = ""
     @Published var openAIKey = ""
     @Published var batches: [BatchSummary] = []
     @Published var pendingRecords: [ProposedRecord] = []
+    @Published var selectedRecordID: Int?
+    @Published var applyPreview: ApplyPreview?
+    @Published var previewBatchID: Int?
+    @Published var pendingApplyBatch: BatchSummary?
+    @Published var isShowingApplyConfirmation = false
     @Published var statusMessage = "Ready"
-    @Published var workspacePath = ""
+    @Published var settings = AppSettings.empty
+
+    private let helper = HelperClient()
 
     init() {
         openAIKey = KeychainStore.load()
     }
 
+    var selectedRecord: ProposedRecord? {
+        pendingRecords.first { $0.id == selectedRecordID }
+    }
+
     func bootstrapAndRefresh() {
         Task {
             do {
-                if !openAIKey.isEmpty {
-                    try KeychainStore.save(openAIKey)
-                }
-                _ = try runPython(arguments: ["bootstrap"])
+                try saveKeyIfNeeded()
+                let response = try helper.bootstrapWorkspace(openAIKey: openAIKey)
+                settings = response.settings
                 try await refresh()
             } catch {
-                statusMessage = error.localizedDescription
+                statusMessage = display(error)
             }
         }
     }
 
     func refresh() async throws {
-        let data = try runPython(arguments: ["overview"])
-        let overview = try JSONDecoder().decode(OverviewResponse.self, from: data)
-        batches = overview.batches
-        pendingRecords = overview.pending_records
-        workspacePath = overview.workspace
-        statusMessage = "Loaded \(pendingRecords.count) pending records"
+        let response = try helper.listPendingRecords(openAIKey: openAIKey)
+        settings = response.settings
+        batches = response.batches
+        pendingRecords = response.pending_records
+
+        if let selectedRecordID, pendingRecords.contains(where: { $0.id == selectedRecordID }) {
+            self.selectedRecordID = selectedRecordID
+        } else {
+            selectedRecordID = pendingRecords.first?.id
+        }
+
+        if let previewBatchID, !batches.contains(where: { $0.id == previewBatchID }) {
+            self.previewBatchID = nil
+            applyPreview = nil
+        }
+
+        statusMessage = pendingRecords.isEmpty ? "No pending records" : "Loaded \(pendingRecords.count) review records"
     }
 
     func startSync() {
         Task {
             do {
                 try saveKeyIfNeeded()
-                _ = try runPython(arguments: ["start-incremental-sync"])
+                let result = try helper.startIncrementalSync(openAIKey: openAIKey)
                 try await refresh()
+                statusMessage = "Synced \(result.urls_processed) URLs into batch #\(result.batch_id)"
             } catch {
-                statusMessage = error.localizedDescription
+                statusMessage = display(error)
             }
         }
     }
@@ -99,86 +78,86 @@ final class AppModel: ObservableObject {
         Task {
             do {
                 try saveKeyIfNeeded()
-                _ = try runPython(arguments: ["submit-url", "--url", trimmed])
+                let result = try helper.submitManualURL(trimmed, openAIKey: openAIKey)
                 manualURL = ""
                 try await refresh()
+                statusMessage = "Queued \(result.url) in batch #\(result.batch_id)"
             } catch {
-                statusMessage = error.localizedDescription
+                statusMessage = display(error)
             }
         }
     }
 
-    func setRecordStatus(id: Int, status: String) {
+    func acceptSelectedRecord() {
+        guard let record = selectedRecord else { return }
         Task {
             do {
-                _ = try runPython(arguments: ["set-record-status", "--id", "\(id)", "--status", status])
+                _ = try helper.acceptRecord(id: record.id, openAIKey: openAIKey)
                 try await refresh()
+                statusMessage = "Accepted record #\(record.id)"
             } catch {
-                statusMessage = error.localizedDescription
+                statusMessage = display(error)
             }
         }
     }
 
-    func applyBatch(id: Int) {
+    func rejectSelectedRecord() {
+        guard let record = selectedRecord else { return }
         Task {
             do {
-                _ = try runPython(arguments: ["apply-accepted", "--batch-id", "\(id)"])
+                _ = try helper.rejectRecord(id: record.id, openAIKey: openAIKey)
                 try await refresh()
+                statusMessage = "Rejected record #\(record.id)"
             } catch {
-                statusMessage = error.localizedDescription
+                statusMessage = display(error)
+            }
+        }
+    }
+
+    func loadApplyPreview(for batch: BatchSummary) {
+        Task {
+            do {
+                let preview = try helper.getApplyPreview(batchID: batch.id, openAIKey: openAIKey)
+                previewBatchID = batch.id
+                applyPreview = preview
+                statusMessage = preview.error_message.isEmpty ? "Preview ready for batch #\(batch.id)" : preview.error_message
+            } catch {
+                statusMessage = display(error)
+            }
+        }
+    }
+
+    func requestApply(batch: BatchSummary) {
+        pendingApplyBatch = batch
+        isShowingApplyConfirmation = true
+    }
+
+    func confirmApply() {
+        guard let batch = pendingApplyBatch else { return }
+        Task {
+            do {
+                let result = try helper.applyAcceptedRecords(batchID: batch.id, openAIKey: openAIKey)
+                isShowingApplyConfirmation = false
+                pendingApplyBatch = nil
+                applyPreview = result.preview
+                previewBatchID = result.batch_id
+                try await refresh()
+                statusMessage = "Applied batch #\(result.batch_id) at \(result.applied_commit_sha)"
+            } catch {
+                statusMessage = display(error)
             }
         }
     }
 
     private func saveKeyIfNeeded() throws {
-        guard !openAIKey.isEmpty else { return }
+        if openAIKey.isEmpty {
+            return
+        }
         try KeychainStore.save(openAIKey)
     }
 
-    private func runPython(arguments: [String]) throws -> Data {
-        guard let resourcesURL = Bundle.main.resourceURL else {
-            throw PythonCommandError.missingResources
-        }
-
-        let pythonCandidates = [
-            resourcesURL.appendingPathComponent("python_runtime/bin/python3").path,
-            resourcesURL.appendingPathComponent("python_runtime/bin/python3.9").path,
-            resourcesURL.appendingPathComponent("python_runtime/bin/python").path
-        ]
-        guard let pythonPath = pythonCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
-            throw PythonCommandError.missingResources
-        }
-
-        let enginePath = resourcesURL.appendingPathComponent("engine/aaajiao_importer.py").path
-        let sitePackages = resourcesURL.appendingPathComponent("python_runtime/lib/python3.9/site-packages").path
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: pythonPath)
-        process.arguments = [enginePath] + arguments
-        process.environment = [
-            "AAAJIAO_IMPORTER_BUNDLE_ROOT": resourcesURL.path,
-            "AAAJIAO_REPO_ROOT": "/Users/aaajiao/Documents/aaajiao_scraper",
-            "PYTHONNOUSERSITE": "1",
-            "PYTHONPATH": sitePackages,
-            "OPENAI_API_KEY": openAIKey,
-        ].merging(ProcessInfo.processInfo.environment) { new, _ in new }
-
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-
-        try process.run()
-        process.waitUntilExit()
-
-        let output = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errorData = stderr.fileHandleForReading.readDataToEndOfFile()
-
-        guard process.terminationStatus == 0 else {
-            let err = String(data: errorData, encoding: .utf8) ?? "Python engine failed"
-            throw PythonCommandError.nonZeroExit(err)
-        }
-
-        return output
+    private func display(_ error: Error) -> String {
+        error.localizedDescription
     }
 }
 
@@ -195,7 +174,15 @@ struct ContentView: View {
 
             HStack {
                 Button("Start Sync") { model.startSync() }
-                Button("Refresh") { model.bootstrapAndRefresh() }
+                Button("Refresh") {
+                    Task {
+                        do {
+                            try await model.refresh()
+                        } catch {
+                            model.statusMessage = error.localizedDescription
+                        }
+                    }
+                }
             }
 
             HStack {
@@ -204,11 +191,16 @@ struct ContentView: View {
                 Button("Import") { model.submitURL() }
             }
 
-            if !model.workspacePath.isEmpty {
-                Text(model.workspacePath)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+            if !model.settings.workspace_path.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(model.settings.workspace_path)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                    Text(model.settings.has_openai_key ? "OpenAI key available" : "OpenAI key missing")
+                        .font(.caption2)
+                        .foregroundColor(model.settings.has_openai_key ? .secondary : .orange)
+                }
             }
 
             Text(model.statusMessage)
@@ -216,60 +208,185 @@ struct ContentView: View {
 
             Divider()
 
-            Text("Pending Records")
-                .font(.subheadline)
-
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
-                    ForEach(model.pendingRecords) { record in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(record.title.isEmpty ? record.slug : record.title)
+            HStack(alignment: .top, spacing: 12) {
+                GroupBox("Review Queue") {
+                    List(model.pendingRecords, selection: $model.selectedRecordID) { record in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(record.displayTitle)
                                 .font(.headline)
-                            if !record.title_cn.isEmpty {
-                                Text(record.title_cn)
-                                    .font(.caption)
-                            }
+                                .lineLimit(2)
+                            Text("\(record.status) · \(record.page_type) · \(String(format: "%.2f", record.confidence))")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                             Text(record.url)
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
-                            Text("type: \(record.page_type)  confidence: \(String(format: "%.2f", record.confidence))  batch: \(record.batch_id)")
-                                .font(.caption2)
-                            if !record.materials.isEmpty {
-                                Text(record.materials)
-                                    .font(.caption2)
-                                    .lineLimit(2)
-                            }
-
-                            HStack {
-                                Button("Accept") { model.setRecordStatus(id: record.id, status: "accepted") }
-                                Button("Reject") { model.setRecordStatus(id: record.id, status: "rejected") }
-                            }
+                                .lineLimit(2)
                         }
-                        .padding(.bottom, 8)
-                        Divider()
+                        .padding(.vertical, 4)
+                    }
+                    .frame(minWidth: 220, minHeight: 260)
+                }
+
+                GroupBox("Record Detail") {
+                    if let record = model.selectedRecord {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text(record.displayTitle)
+                                    .font(.headline)
+                                if !record.title_cn.isEmpty {
+                                    Text(record.title_cn)
+                                        .font(.subheadline)
+                                }
+
+                                DetailLine(label: "Status", value: record.status)
+                                DetailLine(label: "Batch", value: "#\(record.batch_id)")
+                                DetailLine(label: "Confidence", value: String(format: "%.2f", record.confidence))
+                                DetailLine(label: "URL", value: record.url)
+                                DetailLine(label: "Year", value: record.year)
+                                DetailLine(label: "Type", value: record.type)
+                                DetailLine(label: "Materials", value: record.materials)
+                                DetailLine(label: "Size", value: record.size)
+                                DetailLine(label: "Duration", value: record.duration)
+                                DetailLine(label: "Credits", value: record.credits)
+                                DetailLine(label: "Mode", value: record.is_update ? "Update" : "New record")
+
+                                if !record.description_en.isEmpty {
+                                    DetailBlock(label: "Description EN", value: record.description_en)
+                                }
+                                if !record.description_cn.isEmpty {
+                                    DetailBlock(label: "Description CN", value: record.description_cn)
+                                }
+                                if let errorMessage = record.error_message, !errorMessage.isEmpty {
+                                    DetailBlock(label: "Validation Note", value: errorMessage)
+                                }
+
+                                HStack {
+                                    Button("Accept") { model.acceptSelectedRecord() }
+                                        .disabled(record.status == "accepted")
+                                    Button("Reject") { model.rejectSelectedRecord() }
+                                        .disabled(record.status == "rejected")
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    } else {
+                        Text("Select a record to inspect its proposed fields.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                     }
                 }
+                .frame(maxWidth: .infinity, minHeight: 260)
             }
-            .frame(maxHeight: 280)
 
             Divider()
 
-            Text("Batches")
-                .font(.subheadline)
+            GroupBox("Batches") {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(model.batches) { batch in
+                        HStack(alignment: .top) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("#\(batch.id) \(batch.mode)")
+                                    .font(.headline)
+                                Text("\(batch.status) · accepted \(batch.accepted_records) / ready \(batch.ready_records) / total \(batch.total_records)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                if !batch.last_error.isEmpty {
+                                    Text(batch.last_error)
+                                        .font(.caption2)
+                                        .foregroundStyle(.orange)
+                                        .lineLimit(2)
+                                }
+                            }
+                            Spacer()
+                            Button("Preview") { model.loadApplyPreview(for: batch) }
+                                .disabled(batch.accepted_records == 0)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
-            ForEach(model.batches) { batch in
-                HStack {
-                    Text("#\(batch.id) \(batch.mode) \(batch.accepted_records)/\(batch.total_records)")
-                        .font(.caption)
-                    Spacer()
-                    Button("Apply") { model.applyBatch(id: batch.id) }
-                        .disabled(batch.accepted_records == 0)
+            if let preview = model.applyPreview, let batch = model.batches.first(where: { $0.id == preview.batch_id }) {
+                Divider()
+
+                GroupBox("Apply Preview") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        DetailLine(label: "Batch", value: "#\(preview.batch_id)")
+                        DetailLine(label: "Accepted", value: "\(preview.accepted_count)")
+                        DetailLine(label: "New", value: "\(preview.new_count)")
+                        DetailLine(label: "Updated", value: "\(preview.updated_count)")
+                        DetailLine(label: "Will Push", value: preview.will_push ? "Yes" : "No")
+
+                        ForEach(preview.target_files, id: \.self) { file in
+                            Text(file)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if !preview.error_message.isEmpty {
+                            Text(preview.error_message)
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        }
+
+                        Button("Apply Accepted Records") { model.requestApply(batch: batch) }
+                            .disabled(!preview.will_push || preview.accepted_count == 0)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }
         .padding(14)
-        .frame(width: 420)
+        .frame(width: 640)
         .onAppear { model.bootstrapAndRefresh() }
+        .alert("Apply accepted records and push to git?", isPresented: $model.isShowingApplyConfirmation) {
+            Button("Cancel", role: .cancel) {
+                model.pendingApplyBatch = nil
+            }
+            Button("Apply", role: .destructive) {
+                model.confirmApply()
+            }
+        } message: {
+            if let batch = model.pendingApplyBatch {
+                Text("Batch #\(batch.id) will update aaajiao_works.json and aaajiao_portfolio.md, then commit and push.")
+            }
+        }
+    }
+}
+
+private struct DetailLine: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        if !value.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .font(.caption)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+}
+
+private struct DetailBlock: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.caption)
+                .textSelection(.enabled)
+        }
     }
 }
 

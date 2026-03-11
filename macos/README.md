@@ -8,6 +8,24 @@ At build time it copies the current `scraper/`, `.cache/`, `aaajiao_works.json`,
 workspace under `~/Library/Application Support/AaajiaoImporter/workspace` and performs all
 processing there until the user explicitly applies accepted changes back to the repository root.
 
+Current flow:
+
+1. Bootstrap a dedicated workspace from bundled seed data.
+2. Run incremental sync or submit a manual artwork URL.
+3. Review `ready_for_review` and `needs_review` records in the menu bar app.
+4. Preview the apply transaction, then explicitly confirm the git writeback.
+
+The helper now exposes the planned command surface:
+
+- `bootstrapWorkspace`
+- `startIncrementalSync`
+- `submitManualURL`
+- `listPendingRecords`
+- `acceptRecord`
+- `rejectRecord`
+- `getApplyPreview`
+- `applyAcceptedRecords`
+
 Build locally with:
 
 ```bash
