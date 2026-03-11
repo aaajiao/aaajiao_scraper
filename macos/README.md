@@ -15,6 +15,13 @@ Current flow:
 3. Review `ready_for_review` and `needs_review` records in the menu bar app.
 4. Preview the apply transaction, then explicitly confirm the git writeback.
 
+AI validation is now split into two stages:
+
+1. OpenAI returns a strict structured record schema for `artwork / exhibition / unknown`.
+2. The local helper re-validates slug/title consistency, type-as-title mistakes, contamination
+   signals in materials/descriptions, and required-field completeness before a record can reach
+   `ready_for_review`.
+
 The helper now exposes the planned command surface:
 
 - `bootstrapWorkspace`
@@ -36,6 +43,12 @@ Build scripts:
 ./macos/Build/build_local_app.sh
 ./macos/Build/smoke_test_app.sh
 ./macos/Build/run_acceptance_checks.sh
+```
+
+Release checklist:
+
+```bash
+open macos/Build/RELEASE_CHECKLIST.md
 ```
 
 `prepare_seed.sh` now writes `macos/Seed/seed_manifest.json`.

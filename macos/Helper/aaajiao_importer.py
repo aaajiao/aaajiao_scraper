@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import requests
+from requests import RequestException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
@@ -33,6 +34,35 @@ AUTO_APPLY_CONFIDENCE = 0.85
 SEED_MANIFEST_NAME = "seed_manifest.json"
 WORKSPACE_MANIFEST_NAME = "workspace_manifest.json"
 MANIFEST_VERSION = 1
+AI_VALIDATION_NAME = "aaajiao_artwork_validation"
+AI_VALIDATION_TIMEOUT = 120
+KNOWN_ARTWORK_TYPES = {
+    "installation",
+    "video",
+    "video installation",
+    "performance",
+    "sculpture",
+    "painting",
+    "drawing",
+    "photography",
+    "sound installation",
+    "mixed media",
+    "single channel video",
+    "multi-channel video",
+}
+NORMALIZED_KNOWN_ARTWORK_TYPES = {
+    re.sub(r"[^a-z0-9]+", " ", item.lower()).strip() for item in KNOWN_ARTWORK_TYPES
+}
+AI_VALIDATION_PROMPT = (
+    "You validate one eventstructure.com page for a local artwork importer. "
+    "Return structured JSON only. "
+    "Classify page_type as artwork, exhibition, or unknown. "
+    "Use artwork only when the page is a single artwork page. "
+    "Reject sidebar/navigation pollution, wrong-title pages, cross-work contamination, "
+    "and incomplete records that require manual review. "
+    "Prefer base_data for deterministic fields such as year, type, and images when those fields are present. "
+    "If you are unsure, lower confidence and set should_apply=false with a short rejection_reason."
+)
 
 RECORD_READY_FOR_REVIEW = "ready_for_review"
 RECORD_ACCEPTED = "accepted"
@@ -87,6 +117,16 @@ class AIValidationResult(BaseModel):
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     should_apply: bool = False
     rejection_reason: str = ""
+
+
+class AIValidationCallResult(BaseModel):
+    """Result of one AI validation attempt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    payload: AIValidationResult
+    available: bool = False
+    error_state: str = ""
 
 
 def workspace_root() -> Path:
@@ -621,31 +661,25 @@ def _blank_ai_validation(base_data: Dict[str, Any], rejection_reason: str) -> AI
     )
 
 
-def _call_openai_validation(
-    url: str,
-    base_data: Dict[str, Any],
-    content_block: Dict[str, Any],
-) -> Tuple[AIValidationResult, bool]:
-    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if not api_key:
-        return _blank_ai_validation(base_data, "AI unavailable: missing OPENAI_API_KEY"), False
-
-    model = os.environ.get("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
-    prompt = (
-        "You validate one eventstructure.com page for a local importer. "
-        "Return JSON only. Classify page_type as artwork, exhibition, or unknown. "
-        "Reject navigation/sidebar contamination, wrong-title pages, non-artwork pages, and "
-        "records that should not be committed automatically. Prefer base_data for deterministic "
-        "fields when it conflicts with free text."
-    )
-    payload = {
-        "url": url,
-        "slug": _slug(url),
-        "base_data": base_data,
-        "schema": AIValidationResult.model_json_schema(),
-        "content": content_block,
+def _validation_response_format() -> Dict[str, Any]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": AI_VALIDATION_NAME,
+            "strict": True,
+            "schema": AIValidationResult.model_json_schema(),
+        },
     }
-    response = requests.post(
+
+
+def _post_openai_validation(
+    *,
+    api_key: str,
+    model: str,
+    payload: Dict[str, Any],
+    response_format: Dict[str, Any],
+) -> requests.Response:
+    return requests.post(
         "https://api.openai.com/v1/chat/completions",
         headers={
             "Authorization": f"Bearer {api_key}",
@@ -653,20 +687,74 @@ def _call_openai_validation(
         },
         json={
             "model": model,
-            "response_format": {"type": "json_object"},
+            "response_format": response_format,
             "messages": [
-                {"role": "system", "content": prompt},
+                {"role": "system", "content": AI_VALIDATION_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
             ],
         },
-        timeout=120,
+        timeout=AI_VALIDATION_TIMEOUT,
     )
-    response.raise_for_status()
-    content = response.json()["choices"][0]["message"]["content"]
+
+
+def _call_openai_validation(
+    url: str,
+    base_data: Dict[str, Any],
+    content_block: Dict[str, Any],
+) -> AIValidationCallResult:
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return AIValidationCallResult(
+            payload=_blank_ai_validation(base_data, "AI unavailable: missing OPENAI_API_KEY"),
+            available=False,
+            error_state="ai_unavailable",
+        )
+
+    model = os.environ.get("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
+    payload = {
+        "url": url,
+        "slug": _slug(url),
+        "base_data": base_data,
+        "content": {
+            "main_text": content_block.get("main_text", ""),
+            "images": content_block.get("images", []),
+            "tags_footer": content_block.get("tags_footer", {}),
+            "image_count": len(content_block.get("images", [])),
+        },
+    }
     try:
-        return AIValidationResult.model_validate_json(content), True
+        response = _post_openai_validation(
+            api_key=api_key,
+            model=model,
+            payload=payload,
+            response_format=_validation_response_format(),
+        )
+        if response.status_code == 400 and "json_schema" in response.text.lower():
+            response = _post_openai_validation(
+                api_key=api_key,
+                model=model,
+                payload=payload,
+                response_format={"type": "json_object"},
+            )
+        response.raise_for_status()
+        content = response.json()["choices"][0]["message"]["content"]
+        parsed = AIValidationResult.model_validate_json(content)
+        return AIValidationCallResult(payload=parsed, available=True, error_state="")
     except ValidationError as exc:
-        raise RuntimeError(f"OpenAI validation returned invalid JSON: {exc}") from exc
+        return AIValidationCallResult(
+            payload=_blank_ai_validation(
+                base_data,
+                f"AI validation failed: invalid structured output ({exc.errors()[0]['type']})",
+            ),
+            available=False,
+            error_state="ai_invalid_output",
+        )
+    except (RequestException, KeyError, IndexError, TypeError, ValueError) as exc:
+        return AIValidationCallResult(
+            payload=_blank_ai_validation(base_data, f"AI validation failed: {exc}"),
+            available=False,
+            error_state="ai_request_failed",
+        )
 
 
 def _normalize_compare_text(value: str) -> str:
@@ -684,6 +772,41 @@ def _slug_matches_title(url: str, title: str) -> bool:
     slug_tokens = set(normalized_slug.split())
     title_tokens = set(normalized_title.split())
     return len(slug_tokens & title_tokens) >= min(2, max(1, len(slug_tokens)))
+
+
+def _titles_are_similar(left: str, right: str) -> bool:
+    left_normalized = _normalize_compare_text(left)
+    right_normalized = _normalize_compare_text(right)
+    if not left_normalized or not right_normalized:
+        return False
+    if left_normalized == right_normalized:
+        return True
+    left_tokens = set(left_normalized.split())
+    right_tokens = set(right_normalized.split())
+    overlap = len(left_tokens & right_tokens)
+    return overlap >= min(len(left_tokens), len(right_tokens), 2)
+
+
+def _looks_like_type_string(title: str) -> bool:
+    normalized = _normalize_compare_text(title)
+    return normalized in NORMALIZED_KNOWN_ARTWORK_TYPES
+
+
+def _looks_like_contaminated_text(text: str, current_title: str, url: str) -> bool:
+    normalized = _normalize_string(text)
+    if not normalized:
+        return False
+    lowered = normalized.lower()
+    if "related projects" in lowered or "selected works" in lowered:
+        return True
+    other_url_match = re.search(r"https?://\S+", lowered)
+    if other_url_match and _slug(url) not in lowered:
+        return True
+    if current_title and not _titles_are_similar(current_title, normalized) and _slug(url).replace("-", " ") not in lowered:
+        header_lines = [line.strip() for line in normalized.splitlines()[:3] if line.strip()]
+        if header_lines and any(len(line.split()) <= 6 and line.istitle() for line in header_lines):
+            return True
+    return False
 
 
 def _has_required_artwork_fields(record: Dict[str, Any]) -> bool:
@@ -730,15 +853,26 @@ def _gate_record(
         return page_type, False, reason
     if not ai_available:
         return "artwork", False, validated.rejection_reason or "AI unavailable"
+    if _looks_like_type_string(proposed.get("title", "")):
+        return "artwork", False, "Title looks like an artwork type, not a title"
     if not _slug_matches_title(url, proposed.get("title", "")):
         return "artwork", False, "Title does not match URL slug"
+    base_title = _normalize_string(base_data.get("title"))
+    if base_title and not _titles_are_similar(base_title, proposed.get("title", "")):
+        return "artwork", False, "AI title does not match the local parser title"
+    if _looks_like_contaminated_text(proposed.get("materials", ""), proposed.get("title", ""), url):
+        return "artwork", False, "Materials field looks contaminated by unrelated page content"
+    if _looks_like_contaminated_text(proposed.get("description_en", ""), proposed.get("title", ""), url):
+        return "artwork", False, "English description looks contaminated by unrelated page content"
+    if _looks_like_contaminated_text(proposed.get("description_cn", ""), proposed.get("title", ""), url):
+        return "artwork", False, "Chinese description looks contaminated by unrelated page content"
     if not _has_required_artwork_fields(proposed):
         return "artwork", False, "Artwork record is missing required fields"
     if not validated.should_apply:
         return "artwork", False, validated.rejection_reason or "AI did not approve this record"
     if validated.confidence < AUTO_APPLY_CONFIDENCE:
         return "artwork", False, f"Confidence below threshold ({validated.confidence:.2f})"
-    if _normalize_string(base_data.get("title")) and not _slug_matches_title(url, base_data.get("title", "")):
+    if base_title and not _slug_matches_title(url, base_title):
         return "artwork", False, "Base extraction title does not match URL slug"
     return "artwork", True, ""
 
@@ -771,7 +905,8 @@ def _import_url(url: str, modules: Dict[str, Any]) -> Dict[str, Any]:
             "year": _normalize_string(base_data.get("year")),
         },
     }
-    validated, ai_available = _call_openai_validation(url, base_data, content_block)
+    ai_result = _call_openai_validation(url, base_data, content_block)
+    validated = ai_result.payload
     merged = dict(base_data)
     merged.update(validated.model_dump())
     merged["url"] = url
@@ -782,17 +917,21 @@ def _import_url(url: str, modules: Dict[str, Any]) -> Dict[str, Any]:
         url=url,
         base_data=base_data,
         validated=validated,
-        ai_available=ai_available,
+        ai_available=ai_result.available,
         is_artwork=is_work,
         proposed=proposed,
     )
+    rejection_reason = rejection_reason or validated.rejection_reason
+    if not ai_result.available and ai_result.error_state:
+        rejection_reason = rejection_reason or f"AI validation unavailable ({ai_result.error_state})"
     return {
         "proposed": proposed,
         "page_type": page_type,
         "confidence": float(validated.confidence),
         "should_apply": should_apply,
-        "rejection_reason": rejection_reason or validated.rejection_reason,
-        "ai_available": ai_available,
+        "rejection_reason": rejection_reason,
+        "ai_available": ai_result.available,
+        "ai_error_state": ai_result.error_state,
     }
 
 
