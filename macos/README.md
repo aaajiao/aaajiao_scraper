@@ -44,6 +44,8 @@ Build scripts:
 ./macos/Build/smoke_test_app.sh
 ./macos/Build/run_acceptance_checks.sh
 ./macos/Build/run_git_transaction_checks.sh
+./macos/Build/run_live_import_check.sh
+./macos/Build/check_repo_apply_prereqs.sh
 ```
 
 Release checklist:

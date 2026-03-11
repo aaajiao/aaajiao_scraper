@@ -53,10 +53,7 @@ Expected result:
 Run one real import in a temporary workspace:
 
 ```bash
-TMP_ROOT=/tmp/aaajiao_real_import_check \
-AAAJIAO_IMPORTER_WORKSPACE_ROOT="$TMP_ROOT/workspace" \
-AAAJIAO_REPO_ROOT="/Users/aaajiao/Documents/aaajiao_scraper" \
-"./dist/Aaajiao Importer.app/Contents/MacOS/AaajiaoHelper" submitManualURL --url https://eventstructure.com/Guard-I
+OPENAI_API_KEY=... ./macos/Build/run_live_import_check.sh
 ```
 
 Expected result:
@@ -67,6 +64,7 @@ Expected result:
 ## 6. Final release sanity checks
 
 - Confirm `.app` bundle is not staged for git
+- Run `./macos/Build/check_repo_apply_prereqs.sh`
 - Confirm `seed_manifest.json` shows the intended `source_commit`
 - Confirm `python_runtime.mode` is `wheelhouse` for the final release build
 - Confirm the repo is clean after the final commit
