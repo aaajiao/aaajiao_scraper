@@ -259,11 +259,6 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func openSettings() {
-        NSApp.activate(ignoringOtherApps: true)
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-    }
-
     func quitApplication() {
         NSApplication.shared.terminate(nil)
     }
@@ -342,6 +337,7 @@ private struct HeaderView: View {
 
 private struct StatusSummaryView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         GroupBox("Status") {
@@ -384,7 +380,7 @@ private struct StatusSummaryView: View {
                             .foregroundStyle(.orange)
                         Spacer()
                         Button("Open Settings") {
-                            model.openSettings()
+                            openWindow(id: "settings")
                         }
                     }
                 }
@@ -588,12 +584,13 @@ private struct BatchesSectionView: View {
 
 private struct FooterCommandsView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Divider()
         HStack {
             Button("Settings…") {
-                model.openSettings()
+                openWindow(id: "settings")
             }
             Spacer()
             Button("Quit Aaajiao Importer") {
@@ -718,11 +715,12 @@ private struct DetailBlock: View {
 
 private struct AppCommands: Commands {
     @ObservedObject var model: AppModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
         CommandGroup(replacing: .appSettings) {
             Button("Settings…") {
-                model.openSettings()
+                openWindow(id: "settings")
             }
             .keyboardShortcut(",", modifiers: [.command])
         }
@@ -758,11 +756,13 @@ struct AaajiaoImporterApp: App {
             ContentView()
                 .environmentObject(model)
         }
+        .menuBarExtraStyle(.window)
 
-        Settings {
+        Window("Settings", id: "settings") {
             SettingsView()
                 .environmentObject(model)
         }
+        .windowResizability(.contentSize)
 
         .commands {
             AppCommands(model: model)
