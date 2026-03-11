@@ -103,7 +103,7 @@ final class AppModel: ObservableObject {
         }
 
         if pendingRecords.isEmpty {
-            statusMessage = hasSavedOpenAIKey ? "No pending records" : "OpenAI key missing. Configure Settings to enable imports."
+            statusMessage = hasSavedOpenAIKey ? "No pending records" : "OpenAI key missing. Save a key to enable imports."
         } else {
             statusMessage = "Loaded \(pendingRecords.count) review records"
         }
@@ -111,7 +111,7 @@ final class AppModel: ObservableObject {
 
     func startSync() {
         guard canRunProtectedActions else {
-            statusMessage = "OpenAI key missing. Open Settings to continue."
+            statusMessage = "OpenAI key missing. Save a key to continue."
             return
         }
         Task {
@@ -145,7 +145,7 @@ final class AppModel: ObservableObject {
 
     func submitURL() {
         guard canRunProtectedActions else {
-            statusMessage = "OpenAI key missing. Open Settings to continue."
+            statusMessage = "OpenAI key missing. Save a key to continue."
             return
         }
         let trimmed = manualURL.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -203,7 +203,7 @@ final class AppModel: ObservableObject {
 
     func requestApply(batch: BatchSummary) {
         guard canRunProtectedActions else {
-            statusMessage = "OpenAI key missing. Open Settings to continue."
+            statusMessage = "OpenAI key missing. Save a key to continue."
             return
         }
         pendingApplyBatch = batch
@@ -280,6 +280,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 14) {
             HeaderView()
             StatusSummaryView()
+            SettingsInlineView()
             PrimaryActionsView()
             ReviewSectionView()
             BatchesSectionView()
@@ -337,7 +338,6 @@ private struct HeaderView: View {
 
 private struct StatusSummaryView: View {
     @EnvironmentObject private var model: AppModel
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         GroupBox("Status") {
@@ -374,15 +374,9 @@ private struct StatusSummaryView: View {
                 }
 
                 if !model.hasSavedOpenAIKey {
-                    HStack {
-                        Text("Imports and apply actions are disabled until an OpenAI key is saved.")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                        Spacer()
-                        Button("Open Settings") {
-                            openWindow(id: "settings")
-                        }
-                    }
+                    Text("Imports and apply actions are disabled until an OpenAI key is saved below.")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -399,6 +393,46 @@ private struct StatusSummaryView: View {
             return "Missing"
         default:
             return "Unknown"
+        }
+    }
+}
+
+private struct SettingsInlineView: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        GroupBox("OpenAI") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .center, spacing: 8) {
+                    SecureField("OpenAI API Key", text: $model.settingsDraftOpenAIKey)
+                        .textFieldStyle(.roundedBorder)
+
+                    Button("Save") {
+                        model.saveSettings()
+                    }
+                    .disabled(!model.isSettingsDirty)
+
+                    Button("Revert") {
+                        model.revertSettings()
+                    }
+                    .disabled(!model.isSettingsDirty)
+
+                    Button("Clear", role: .destructive) {
+                        model.clearSavedKey()
+                    }
+                    .disabled(!model.hasSavedOpenAIKey && model.trimmedDraftOpenAIKey.isEmpty)
+                }
+
+                Text("The key is stored only in your macOS Keychain and injected into the bundled Python helper at runtime.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+
+                if !model.settingsStatusMessage.isEmpty {
+                    Text(model.settingsStatusMessage)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
     }
 }
@@ -584,62 +618,15 @@ private struct BatchesSectionView: View {
 
 private struct FooterCommandsView: View {
     @EnvironmentObject private var model: AppModel
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Divider()
         HStack {
-            Button("Settings…") {
-                openWindow(id: "settings")
-            }
-            Spacer()
             Button("Quit Aaajiao Importer") {
                 model.quitApplication()
             }
+            Spacer()
         }
-    }
-}
-
-private struct SettingsView: View {
-    @EnvironmentObject private var model: AppModel
-
-    var body: some View {
-        Form {
-            Section("OpenAI") {
-                SecureField("OpenAI API Key", text: $model.settingsDraftOpenAIKey)
-                    .textFieldStyle(.roundedBorder)
-                Text("The key is stored only in your macOS Keychain and is injected into the bundled Python helper at runtime.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                HStack {
-                    Button("Save") {
-                        model.saveSettings()
-                    }
-                    .keyboardShortcut("s", modifiers: [.command])
-                    .disabled(!model.isSettingsDirty)
-
-                    Button("Revert") {
-                        model.revertSettings()
-                    }
-                    .disabled(!model.isSettingsDirty)
-
-                    Button("Clear Saved Key", role: .destructive) {
-                        model.clearSavedKey()
-                    }
-                    .disabled(!model.hasSavedOpenAIKey && model.trimmedDraftOpenAIKey.isEmpty)
-                }
-
-                if !model.settingsStatusMessage.isEmpty {
-                    Text(model.settingsStatusMessage)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .formStyle(.grouped)
-        .padding(20)
-        .frame(width: 460)
     }
 }
 
@@ -715,16 +702,8 @@ private struct DetailBlock: View {
 
 private struct AppCommands: Commands {
     @ObservedObject var model: AppModel
-    @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
-        CommandGroup(replacing: .appSettings) {
-            Button("Settings…") {
-                openWindow(id: "settings")
-            }
-            .keyboardShortcut(",", modifiers: [.command])
-        }
-
         CommandMenu("Actions") {
             Button("Refresh") {
                 model.refreshFromUI()
@@ -757,12 +736,6 @@ struct AaajiaoImporterApp: App {
                 .environmentObject(model)
         }
         .menuBarExtraStyle(.window)
-
-        Window("Settings", id: "settings") {
-            SettingsView()
-                .environmentObject(model)
-        }
-        .windowResizability(.contentSize)
 
         .commands {
             AppCommands(model: model)
