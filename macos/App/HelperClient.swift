@@ -108,6 +108,16 @@ final class HelperClient {
         )
     }
 
+    func deleteBatch(batchID: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> DeleteBatchResponse {
+        try runCommand(
+            arguments: ["deleteBatch", "--batch-id", "\(batchID)"],
+            openAIKey: openAIKey,
+            openAIModel: openAIModel,
+            openAIModelSource: openAIModelSource,
+            as: DeleteBatchResponse.self
+        )
+    }
+
     private func runCommand<T: Decodable>(
         arguments: [String],
         openAIKey: String,

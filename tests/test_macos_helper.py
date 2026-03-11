@@ -89,3 +89,58 @@ def test_retry_with_json_object_only_for_unsupported_schema_models():
 
     assert helper._should_retry_with_json_object(unsupported) is True
     assert helper._should_retry_with_json_object(invalid_schema) is False
+
+
+def test_delete_batch_removes_records_and_batch(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("AAAJIAO_IMPORTER_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+
+    batch_id = helper._create_batch("manual")
+    helper._insert_record(
+        batch_id=batch_id,
+        url="https://eventstructure.com/test-work",
+        status=helper.RECORD_REJECTED,
+        page_type="artwork",
+        confidence=0.0,
+        is_update=False,
+        proposed={"title": "Test Work", "url": "https://eventstructure.com/test-work"},
+        error="Rejected for test",
+    )
+
+    response = helper.delete_batch(batch_id)
+
+    assert response == {"batch_id": batch_id, "deleted_records": 1}
+    with helper.connect_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM batches WHERE id = ?", (batch_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM records WHERE batch_id = ?", (batch_id,)).fetchone()[0] == 0
+
+
+def test_ensure_workspace_auto_realigns_seed_when_no_activity(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    workspace_root = tmp_path / "workspace"
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(workspace_root))
+
+    original_load_seed_manifest = helper._load_seed_manifest
+    helper.ensure_workspace()
+
+    def old_manifest():
+        manifest = original_load_seed_manifest()
+        manifest["seed_version"] = "seed-old"
+        return manifest
+
+    def new_manifest():
+        manifest = original_load_seed_manifest()
+        manifest["seed_version"] = "seed-new"
+        return manifest
+
+    helper._load_seed_manifest = old_manifest
+    helper.ensure_workspace()
+    helper._load_seed_manifest = new_manifest
+
+    status = helper.ensure_workspace()
+    workspace_manifest = helper._load_json(helper.workspace_manifest_path())
+
+    assert status == "ready"
+    assert workspace_manifest["workspace_status"] == "ready"
+    assert workspace_manifest["workspace_seed_version"] == "seed-new"

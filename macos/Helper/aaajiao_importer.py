@@ -251,16 +251,31 @@ def _load_seed_manifest() -> Dict[str, Any]:
     return _fallback_seed_manifest()
 
 
-def _copy_seed_payload() -> None:
-    snapshot_root().mkdir(parents=True, exist_ok=True)
-    if not (snapshot_root() / "scraper").exists():
-        shutil.copytree(seed_snapshot_root() / "scraper", snapshot_root() / "scraper", dirs_exist_ok=True)
-    if not (workspace_root() / ".cache").exists():
-        shutil.copytree(seed_root() / "cache", workspace_root() / ".cache", dirs_exist_ok=True)
+def _copy_seed_payload(*, overwrite: bool = False) -> None:
+    snapshot_path = snapshot_root()
+    cache_path = workspace_root() / ".cache"
+    if overwrite:
+        shutil.rmtree(snapshot_path, ignore_errors=True)
+        shutil.rmtree(cache_path, ignore_errors=True)
+        for name in TARGET_FILES:
+            (workspace_root() / name).unlink(missing_ok=True)
+
+    snapshot_path.mkdir(parents=True, exist_ok=True)
+    if overwrite or not (snapshot_path / "scraper").exists():
+        shutil.copytree(seed_snapshot_root() / "scraper", snapshot_path / "scraper", dirs_exist_ok=True)
+    if overwrite or not cache_path.exists():
+        shutil.copytree(seed_root() / "cache", cache_path, dirs_exist_ok=True)
     for name in TARGET_FILES:
         target = workspace_root() / name
-        if not target.exists():
+        if overwrite or not target.exists():
             shutil.copy2(seed_root() / name, target)
+
+
+def _workspace_has_local_activity() -> bool:
+    with sqlite3.connect(db_path()) as conn:
+        batches = conn.execute("SELECT COUNT(*) FROM batches").fetchone()[0]
+        records = conn.execute("SELECT COUNT(*) FROM records").fetchone()[0]
+    return bool(batches or records)
 
 
 def _write_workspace_manifest(
@@ -307,6 +322,10 @@ def ensure_workspace() -> str:
     if not workspace_seed_version:
         workspace_seed_version = bundle_seed_version
     workspace_status = "ready" if workspace_seed_version == bundle_seed_version else "seed_version_mismatch"
+    if workspace_status == "seed_version_mismatch" and not _workspace_has_local_activity():
+        _copy_seed_payload(overwrite=True)
+        workspace_seed_version = bundle_seed_version
+        workspace_status = "ready"
     _write_workspace_manifest(
         seed_manifest,
         workspace_status=workspace_status,
@@ -1336,6 +1355,20 @@ def apply_accepted_records(batch_id: int, dry_run: bool = False) -> Dict[str, An
     return {"batch_id": batch_id, "applied_commit_sha": sha, "preview": preview, "dry_run": False}
 
 
+def delete_batch(batch_id: int) -> Dict[str, Any]:
+    with connect_db() as conn:
+        row = conn.execute("SELECT id FROM batches WHERE id = ?", (batch_id,)).fetchone()
+        if row is None:
+            raise RuntimeError(f"Batch {batch_id} not found")
+        deleted_records = conn.execute(
+            "SELECT COUNT(*) FROM records WHERE batch_id = ?",
+            (batch_id,),
+        ).fetchone()[0]
+        conn.execute("DELETE FROM records WHERE batch_id = ?", (batch_id,))
+        conn.execute("DELETE FROM batches WHERE id = ?", (batch_id,))
+    return {"batch_id": batch_id, "deleted_records": int(deleted_records)}
+
+
 def list_pending_records() -> Dict[str, Any]:
     ensure_workspace()
     with connect_db() as conn:
@@ -1373,6 +1406,9 @@ def parse_args() -> argparse.Namespace:
     preview = sub.add_parser("getApplyPreview")
     preview.add_argument("--batch-id", type=int, required=True)
 
+    delete_batch_parser = sub.add_parser("deleteBatch")
+    delete_batch_parser.add_argument("--batch-id", type=int, required=True)
+
     apply_batch = sub.add_parser("applyAcceptedRecords", aliases=["apply-accepted"])
     apply_batch.add_argument("--batch-id", type=int, required=True)
     apply_batch.add_argument("--dry-run", action="store_true")
@@ -1401,6 +1437,8 @@ def main() -> None:
         result = reject_record(args.id)
     elif args.command == "getApplyPreview":
         result = get_apply_preview(args.batch_id)
+    elif args.command == "deleteBatch":
+        result = delete_batch(args.batch_id)
     elif args.command in {"applyAcceptedRecords", "apply-accepted"}:
         result = apply_accepted_records(args.batch_id, dry_run=bool(args.dry_run))
     elif args.command == "set-record-status":

@@ -99,3 +99,8 @@ struct ApplyResponse: Codable {
     let applied_commit_sha: String
     let preview: ApplyPreview
 }
+
+struct DeleteBatchResponse: Codable {
+    let batch_id: Int
+    let deleted_records: Int
+}

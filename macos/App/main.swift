@@ -46,10 +46,13 @@ final class AppModel: ObservableObject {
     @Published var batches: [BatchSummary] = []
     @Published var pendingRecords: [ProposedRecord] = []
     @Published var selectedRecordID: Int?
+    @Published var selectedBatchID: Int?
     @Published var applyPreview: ApplyPreview?
     @Published var previewBatchID: Int?
     @Published var pendingApplyBatch: BatchSummary?
+    @Published var pendingDeleteBatch: BatchSummary?
     @Published var isShowingApplyConfirmation = false
+    @Published var isShowingDeleteConfirmation = false
     @Published var isShowingResetConfirmation = false
     @Published var statusMessage = "Ready"
     @Published var settings = AppSettings.empty
@@ -122,6 +125,12 @@ final class AppModel: ObservableObject {
         hasSavedOpenAIKey
     }
 
+    var visiblePendingRecords: [ProposedRecord] {
+        guard let selectedBatchID else { return pendingRecords }
+        let filtered = pendingRecords.filter { $0.batch_id == selectedBatchID }
+        return filtered.isEmpty ? pendingRecords : filtered
+    }
+
     func bootstrapIfNeeded() {
         guard !hasBootstrapped else { return }
         hasBootstrapped = true
@@ -142,7 +151,7 @@ final class AppModel: ObservableObject {
                 if response.status == "initialized" {
                     statusMessage = "Workspace initialized from bundled seed"
                 } else if response.status == "seed_version_mismatch" {
-                    statusMessage = "Workspace seed differs from bundled seed. Manual reset required."
+                    statusMessage = "Bundled snapshot changed. Reset Workspace only if you want to replace the current local snapshot."
                 }
             } catch {
                 statusMessage = display(error)
@@ -171,15 +180,20 @@ final class AppModel: ObservableObject {
         pendingRecords = response.pending_records
         syncDraftWithSavedSettingsIfNeeded()
 
-        if let selectedRecordID, pendingRecords.contains(where: { $0.id == selectedRecordID }) {
-            self.selectedRecordID = selectedRecordID
-        } else {
-            selectedRecordID = pendingRecords.first?.id
-        }
-
         if let previewBatchID, !batches.contains(where: { $0.id == previewBatchID }) {
             self.previewBatchID = nil
             applyPreview = nil
+        }
+
+        if let selectedBatchID, !batches.contains(where: { $0.id == selectedBatchID }) {
+            self.selectedBatchID = nil
+        }
+
+        let visibleRecords = visiblePendingRecords
+        if let selectedRecordID, visibleRecords.contains(where: { $0.id == selectedRecordID }) {
+            self.selectedRecordID = selectedRecordID
+        } else {
+            self.selectedRecordID = visibleRecords.first?.id ?? pendingRecords.first?.id
         }
 
         if pendingRecords.isEmpty {
@@ -309,6 +323,27 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func focusBatch(_ batch: BatchSummary) {
+        selectedBatchID = batch.id
+        if let firstRecord = pendingRecords.first(where: { $0.batch_id == batch.id }) {
+            selectedRecordID = firstRecord.id
+            let reviewCount = pendingRecords.filter { $0.batch_id == batch.id }.count
+            statusMessage = "Showing \(reviewCount) review records for batch #\(batch.id)"
+        } else {
+            statusMessage = "Batch #\(batch.id) has no review records."
+        }
+    }
+
+    func clearBatchFilter() {
+        selectedBatchID = nil
+        if let selectedRecordID, pendingRecords.contains(where: { $0.id == selectedRecordID }) {
+            self.selectedRecordID = selectedRecordID
+        } else {
+            selectedRecordID = pendingRecords.first?.id
+        }
+        statusMessage = pendingRecords.isEmpty ? "No pending records" : "Showing all review records"
+    }
+
     func requestApply(batch: BatchSummary) {
         guard canRunProtectedActions else {
             statusMessage = "OpenAI key missing. Save a key to continue."
@@ -316,6 +351,11 @@ final class AppModel: ObservableObject {
         }
         pendingApplyBatch = batch
         isShowingApplyConfirmation = true
+    }
+
+    func requestDelete(batch: BatchSummary) {
+        pendingDeleteBatch = batch
+        isShowingDeleteConfirmation = true
     }
 
     func confirmApply() {
@@ -334,6 +374,33 @@ final class AppModel: ObservableObject {
                 previewBatchID = result.batch_id
                 try await refresh()
                 statusMessage = "Applied batch #\(result.batch_id) at \(result.applied_commit_sha)"
+            } catch {
+                statusMessage = display(error)
+            }
+        }
+    }
+
+    func confirmDelete() {
+        guard let batch = pendingDeleteBatch else { return }
+        Task {
+            do {
+                let result = try helper.deleteBatch(
+                    batchID: batch.id,
+                    openAIKey: savedOpenAIKey,
+                    openAIModel: savedOpenAIModelSelection.effectiveModel,
+                    openAIModelSource: savedOpenAIModelSelection.source
+                )
+                isShowingDeleteConfirmation = false
+                pendingDeleteBatch = nil
+                if previewBatchID == result.batch_id {
+                    previewBatchID = nil
+                    applyPreview = nil
+                }
+                if selectedBatchID == result.batch_id {
+                    selectedBatchID = nil
+                }
+                try await refresh()
+                statusMessage = "Deleted batch #\(result.batch_id) and \(result.deleted_records) record(s)"
             } catch {
                 statusMessage = display(error)
             }
@@ -443,6 +510,18 @@ struct ContentView: View {
                 Text("Batch #\(batch.id) will update aaajiao_works.json and aaajiao_portfolio.md, then commit and push.")
             }
         }
+        .alert("Delete batch from local activity?", isPresented: $model.isShowingDeleteConfirmation) {
+            Button("Cancel", role: .cancel) {
+                model.pendingDeleteBatch = nil
+            }
+            Button("Delete", role: .destructive) {
+                model.confirmDelete()
+            }
+        } message: {
+            if let batch = model.pendingDeleteBatch {
+                Text("Batch #\(batch.id) and all of its imported records will be removed from the local importer activity. This does not change the repository.")
+            }
+        }
         .alert("Reset workspace from bundled seed?", isPresented: $model.isShowingResetConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Reset", role: .destructive) {
@@ -542,7 +621,7 @@ private struct ImportActionsView: View {
                     .foregroundStyle(.secondary)
 
                 if let workspaceStatus = model.settings.workspace_status, workspaceStatus == "seed_version_mismatch" {
-                    Text("Workspace seed differs from the bundled seed. Reset the workspace if you want to realign the local snapshot.")
+                    Text("Bundled snapshot changed. Reset Workspace only if you want to replace the current local snapshot with the app's latest bundled copy.")
                         .font(.caption2)
                         .foregroundStyle(.orange)
                 }
@@ -562,7 +641,7 @@ private struct ImportActionsView: View {
         case "ready":
             return "Ready"
         case "seed_version_mismatch":
-            return "Seed mismatch"
+            return "Snapshot changed"
         case "missing":
             return "Missing"
         default:
@@ -576,26 +655,49 @@ private struct ReviewSidebarView: View {
 
     var body: some View {
         Group {
-            if model.pendingRecords.isEmpty {
+            if model.visiblePendingRecords.isEmpty {
                 ContentUnavailablePanel(
                     title: "No review records",
                     message: model.hasSavedOpenAIKey ? "Run a sync or import a URL to populate the review queue." : "Save an OpenAI key in Settings to enable imports."
                 )
             } else {
-                List(selection: $model.selectedRecordID) {
-                    Section("Review Queue") {
-                        ForEach(model.pendingRecords) { record in
-                            ReviewRow(record: record)
-                                .tag(record.id)
+                VStack(spacing: 0) {
+                    if let selectedBatchID = model.selectedBatchID {
+                        HStack(spacing: 8) {
+                            Text("Filtered to batch #\(selectedBatchID)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Show All") {
+                                model.clearBatchFilter()
+                            }
+                            .buttonStyle(.link)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.top, 10)
+                    }
+
+                    List(selection: $model.selectedRecordID) {
+                        Section(queueSectionTitle) {
+                            ForEach(model.visiblePendingRecords) { record in
+                                ReviewRow(record: record)
+                                    .tag(record.id)
+                            }
                         }
                     }
+                    .listStyle(.sidebar)
                 }
-                .listStyle(.sidebar)
             }
         }
         .frame(minWidth: 280)
     }
 
+    private var queueSectionTitle: String {
+        if let selectedBatchID = model.selectedBatchID {
+            return "Review Queue · Batch #\(selectedBatchID)"
+        }
+        return "Review Queue"
+    }
 }
 
 private struct DetailWorkspaceView: View {
@@ -638,6 +740,7 @@ private struct RecordDetailCard: View {
             }
 
             QuickFactsGrid(record: record)
+            RecordActionsRow(record: record)
 
             Form {
                 Section("Metadata") {
@@ -692,6 +795,9 @@ private struct BatchActivityCard: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Batch Activity")
                 .font(.headline)
+            Text("Open Queue shows this batch's records for accept/reject. Apply Check shows what would be written if you apply accepted records.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             if model.batches.isEmpty {
                 ContentUnavailablePanel(
@@ -701,24 +807,42 @@ private struct BatchActivityCard: View {
             } else {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(model.batches) { batch in
-                        HStack(alignment: .top, spacing: 12) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("#\(batch.id) \(batch.mode.capitalized)")
-                                    .font(.body.weight(.semibold))
-                                Text("\(batch.status) · accepted \(batch.accepted_records) · ready \(batch.ready_records) · total \(batch.total_records)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                if !batch.last_error.isEmpty {
-                                    Text(batch.last_error)
+                        let reviewCount = model.pendingRecords.filter { $0.batch_id == batch.id }.count
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(alignment: .top, spacing: 12) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("#\(batch.id) \(batch.mode.capitalized)")
+                                        .font(.body.weight(.semibold))
+                                    Text("\(batch.status) · accepted \(batch.accepted_records) · ready \(batch.ready_records) · total \(batch.total_records)")
                                         .font(.caption)
-                                        .foregroundStyle(.orange)
-                                        .lineLimit(2)
+                                        .foregroundStyle(.secondary)
+                                    if reviewCount > 0 {
+                                        Text("\(reviewCount) review record\(reviewCount == 1 ? "" : "s") available")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    if !batch.last_error.isEmpty {
+                                        Text(batch.last_error)
+                                            .font(.caption)
+                                            .foregroundStyle(.orange)
+                                            .lineLimit(2)
+                                    }
+                                }
+                                Spacer()
+                                HStack(spacing: 8) {
+                                    Button("Open Queue") { model.focusBatch(batch) }
+                                        .disabled(reviewCount == 0)
+                                    Button("Apply Check") { model.loadApplyPreview(for: batch) }
+                                    Button("Delete", role: .destructive) { model.requestDelete(batch: batch) }
                                 }
                             }
-                            Spacer()
-                            Button("Preview") { model.loadApplyPreview(for: batch) }
-                                .disabled(batch.accepted_records == 0)
                         }
+                        .padding(12)
+                        .background(
+                            Color(nsColor: .controlBackgroundColor),
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        )
                     }
                 }
             }
@@ -862,6 +986,24 @@ private struct QuickFactsGrid: View {
             FactChip(label: "Batch", value: "#\(record.batch_id)")
             FactChip(label: "Confidence", value: String(format: "%.2f", record.confidence))
         }
+    }
+}
+
+private struct RecordActionsRow: View {
+    let record: ProposedRecord
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if let url = URL(string: record.url), !record.url.isEmpty {
+                Link("Open Source Page", destination: url)
+            }
+            Button("Copy URL") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(record.url, forType: .string)
+            }
+            .disabled(record.url.isEmpty)
+        }
+        .font(.callout)
     }
 }
 
