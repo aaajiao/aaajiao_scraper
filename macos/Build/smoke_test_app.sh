@@ -9,17 +9,10 @@ REPO_ROOT="$(cd "${MACOS_DIR}/.." && pwd)"
 APP_NAME="Aaajiao Importer"
 APP_BUNDLE="${REPO_ROOT}/dist/${APP_NAME}.app"
 APP_RESOURCES="${APP_BUNDLE}/Contents/Resources"
-PYTHON_BIN="${APP_RESOURCES}/python_runtime/bin/python3"
-HELPER_SCRIPT="${APP_RESOURCES}/engine/aaajiao_importer.py"
-SITE_PACKAGES="${APP_RESOURCES}/python_runtime/lib/python3.9/site-packages"
+HELPER_BIN="${APP_BUNDLE}/Contents/MacOS/AaajiaoHelper"
 
-if [[ ! -x "${PYTHON_BIN}" ]]; then
-  echo "Bundled Python runtime not found at ${PYTHON_BIN}" >&2
-  exit 1
-fi
-
-if [[ ! -f "${HELPER_SCRIPT}" ]]; then
-  echo "Bundled helper script not found at ${HELPER_SCRIPT}" >&2
+if [[ ! -x "${HELPER_BIN}" ]]; then
+  echo "Bundled helper bridge not found at ${HELPER_BIN}" >&2
   exit 1
 fi
 
@@ -34,19 +27,13 @@ cleanup() {
 trap cleanup EXIT
 
 echo "Running helper smoke tests..."
-PYTHONNOUSERSITE=1 \
-PYTHONPATH="${SITE_PACKAGES}" \
-AAAJIAO_IMPORTER_BUNDLE_ROOT="${APP_RESOURCES}" \
 AAAJIAO_IMPORTER_WORKSPACE_ROOT="${WORKSPACE_ROOT}" \
 AAAJIAO_REPO_ROOT="${REPO_ROOT}" \
-"${PYTHON_BIN}" "${HELPER_SCRIPT}" bootstrapWorkspace > "${BOOTSTRAP_JSON}"
+"${HELPER_BIN}" bootstrapWorkspace > "${BOOTSTRAP_JSON}"
 
-PYTHONNOUSERSITE=1 \
-PYTHONPATH="${SITE_PACKAGES}" \
-AAAJIAO_IMPORTER_BUNDLE_ROOT="${APP_RESOURCES}" \
 AAAJIAO_IMPORTER_WORKSPACE_ROOT="${WORKSPACE_ROOT}" \
 AAAJIAO_REPO_ROOT="${REPO_ROOT}" \
-"${PYTHON_BIN}" "${HELPER_SCRIPT}" overview > "${OVERVIEW_JSON}"
+"${HELPER_BIN}" overview > "${OVERVIEW_JSON}"
 
 export BOOTSTRAP_JSON OVERVIEW_JSON WORKSPACE_ROOT
 /usr/bin/python3 - <<'PY'

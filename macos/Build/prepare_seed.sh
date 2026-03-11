@@ -12,17 +12,10 @@ PYTHON_SNAPSHOT_DIR="${VENDOR_DIR}/python_snapshot"
 PYTHON_RUNTIME_DIR="${VENDOR_DIR}/python_runtime"
 WHEELHOUSE_DIR="${VENDOR_DIR}/wheelhouse"
 SEED_MANIFEST_PATH="${SEED_DIR}/seed_manifest.json"
+REQUIREMENTS_FILE="${SCRIPT_DIR}/wheelhouse_requirements.txt"
 
 XCODE_PYTHON_ROOT="/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9"
 XCODE_PYTHON_BIN="${XCODE_PYTHON_ROOT}/bin/python3.9"
-
-DEPENDENCIES=(
-  requests
-  beautifulsoup4
-  python-dotenv
-  pydantic
-  "urllib3<2"
-)
 
 runtime_mode="prebuilt_runtime"
 
@@ -50,7 +43,7 @@ if [[ "${#wheel_files[@]}" -gt 0 ]]; then
     --find-links "${WHEELHOUSE_DIR}" \
     --upgrade \
     --target "${PYTHON_RUNTIME_DIR}/lib/python3.9/site-packages" \
-    "${DEPENDENCIES[@]}"
+    -r "${REQUIREMENTS_FILE}"
   runtime_mode="wheelhouse"
 elif [[ -x "${PYTHON_RUNTIME_DIR}/bin/python3.9" ]]; then
   echo "Reusing existing vendored Python runtime..."
@@ -61,7 +54,7 @@ else
 fi
 
 echo "Writing seed manifest..."
-export REPO_ROOT SEED_DIR PYTHON_SNAPSHOT_DIR PYTHON_RUNTIME_DIR WHEELHOUSE_DIR SEED_MANIFEST_PATH runtime_mode
+export REPO_ROOT SEED_DIR PYTHON_SNAPSHOT_DIR PYTHON_RUNTIME_DIR WHEELHOUSE_DIR SEED_MANIFEST_PATH REQUIREMENTS_FILE runtime_mode
 /usr/bin/python3 - <<'PY'
 import hashlib
 import json
@@ -95,6 +88,7 @@ snapshot_dir = Path(os.environ["PYTHON_SNAPSHOT_DIR"]) / "scraper"
 runtime_dir = Path(os.environ["PYTHON_RUNTIME_DIR"])
 wheelhouse_dir = Path(os.environ["WHEELHOUSE_DIR"])
 manifest_path = Path(os.environ["SEED_MANIFEST_PATH"])
+requirements_file = Path(os.environ["REQUIREMENTS_FILE"])
 runtime_mode = os.environ["runtime_mode"]
 
 try:
@@ -153,6 +147,7 @@ manifest = {
         "mode": runtime_mode,
         "wheel_count": len(list(wheelhouse_dir.glob("*.whl"))),
         "python_exists": (runtime_dir / "bin" / "python3.9").exists(),
+        "requirements_sha256": sha256(requirements_file),
     },
 }
 

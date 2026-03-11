@@ -1048,12 +1048,12 @@ def get_apply_preview(batch_id: int) -> Dict[str, Any]:
     return preview
 
 
-def apply_accepted_records(batch_id: int) -> Dict[str, Any]:
+def apply_accepted_records(batch_id: int, dry_run: bool = False) -> Dict[str, Any]:
     ensure_workspace()
     preview = get_apply_preview(batch_id)
     if preview["accepted_count"] == 0:
         raise RuntimeError(preview["error_message"] or "No accepted records in batch")
-    if not preview["will_push"]:
+    if not dry_run and not preview["will_push"]:
         raise RuntimeError(preview["error_message"] or "Repository preflight failed")
 
     with connect_db() as conn:
@@ -1064,6 +1064,22 @@ def apply_accepted_records(batch_id: int) -> Dict[str, Any]:
         _write_workspace_works(merged)
         _generate_workspace_markdown(merged)
         _validate_workspace_outputs()
+
+        if dry_run:
+            with connect_db() as conn:
+                _touch_batch(
+                    conn,
+                    batch_id,
+                    status=BATCH_READY_TO_APPLY,
+                    total_records=len(merged),
+                    last_error="",
+                )
+            return {
+                "batch_id": batch_id,
+                "applied_commit_sha": "",
+                "preview": preview,
+                "dry_run": True,
+            }
 
         with connect_db() as conn:
             _touch_batch(conn, batch_id, status=BATCH_SYNCING_REPO, total_records=len(merged))
@@ -1085,7 +1101,7 @@ def apply_accepted_records(batch_id: int) -> Dict[str, Any]:
             sha=sha,
             last_error="",
         )
-    return {"batch_id": batch_id, "applied_commit_sha": sha, "preview": preview}
+    return {"batch_id": batch_id, "applied_commit_sha": sha, "preview": preview, "dry_run": False}
 
 
 def list_pending_records() -> Dict[str, Any]:
@@ -1127,6 +1143,7 @@ def parse_args() -> argparse.Namespace:
 
     apply_batch = sub.add_parser("applyAcceptedRecords", aliases=["apply-accepted"])
     apply_batch.add_argument("--batch-id", type=int, required=True)
+    apply_batch.add_argument("--dry-run", action="store_true")
 
     legacy_status = sub.add_parser("set-record-status")
     legacy_status.add_argument("--id", type=int, required=True)
@@ -1153,7 +1170,7 @@ def main() -> None:
     elif args.command == "getApplyPreview":
         result = get_apply_preview(args.batch_id)
     elif args.command in {"applyAcceptedRecords", "apply-accepted"}:
-        result = apply_accepted_records(args.batch_id)
+        result = apply_accepted_records(args.batch_id, dry_run=bool(args.dry_run))
     elif args.command == "set-record-status":
         if args.status == RECORD_ACCEPTED:
             result = accept_record(args.id)
