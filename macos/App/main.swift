@@ -48,6 +48,12 @@ enum ImporterFlowState: String {
     case syncing
 }
 
+enum ImporterBusyAction {
+    case importURL
+    case syncSite
+    case syncGitHub
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var manualURL = ""
@@ -56,6 +62,7 @@ final class AppModel: ObservableObject {
     @Published var selectedRecordID: Int?
     @Published var currentApplyPreview: ApplyPreview?
     @Published var currentFlowState: ImporterFlowState = .idle
+    @Published var currentBusyAction: ImporterBusyAction?
     @Published var isShowingApplyConfirmation = false
     @Published var isShowingResetConfirmation = false
     @Published var statusMessage = "Ready"
@@ -123,6 +130,22 @@ final class AppModel: ObservableObject {
 
     var canRunProtectedActions: Bool {
         hasSavedOpenAIKey
+    }
+
+    var isBusy: Bool {
+        currentFlowState == .syncing
+    }
+
+    var isImportingURL: Bool {
+        currentBusyAction == .importURL
+    }
+
+    var isSyncingSite: Bool {
+        currentBusyAction == .syncSite
+    }
+
+    var isSyncingGitHub: Bool {
+        currentBusyAction == .syncGitHub
     }
 
     var currentBatchSummary: BatchSummary? {
@@ -253,6 +276,8 @@ final class AppModel: ObservableObject {
             return
         }
         currentFlowState = .syncing
+        currentBusyAction = .syncSite
+        statusMessage = "Syncing entire site..."
         Task {
             do {
                 let result = try helper.startIncrementalSync(
@@ -264,6 +289,7 @@ final class AppModel: ObservableObject {
                 statusMessage = "Synced \(result.urls_processed) URLs"
             } catch {
                 currentFlowState = .idle
+                currentBusyAction = nil
                 statusMessage = display(error)
             }
         }
@@ -300,6 +326,8 @@ final class AppModel: ObservableObject {
         let trimmed = manualURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         currentFlowState = .syncing
+        currentBusyAction = .importURL
+        statusMessage = "Importing URL..."
         Task {
             do {
                 let result = try helper.submitManualURL(
@@ -313,6 +341,7 @@ final class AppModel: ObservableObject {
                 statusMessage = "Imported \(result.url)"
             } catch {
                 currentFlowState = .idle
+                currentBusyAction = nil
                 statusMessage = display(error)
             }
         }
@@ -397,6 +426,8 @@ final class AppModel: ObservableObject {
     func confirmApply() {
         guard let batchID = currentBatchID else { return }
         currentFlowState = .syncing
+        currentBusyAction = .syncGitHub
+        statusMessage = "Syncing accepted results to GitHub..."
         Task {
             do {
                 let result = try helper.applyAcceptedRecords(
@@ -411,6 +442,7 @@ final class AppModel: ObservableObject {
                 statusMessage = "Synced to GitHub at \(result.applied_commit_sha)"
             } catch {
                 currentFlowState = hasAcceptedRecords ? .readyToSync : .reviewing
+                currentBusyAction = nil
                 statusMessage = display(error)
             }
         }
@@ -492,6 +524,7 @@ final class AppModel: ObservableObject {
             currentApplyPreview = nil
         }
         currentFlowState = flowState(for: detail)
+        currentBusyAction = nil
         if updateStatusMessage {
             statusMessage = "Loaded current results"
         }
@@ -503,6 +536,7 @@ final class AppModel: ObservableObject {
         selectedRecordID = nil
         currentApplyPreview = nil
         currentFlowState = .idle
+        currentBusyAction = nil
     }
 
     private func syncSelection(with records: [ProposedRecord]) {
@@ -685,11 +719,18 @@ private struct ImportURLSection: View {
                             model.submitURL()
                         }
 
-                    Button("Import") {
-                        model.submitURL()
+                    HStack(spacing: 8) {
+                        Button("Import") {
+                            model.submitURL()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.isBusy || !model.canRunProtectedActions || model.manualURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                        if model.isImportingURL {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!model.canRunProtectedActions || model.manualURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
 
                 if !model.hasSavedOpenAIKey {
@@ -724,12 +765,19 @@ private struct SyncSiteSection: View {
 
                 Spacer()
 
-                Button("Sync Entire Site") {
-                    model.startSync()
+                HStack(spacing: 8) {
+                    Button("Sync Entire Site") {
+                        model.startSync()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(model.isBusy || !model.canRunProtectedActions)
+
+                    if model.isSyncingSite {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(!model.canRunProtectedActions)
             }
         }
     }
@@ -833,12 +881,19 @@ private struct GitHubSyncSection: View {
 
                     HStack {
                         Spacer()
-                        Button("Sync to GitHub") {
-                            model.requestApply()
+                        HStack(spacing: 8) {
+                            Button("Sync to GitHub") {
+                                model.requestApply()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                            .disabled(model.isBusy || !model.canRunProtectedActions || !model.canSyncCurrentRun)
+
+                            if model.isSyncingGitHub {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                        .disabled(!model.canRunProtectedActions || !model.canSyncCurrentRun)
                     }
                 } else {
                     ProgressView()

@@ -233,6 +233,39 @@ def _write_json_atomic(path: Path, payload: Dict[str, Any]) -> None:
     temp_path.replace(path)
 
 
+def _workspace_sitemap_cache_path() -> Path:
+    return workspace_root() / ".cache" / "sitemap_lastmod.json"
+
+
+def _load_workspace_sitemap_cache() -> Dict[str, str]:
+    path = _workspace_sitemap_cache_path()
+    if not path.exists():
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _remove_urls_from_incremental_baseline(urls: Iterable[str]) -> None:
+    unique_urls = [url for url in dict.fromkeys(urls) if _normalize_string(url)]
+    if not unique_urls:
+        return
+    path = _workspace_sitemap_cache_path()
+    if not path.exists():
+        return
+    sitemap_cache = _load_workspace_sitemap_cache()
+    changed = False
+    for url in unique_urls:
+        if url in sitemap_cache:
+            sitemap_cache.pop(url, None)
+            changed = True
+    if changed:
+        _write_json_atomic(path, sitemap_cache)
+
+
 def _fallback_seed_manifest() -> Dict[str, Any]:
     works_path = seed_root() / REPO_WORKS
     portfolio_path = seed_root() / REPO_PORTFOLIO
@@ -1356,8 +1389,18 @@ def submit_manual_url(url: str) -> Dict[str, Any]:
 def _set_record_status(record_id: int, status: str) -> Dict[str, Any]:
     if status not in {RECORD_ACCEPTED, RECORD_REJECTED}:
         raise RuntimeError(f"Unsupported status: {status}")
+    deleted_url = ""
+    batch_mode = ""
     with connect_db() as conn:
-        row = conn.execute("SELECT batch_id FROM records WHERE id = ?", (record_id,)).fetchone()
+        row = conn.execute(
+            """
+            SELECT records.batch_id, records.url, batches.mode
+            FROM records
+            JOIN batches ON batches.id = records.batch_id
+            WHERE records.id = ?
+            """,
+            (record_id,),
+        ).fetchone()
         if row is None:
             raise RuntimeError(f"Record {record_id} not found")
         conn.execute(
@@ -1365,6 +1408,10 @@ def _set_record_status(record_id: int, status: str) -> Dict[str, Any]:
             (status, now_iso(), record_id),
         )
         _refresh_batch_status(conn, int(row["batch_id"]))
+        deleted_url = _normalize_string(row["url"])
+        batch_mode = _normalize_string(row["mode"])
+    if status == RECORD_REJECTED and batch_mode == "incremental":
+        _remove_urls_from_incremental_baseline([deleted_url])
     return {"id": record_id, "status": status}
 
 
@@ -1464,11 +1511,19 @@ def apply_accepted_records(batch_id: int, dry_run: bool = False) -> Dict[str, An
 
 
 def delete_batch(batch_id: int) -> Dict[str, Any]:
+    urls_to_restore: List[str] = []
     with connect_db() as conn:
-        row = conn.execute("SELECT id FROM batches WHERE id = ?", (batch_id,)).fetchone()
+        row = conn.execute("SELECT id, mode FROM batches WHERE id = ?", (batch_id,)).fetchone()
         if row is None:
             raise RuntimeError(f"Batch {batch_id} not found")
+        if _normalize_string(row["mode"]) == "incremental":
+            urls_to_restore = [
+                _normalize_string(record_row["url"])
+                for record_row in conn.execute("SELECT url FROM records WHERE batch_id = ?", (batch_id,))
+            ]
     deleted_records = cleanup_batch(batch_id)
+    if urls_to_restore:
+        _remove_urls_from_incremental_baseline(urls_to_restore)
     return {"batch_id": batch_id, "deleted_records": deleted_records}
 
 

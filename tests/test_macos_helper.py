@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 
 from requests import Response
@@ -284,3 +285,67 @@ def test_prune_terminal_batches_removes_completed_and_failed_only(tmp_path, monk
         assert conn.execute("SELECT COUNT(*) FROM batches WHERE id = ?", (completed_batch,)).fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM batches WHERE id = ?", (failed_batch,)).fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM records WHERE batch_id = ?", (active_batch,)).fetchone()[0] == 1
+
+
+def test_reject_record_restores_incremental_url_to_sitemap_cache(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("AAAJIAO_IMPORTER_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+
+    helper.ensure_workspace()
+    sitemap_path = helper.workspace_root() / ".cache" / "sitemap_lastmod.json"
+    url = "https://eventstructure.com/new-work"
+    sitemap_path.write_text(json.dumps({url: "2026-03-12"}), encoding="utf-8")
+
+    batch_id = helper._create_batch("incremental")
+    helper._insert_record(
+        batch_id=batch_id,
+        url=url,
+        status=helper.RECORD_READY_FOR_REVIEW,
+        page_type="artwork",
+        confidence=0.9,
+        is_update=False,
+        proposed={"title": "New Work", "url": url},
+        error=None,
+    )
+    with helper.connect_db() as conn:
+        record_id = conn.execute("SELECT id FROM records WHERE batch_id = ?", (batch_id,)).fetchone()[0]
+
+    helper.reject_record(record_id)
+
+    restored_cache = json.loads(sitemap_path.read_text(encoding="utf-8"))
+    assert url not in restored_cache
+
+
+def test_delete_incremental_batch_restores_all_urls_to_sitemap_cache(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("AAAJIAO_IMPORTER_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+
+    helper.ensure_workspace()
+    sitemap_path = helper.workspace_root() / ".cache" / "sitemap_lastmod.json"
+    first_url = "https://eventstructure.com/first-work"
+    second_url = "https://eventstructure.com/second-work"
+    sitemap_path.write_text(
+        json.dumps({first_url: "2026-03-12", second_url: "2026-03-12"}),
+        encoding="utf-8",
+    )
+
+    batch_id = helper._create_batch("incremental")
+    for url in (first_url, second_url):
+        helper._insert_record(
+            batch_id=batch_id,
+            url=url,
+            status=helper.RECORD_READY_FOR_REVIEW,
+            page_type="artwork",
+            confidence=0.9,
+            is_update=False,
+            proposed={"title": url.rsplit("/", 1)[-1], "url": url},
+            error=None,
+        )
+
+    helper.delete_batch(batch_id)
+
+    restored_cache = json.loads(sitemap_path.read_text(encoding="utf-8"))
+    assert first_url not in restored_cache
+    assert second_url not in restored_cache
