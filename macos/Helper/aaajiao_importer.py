@@ -14,7 +14,6 @@ import shutil
 import sqlite3
 import subprocess
 import sys
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -30,6 +29,7 @@ DEFAULT_OPENAI_MODEL = "gpt-4.1"
 REPO_WORKS = "aaajiao_works.json"
 REPO_PORTFOLIO = "aaajiao_portfolio.md"
 TARGET_FILES = (REPO_WORKS, REPO_PORTFOLIO)
+PUBLISH_REPO_DIR = "publish_repo"
 AUTO_APPLY_CONFIDENCE = 0.85
 SEED_MANIFEST_NAME = "seed_manifest.json"
 WORKSPACE_MANIFEST_NAME = "workspace_manifest.json"
@@ -175,6 +175,10 @@ def seed_root() -> Path:
 
 def snapshot_root() -> Path:
     return workspace_root() / "scraper_snapshot"
+
+
+def publish_repo_root() -> Path:
+    return workspace_root() / PUBLISH_REPO_DIR
 
 
 def seed_snapshot_root() -> Path:
@@ -568,18 +572,18 @@ def _git_output(root: Path, args: List[str], *, env: Optional[Dict[str, str]] = 
     return _run_git(root, args, env=env).stdout.strip()
 
 
-def _repo_is_clean(root: Path) -> bool:
-    return not _git_output(root, ["status", "--porcelain"])
+def _git_output_or_empty(root: Path, args: List[str]) -> str:
+    try:
+        return _git_output(root, args)
+    except subprocess.CalledProcessError:
+        return ""
 
 
 def _git_head(root: Path) -> str:
     return _git_output(root, ["rev-parse", "HEAD"])
 
 
-def _repo_preflight(root: Path) -> Dict[str, str]:
-    if not _repo_is_clean(root):
-        raise RuntimeError("Repository worktree is not clean")
-
+def _repo_publish_config(root: Path) -> Dict[str, str]:
     branch = _git_output(root, ["symbolic-ref", "--quiet", "--short", "HEAD"])
     if not branch:
         raise RuntimeError("Repository is in detached HEAD state")
@@ -588,58 +592,86 @@ def _repo_preflight(root: Path) -> Dict[str, str]:
     if "/" not in upstream:
         raise RuntimeError("Current branch has no upstream configured")
     remote_name, remote_branch = upstream.split("/", 1)
+    remote_url = _git_output(root, ["remote", "get-url", remote_name])
+    if not remote_url:
+        raise RuntimeError(f"Remote '{remote_name}' has no configured URL")
+    user_name = _git_output_or_empty(root, ["config", "--get", "user.name"])
+    user_email = _git_output_or_empty(root, ["config", "--get", "user.email"])
     return {
         "branch": branch,
         "upstream": upstream,
         "remote_name": remote_name,
         "remote_branch": remote_branch,
-        "head": _git_head(root),
+        "remote_url": remote_url,
+        "user_name": user_name,
+        "user_email": user_email,
     }
 
 
-def _create_commit_from_workspace(root: Path, batch_id: int) -> str:
-    with tempfile.NamedTemporaryFile(prefix="aaajiao-importer-index-", delete=False) as handle:
-        index_path = Path(handle.name)
-    index_path.unlink(missing_ok=True)
-    temp_env = os.environ.copy()
-    temp_env["GIT_INDEX_FILE"] = str(index_path)
-    try:
-        _run_git(root, ["read-tree", "HEAD"], env=temp_env)
-        for target_file in TARGET_FILES:
-            blob_sha = _git_output(
-                root,
-                ["hash-object", "-w", str(workspace_root() / target_file)],
-                env=temp_env,
-            )
-            _run_git(
-                root,
-                ["update-index", "--add", "--cacheinfo", "100644", blob_sha, target_file],
-                env=temp_env,
-            )
-        tree_sha = _git_output(root, ["write-tree"], env=temp_env)
-        return _git_output(
-            root,
-            ["commit-tree", tree_sha, "-p", "HEAD", "-m", f"data: import batch {batch_id}"],
-            env=temp_env,
-        )
-    finally:
-        index_path.unlink(missing_ok=True)
+def _reset_publish_repo(root: Path) -> None:
+    shutil.rmtree(root, ignore_errors=True)
+    root.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _ensure_publish_repo(git_state: Dict[str, str]) -> Path:
+    root = publish_repo_root()
+    _reset_publish_repo(root)
+    _run_git(
+        root.parent,
+        [
+            "clone",
+            "--branch",
+            git_state["remote_branch"],
+            "--single-branch",
+            git_state["remote_url"],
+            root.name,
+        ],
+    )
+    user_name = git_state.get("user_name") or "Aaajiao Importer"
+    user_email = git_state.get("user_email") or "importer@localhost"
+    _run_git(root, ["config", "user.name", user_name])
+    _run_git(root, ["config", "user.email", user_email])
+    return root
+
+
+def _copy_workspace_targets_to_publish_repo(root: Path) -> None:
+    for target_file in TARGET_FILES:
+        shutil.copy2(workspace_root() / target_file, root / target_file)
+
+
+def _has_staged_changes(root: Path) -> bool:
+    result = subprocess.run(
+        ["git", "diff", "--cached", "--quiet"],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return result.returncode == 1
+
+
+def _create_commit_from_publish_repo(root: Path, batch_id: int) -> str:
+    _run_git(root, ["add", *TARGET_FILES])
+    if not _has_staged_changes(root):
+        return _git_head(root)
+    _run_git(root, ["commit", "-m", f"data: import batch {batch_id}"])
+    return _git_head(root)
 
 
 def _sync_workspace_to_repo(batch_id: int) -> str:
-    root = repo_root()
-    git_state = _repo_preflight(root)
-    commit_sha = _create_commit_from_workspace(root, batch_id)
+    git_state = _repo_publish_config(repo_root())
+    root = _ensure_publish_repo(git_state)
+    _copy_workspace_targets_to_publish_repo(root)
+    commit_sha = _create_commit_from_publish_repo(root, batch_id)
     _run_git(
         root,
         [
             "push",
-            git_state["remote_name"],
+            "origin",
             f"{commit_sha}:refs/heads/{git_state['remote_branch']}",
         ],
     )
-    _run_git(root, ["merge", "--ff-only", commit_sha])
-    return _git_head(root)
+    return commit_sha
 
 
 def _create_batch(mode: str) -> int:
@@ -1446,7 +1478,7 @@ def get_apply_preview(batch_id: int) -> Dict[str, Any]:
     preview["new_count"] = new_count
     preview["updated_count"] = updated_count
     try:
-        _repo_preflight(repo_root())
+        _repo_publish_config(repo_root())
         preview["will_push"] = True
     except Exception as exc:
         preview["error_message"] = str(exc)

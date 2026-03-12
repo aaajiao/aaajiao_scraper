@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 
 from requests import Response
@@ -32,6 +33,17 @@ def _find_defaults(value):
     if isinstance(value, list):
         return any(_find_defaults(item) for item in value)
     return False
+
+
+def _run_git(cwd: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return result.stdout.strip()
 
 
 def test_validation_response_format_uses_strict_required_schema():
@@ -95,7 +107,7 @@ def test_retry_with_json_object_only_for_unsupported_schema_models():
 def test_delete_batch_removes_records_and_batch(tmp_path, monkeypatch):
     helper = _load_helper_module()
     monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(tmp_path / "workspace"))
-    monkeypatch.setenv("AAAJIAO_IMPORTER_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
 
     batch_id = helper._create_batch("manual")
     helper._insert_record(
@@ -150,7 +162,7 @@ def test_ensure_workspace_auto_realigns_seed_when_no_activity(tmp_path, monkeypa
 def test_get_batch_detail_returns_all_record_states(tmp_path, monkeypatch):
     helper = _load_helper_module()
     monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(tmp_path / "workspace"))
-    monkeypatch.setenv("AAAJIAO_IMPORTER_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
 
     batch_id = helper._create_batch("incremental")
     helper._insert_record(
@@ -202,7 +214,7 @@ def test_get_batch_detail_returns_all_record_states(tmp_path, monkeypatch):
 def test_apply_accepted_records_cleans_up_applied_batch(tmp_path, monkeypatch):
     helper = _load_helper_module()
     monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(tmp_path / "workspace"))
-    monkeypatch.setenv("AAAJIAO_IMPORTER_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
 
     batch_id = helper._create_batch("manual")
     helper._insert_record(
@@ -216,7 +228,19 @@ def test_apply_accepted_records_cleans_up_applied_batch(tmp_path, monkeypatch):
         error=None,
     )
 
-    monkeypatch.setattr(helper, "_repo_preflight", lambda root: {"remote_name": "origin", "remote_branch": "main"})
+    monkeypatch.setattr(
+        helper,
+        "_repo_publish_config",
+        lambda root: {
+            "branch": "main",
+            "upstream": "origin/main",
+            "remote_name": "origin",
+            "remote_branch": "main",
+            "remote_url": "git@example.com:test/repo.git",
+            "user_name": "Tester",
+            "user_email": "tester@example.com",
+        },
+    )
     monkeypatch.setattr(helper, "_merge_accepted_records", lambda _: ([{"title": "Test Work", "url": "https://eventstructure.com/test-work", "images": []}], 1, 0))
     monkeypatch.setattr(helper, "_write_workspace_works", lambda works: None)
     monkeypatch.setattr(helper, "_generate_workspace_markdown", lambda works: None)
@@ -235,7 +259,7 @@ def test_apply_accepted_records_cleans_up_applied_batch(tmp_path, monkeypatch):
 def test_prune_terminal_batches_removes_completed_and_failed_only(tmp_path, monkeypatch):
     helper = _load_helper_module()
     monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(tmp_path / "workspace"))
-    monkeypatch.setenv("AAAJIAO_IMPORTER_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
 
     active_batch = helper._create_batch("manual")
     completed_batch = helper._create_batch("manual")
@@ -290,7 +314,7 @@ def test_prune_terminal_batches_removes_completed_and_failed_only(tmp_path, monk
 def test_reject_record_restores_incremental_url_to_sitemap_cache(tmp_path, monkeypatch):
     helper = _load_helper_module()
     monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(tmp_path / "workspace"))
-    monkeypatch.setenv("AAAJIAO_IMPORTER_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
 
     helper.ensure_workspace()
     sitemap_path = helper.workspace_root() / ".cache" / "sitemap_lastmod.json"
@@ -320,7 +344,7 @@ def test_reject_record_restores_incremental_url_to_sitemap_cache(tmp_path, monke
 def test_delete_incremental_batch_restores_all_urls_to_sitemap_cache(tmp_path, monkeypatch):
     helper = _load_helper_module()
     monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(tmp_path / "workspace"))
-    monkeypatch.setenv("AAAJIAO_IMPORTER_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
 
     helper.ensure_workspace()
     sitemap_path = helper.workspace_root() / ".cache" / "sitemap_lastmod.json"
@@ -349,3 +373,60 @@ def test_delete_incremental_batch_restores_all_urls_to_sitemap_cache(tmp_path, m
     restored_cache = json.loads(sitemap_path.read_text(encoding="utf-8"))
     assert first_url not in restored_cache
     assert second_url not in restored_cache
+
+
+def test_apply_accepted_records_uses_managed_publish_repo_when_source_repo_is_dirty(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+
+    remote_repo = tmp_path / "remote.git"
+    working_repo = tmp_path / "source"
+    subprocess.run(["git", "init", "--bare", str(remote_repo)], check=True, capture_output=True, text=True)
+    working_repo.mkdir()
+    _run_git(working_repo, "init", "-b", "main")
+    _run_git(working_repo, "config", "user.name", "Tester")
+    _run_git(working_repo, "config", "user.email", "tester@example.com")
+    (working_repo / "aaajiao_works.json").write_text("[]\n", encoding="utf-8")
+    (working_repo / "aaajiao_portfolio.md").write_text("# Portfolio\n", encoding="utf-8")
+    _run_git(working_repo, "add", "aaajiao_works.json", "aaajiao_portfolio.md")
+    _run_git(working_repo, "commit", "-m", "initial")
+    _run_git(working_repo, "remote", "add", "origin", str(remote_repo))
+    _run_git(working_repo, "push", "-u", "origin", "main")
+    initial_head = _run_git(working_repo, "rev-parse", "HEAD")
+    (working_repo / "dirty.txt").write_text("keep dirty\n", encoding="utf-8")
+
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(working_repo))
+
+    batch_id = helper._create_batch("manual")
+    helper._insert_record(
+        batch_id=batch_id,
+        url="https://eventstructure.com/test-work",
+        status=helper.RECORD_ACCEPTED,
+        page_type="artwork",
+        confidence=0.99,
+        is_update=False,
+        proposed={"title": "Test Work", "url": "https://eventstructure.com/test-work", "images": []},
+        error=None,
+    )
+
+    monkeypatch.setattr(
+        helper,
+        "_merge_accepted_records",
+        lambda _: ([{"title": "Published Work", "url": "https://eventstructure.com/test-work", "images": []}], 1, 0),
+    )
+    monkeypatch.setattr(helper, "_generate_workspace_markdown", lambda works: (helper.workspace_root() / "aaajiao_portfolio.md").write_text("# Published\n", encoding="utf-8"))
+
+    response = helper.apply_accepted_records(batch_id)
+
+    assert response["batch_id"] == batch_id
+    assert _run_git(working_repo, "rev-parse", "HEAD") == initial_head
+    assert _run_git(working_repo, "status", "--short") == "?? dirty.txt"
+
+    published_json = _run_git(
+        working_repo,
+        "--git-dir",
+        str(remote_repo),
+        "show",
+        "refs/heads/main:aaajiao_works.json",
+    )
+    assert "Published Work" in published_json
