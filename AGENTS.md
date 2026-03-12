@@ -83,18 +83,20 @@ If you change seed/build/apply behavior in `macos/`, update:
 
 ## Common Commands
 
+Use the repository-standard virtual environment at `.venv/` for Python, pip, pytest, Streamlit, and related tooling. Do not create or use `.venv-local/` in this repository.
+
 ### Python product surface
 
 ```bash
 ./start_gui.command
-python3 -m streamlit run portfolio_scraper/app.py
-python3 -m pytest portfolio_scraper/tests/ -v
-python3 -m pytest portfolio_scraper/tests/ --cov=portfolio_scraper/scraper --cov-report=html
-ruff format portfolio_scraper
-ruff check portfolio_scraper
-mypy portfolio_scraper/scraper/
-pip install -e .
-pip install -e ".[dev]"
+./.venv/bin/python -m streamlit run portfolio_scraper/app.py
+./.venv/bin/python -m pytest portfolio_scraper/tests/ -v
+./.venv/bin/python -m pytest portfolio_scraper/tests/ --cov=portfolio_scraper/scraper --cov-report=html
+./.venv/bin/ruff format portfolio_scraper
+./.venv/bin/ruff check portfolio_scraper
+./.venv/bin/mypy portfolio_scraper/scraper/
+./.venv/bin/pip install -e .
+./.venv/bin/pip install -e ".[dev]"
 ```
 
 ### macOS product surface
@@ -109,18 +111,19 @@ pip install -e ".[dev]"
 ./macos/Build/run_git_transaction_checks.sh
 ./macos/Build/run_live_import_check.sh
 ./macos/Build/check_repo_apply_prereqs.sh
-python3 -m pytest tests/test_macos_helper.py -v
+./.venv/bin/python -m pytest tests/test_macos_helper.py -v
 ```
 
 ## Testing Notes
 
 - `pyproject.toml` still injects coverage arguments via `addopts`, so plain `pytest` expects `pytest-cov`.
+- Use `./.venv/bin/python` for local test runs; do not switch to `.venv-local`.
 - Python-side tests live in `portfolio_scraper/tests/`.
 - `tests/test_macos_helper.py` is the main regression suite for workspace lifecycle, baseline sync, review queues, and git apply behavior.
 - A quick non-coverage run can still use:
 
 ```bash
-python3 -m pytest portfolio_scraper/tests/ tests/test_macos_helper.py -o addopts=
+./.venv/bin/python -m pytest portfolio_scraper/tests/ tests/test_macos_helper.py -o addopts=
 ```
 
 ## Important Constraints
