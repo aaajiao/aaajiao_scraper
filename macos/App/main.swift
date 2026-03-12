@@ -74,6 +74,7 @@ enum ImporterFlowState: String {
 enum ImporterBusyAction {
     case importURL
     case syncSite
+    case reloadResults
     case prepareGitHubSync
     case syncGitHub
     case refreshBaseline
@@ -185,6 +186,10 @@ final class AppModel: ObservableObject {
         currentBusyAction == .syncSite
     }
 
+    var isReloadingResults: Bool {
+        currentBusyAction == .reloadResults
+    }
+
     var isSyncingGitHub: Bool {
         currentBusyAction == .syncGitHub
     }
@@ -289,6 +294,10 @@ final class AppModel: ObservableObject {
         !isBusy && !hasBlockingReviewState
     }
 
+    var shouldAnimateGitHubSyncReady: Bool {
+        hasAcceptedRecords && !isBusy && !isPreparingGitHubSync && !isSyncingGitHub
+    }
+
     var baselineCommitURL: URL? {
         githubCommitURL(sourceURL: settings.baseline_source_url, commit: settings.baseline_commit)
     }
@@ -299,6 +308,8 @@ final class AppModel: ObservableObject {
             return "Importing URL..."
         case .syncSite:
             return "Syncing site..."
+        case .reloadResults:
+            return "Reloading results..."
         case .prepareGitHubSync:
             return "Preparing GitHub sync preview..."
         case .syncGitHub:
@@ -349,10 +360,14 @@ final class AppModel: ObservableObject {
     }
 
     func refreshFromUI() {
+        currentBusyAction = .reloadResults
         Task {
             do {
                 try await refresh(allowFallbackBatch: currentBatchID == nil)
             } catch {
+                if currentBusyAction == .reloadResults {
+                    currentBusyAction = nil
+                }
                 setStatus(display(error), tone: .error)
             }
         }
@@ -388,9 +403,11 @@ final class AppModel: ObservableObject {
 
         if !hasSavedOpenAIKey {
             currentFlowState = .idle
+            currentBusyAction = nil
             setStatus("OpenAI key missing. Save a key to enable imports.", tone: .warning)
         } else {
             currentFlowState = .idle
+            currentBusyAction = nil
             setStatus("Ready for a new import", tone: .neutral)
         }
     }
