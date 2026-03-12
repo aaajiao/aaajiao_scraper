@@ -1,9 +1,9 @@
 {
   "manifest_version": 1,
-  "generated_at": "2026-03-12T01:00:05Z",
-  "source_commit": "ba4e352de07540a089155a062bfdfcf2e0b410b2",
+  "generated_at": "2026-03-12T19:35:38Z",
+  "source_commit": "7d1ecd32b5e99efbe319432a5b2ca3e1730ec806",
   "source_state": "dirty",
-  "seed_version": "ba4e352de07540a089155a062bfdfcf2e0b410b2:b9dd5daac012:3c482bc47d20-dirty",
+  "seed_version": "7d1ecd32b5e99efbe319432a5b2ca3e1730ec806:b9dd5daac012:3c482bc47d20-dirty",
   "files": {
     "aaajiao_works.json": {
       "sha256": "b9dd5daac01233bc36d1dba07d463867914b268611c6a8ffa793baa2829f9c4a",
@@ -15,8 +15,8 @@
     }
   },
   "snapshot": {
-    "scraper_files": 10,
-    "cache_files": 181
+    "scraper_files": 17,
+    "cache_files": 182
   },
   "python_runtime": {
     "mode": "wheelhouse",

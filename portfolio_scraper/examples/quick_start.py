@@ -5,7 +5,14 @@ Quick Start Example - aaajiao Portfolio Scraper
 展示基本使用流程：初始化、爬取、导出
 """
 
+import sys
+from pathlib import Path
+
+PRODUCT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PRODUCT_ROOT))
+
 from scraper import AaajiaoScraper
+from scraper.paths import OUTPUT_DIR
 
 
 def main():
@@ -37,8 +44,8 @@ def main():
     # 4. 导出结果
     print("\n💾 导出结果...")
     if scraper.works:
-        scraper.save_to_json("output/quick_start_results.json")
-        scraper.generate_markdown("output/quick_start_portfolio.md")
+        scraper.save_to_json(str(OUTPUT_DIR / "quick_start_results.json"))
+        scraper.generate_markdown(str(OUTPUT_DIR / "quick_start_portfolio.md"))
         print("   ✅ 已保存到 output/ 目录")
     else:
         print("   ⚠️  没有数据可导出")

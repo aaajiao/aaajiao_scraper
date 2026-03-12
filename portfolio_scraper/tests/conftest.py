@@ -10,10 +10,16 @@ This module provides common fixtures and configuration for all tests:
 import json
 import os
 import tempfile
+from pathlib import Path
 from typing import Dict, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+
+PRODUCT_ROOT = Path(__file__).resolve().parents[1]
+if str(PRODUCT_ROOT) not in os.sys.path:
+    os.sys.path.insert(0, str(PRODUCT_ROOT))
 
 
 @pytest.fixture
@@ -188,4 +194,3 @@ def scraper_with_mock_cache(temp_cache_dir, mock_firecrawl_key, monkeypatch):
     monkeypatch.setattr("scraper.cache.CACHE_DIR", str(temp_cache_dir))
 
     return AaajiaoScraper(use_cache=True)
-

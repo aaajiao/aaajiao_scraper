@@ -1,31 +1,43 @@
 # aaajiao Importer for macOS
 
-This directory contains a local-only macOS importer app and its bundled Python engine.
+This directory contains the local-only macOS importer app and its bundled Python engine.
 
-The implementation intentionally does not modify the existing repository code or cache files.
-At build time it copies the current `scraper/`, `.cache/`, `aaajiao_works.json`, and
-`aaajiao_portfolio.md` into `macos/` seed/vendor directories. At runtime it initializes a
-workspace under `~/Library/Application Support/AaajiaoImporter/workspace` and performs all
-processing there until the user explicitly applies accepted changes back to the repository root.
-Bundled seed data provides the local scraper code, cache, and offline fallback. The workspace
-data baseline for `aaajiao_works.json` and `aaajiao_portfolio.md` is refreshed from GitHub
-`main` whenever the workspace can safely do so.
+The repository now has two parallel product surfaces:
 
-Current flow:
+- `portfolio_scraper/` for the Python scraper product line
+- `macos/` for the importer app
+
+The importer still treats the repository root as the publish target for shared artifacts:
+
+- `aaajiao_works.json`
+- `aaajiao_portfolio.md`
+
+At build time, `prepare_seed.sh` copies:
+
+- `portfolio_scraper/scraper/` into the bundled Python snapshot
+- `.cache/` into the seed cache
+- root `aaajiao_works.json`
+- root `aaajiao_portfolio.md`
+
+At runtime the app initializes a workspace under
+`~/Library/Application Support/AaajiaoImporter/workspace` and performs all processing there
+until the user explicitly applies accepted changes back to the repository root.
+
+## Current flow
 
 1. Bootstrap a dedicated workspace from bundled seed data, then refresh the data baseline from GitHub.
 2. Run incremental sync or submit a manual artwork URL.
 3. Review `ready_for_review` and `needs_review` records in the menu bar app.
 4. Preview the apply transaction, then explicitly confirm the git writeback.
 
-AI validation is now split into two stages:
+## Validation model
+
+AI validation is split into two stages:
 
 1. OpenAI returns a strict structured record schema for `artwork / exhibition / unknown`.
-2. The local helper re-validates slug/title consistency, type-as-title mistakes, contamination
-   signals in materials/descriptions, and required-field completeness before a record can reach
-   `ready_for_review`.
+2. The local helper re-validates slug/title consistency, type-as-title mistakes, contamination signals, and required-field completeness before a record can reach `ready_for_review`.
 
-The helper now exposes the planned command surface:
+## Command surface
 
 - `bootstrapWorkspace`
 - `resetWorkspace`
@@ -38,7 +50,7 @@ The helper now exposes the planned command surface:
 - `getApplyPreview`
 - `applyAcceptedRecords`
 
-Build scripts:
+## Build scripts
 
 ```bash
 ./macos/Build/refresh_wheelhouse.sh
@@ -58,7 +70,7 @@ Release checklist:
 open macos/Build/RELEASE_CHECKLIST.md
 ```
 
-`prepare_seed.sh` now writes `macos/Seed/seed_manifest.json`.
+`prepare_seed.sh` writes `macos/Seed/seed_manifest.json`.
 At runtime the helper writes `workspace_manifest.json` into the local workspace and validates
 the bundled seed version before reusing the workspace. The manifest also records the latest
 GitHub baseline status, commit, and fallback error details for the workspace data files.

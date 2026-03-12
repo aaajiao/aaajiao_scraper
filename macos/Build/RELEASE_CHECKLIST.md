@@ -5,6 +5,7 @@ Use this checklist before shipping a new local build of `aaajiao Importer.app`.
 ## 1. Freeze inputs
 
 - Confirm the repo worktree is clean before producing the final seed manifest.
+- Confirm `portfolio_scraper/scraper/` contains the intended Python snapshot for the release build.
 - Confirm `aaajiao_works.json` and `aaajiao_portfolio.md` are the intended seed baseline.
 - Confirm `macos/Vendor/wheelhouse/` matches `macos/Build/wheelhouse_requirements.txt`.
 

@@ -1,8 +1,8 @@
-
 import sys
-import os
+from pathlib import Path
 
-sys.path.append(os.getcwd())
+PRODUCT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PRODUCT_ROOT))
 
 from scraper.constants import QUICK_SCHEMA, FULL_SCHEMA
 

@@ -1,5 +1,12 @@
 import csv
 import re
+import sys
+from pathlib import Path
+
+PRODUCT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PRODUCT_ROOT))
+
+from scraper.paths import PORTFOLIO_MARKDOWN_PATH
 
 def parse_markdown(md_path):
     with open(md_path, 'r', encoding='utf-8') as f:
@@ -141,4 +148,4 @@ def verify(md_path, csv_path):
             print(f"  - {m}")
 
 if __name__ == "__main__":
-    verify("../aaajiao_portfolio.md", "xxx/2025-12-16T18-17_export.csv")
+    verify(str(PORTFOLIO_MARKDOWN_PATH), "xxx/2025-12-16T18-17_export.csv")

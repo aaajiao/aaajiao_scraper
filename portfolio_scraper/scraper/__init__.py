@@ -15,6 +15,7 @@ from .firecrawl import FirecrawlMixin
 from .cache import CacheMixin
 from .report import ReportMixin
 from .constants import CACHE_DIR, PROMPT_TEMPLATES, QUICK_SCHEMA, FULL_SCHEMA
+from .paths import PORTFOLIO_MARKDOWN_PATH, WORKS_JSON_PATH
 
 
 def _clean_cross_contamination(works: List[Dict[str, Any]]) -> int:
@@ -223,7 +224,7 @@ class AaajiaoScraper(CoreScraper, BasicScraperMixin, FirecrawlMixin, CacheMixin,
             # Load existing works if incremental mode found nothing new
             if incremental:
                 try:
-                    with open("aaajiao_works.json", "r", encoding="utf-8") as f:
+                    with WORKS_JSON_PATH.open("r", encoding="utf-8") as f:
                         self.works = json.load(f)
                         stats["total"] = len(self.works)
                         stats["from_cache"] = len(self.works)
@@ -280,7 +281,7 @@ class AaajiaoScraper(CoreScraper, BasicScraperMixin, FirecrawlMixin, CacheMixin,
 
         if incremental:
             try:
-                with open("aaajiao_works.json", "r", encoding="utf-8") as f:
+                with WORKS_JSON_PATH.open("r", encoding="utf-8") as f:
                     existing_works = json.load(f)
                     # Merge: new works take precedence
                     existing_urls = {w.get("url") for w in extracted_works}
@@ -308,11 +309,11 @@ class AaajiaoScraper(CoreScraper, BasicScraperMixin, FirecrawlMixin, CacheMixin,
 
         # Save JSON
         self.save_to_json()
-        output_files.append("aaajiao_works.json")
+        output_files.append(str(WORKS_JSON_PATH))
 
         # Generate Markdown
         self.generate_markdown()
-        output_files.append("aaajiao_portfolio.md")
+        output_files.append(str(PORTFOLIO_MARKDOWN_PATH))
 
         _progress(f"Complete! {stats['total']} works saved", 1.0)
 

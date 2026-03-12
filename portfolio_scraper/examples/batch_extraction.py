@@ -5,7 +5,14 @@ Batch Extraction Example - 批量提取示例
 使用 Firecrawl 的批量提取 API，高效处理多个URL
 """
 
+import sys
+from pathlib import Path
+
+PRODUCT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PRODUCT_ROOT))
+
 from scraper import AaajiaoScraper
+from scraper.paths import OUTPUT_DIR
 
 
 def main():
@@ -48,7 +55,7 @@ def main():
         # 4. 保存结果
         print("\n💾 保存结果...")
         scraper.works = extracted_works
-        scraper.save_to_json("output/batch_extraction_results.json")
+        scraper.save_to_json(str(OUTPUT_DIR / "batch_extraction_results.json"))
         print("   ✅ 已保存到 output/batch_extraction_results.json")
     else:
         print("❌ 批量提取失败")

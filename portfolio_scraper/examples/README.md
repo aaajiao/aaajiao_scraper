@@ -10,7 +10,7 @@
 **学习内容**: 基本初始化、单个作品提取、结果导出
 
 ```bash
-python examples/quick_start.py
+python portfolio_scraper/examples/quick_start.py
 ```
 
 **输出**:
@@ -25,7 +25,7 @@ python examples/quick_start.py
 **学习内容**: 批量API使用、缓存策略、进度跟踪
 
 ```bash
-python examples/batch_extraction.py
+python portfolio_scraper/examples/batch_extraction.py
 ```
 
 **特点**:
@@ -41,7 +41,7 @@ python examples/batch_extraction.py
 **学习内容**: 增量模式、sitemap比较、只处理更新
 
 ```bash
-python examples/incremental_scrape.py
+python portfolio_scraper/examples/incremental_scrape.py
 ```
 
 **工作原理**:
@@ -55,7 +55,7 @@ python examples/incremental_scrape.py
 
 1. **配置API Key**
    ```bash
-   cp ../.env.example ../.env
+   cp .env.example .env
    # 编辑 .env 文件，添加你的 FIRECRAWL_API_KEY
    ```
 
@@ -66,7 +66,7 @@ python examples/incremental_scrape.py
 
 3. **运行示例**
    ```bash
-   python examples/quick_start.py
+   python portfolio_scraper/examples/quick_start.py
    ```
 
 ---
@@ -132,9 +132,9 @@ for url in work_urls:
 
 ## 📖 更多资源
 
-- **API文档**: 查看 `scraper/` 目录下各模块的文档字符串
-- **测试用例**: `tests/` 目录包含更多使用示例
-- **主README**: `../README.md` 有完整的功能说明
+- **API文档**: 查看 `portfolio_scraper/scraper/` 目录下各模块的文档字符串
+- **测试用例**: `portfolio_scraper/tests/` 目录包含更多使用示例
+- **主README**: `portfolio_scraper/README.md` 有完整的功能说明
 - **贡献指南**: `../CONTRIBUTING.md` 了解开发流程
 
 ---

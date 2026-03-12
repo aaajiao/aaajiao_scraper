@@ -15,7 +15,8 @@ import time
 import pandas as pd
 import streamlit as st
 
-from scraper import AaajiaoScraper, deduplicate_works, is_artwork
+from scraper import AaajiaoScraper, is_artwork
+from scraper.paths import OUTPUT_DIR, PORTFOLIO_MARKDOWN_PATH, REPORTS_DIR, WORKS_JSON_PATH
 
 # 页面配置
 st.set_page_config(
@@ -34,7 +35,7 @@ st.markdown("自动从 eventstructure.com 抓取作品详情")
 def load_existing_works() -> list:
     """从 JSON 文件加载已有作品。"""
     try:
-        with open("aaajiao_works.json", "r", encoding="utf-8") as f:
+        with WORKS_JSON_PATH.open("r", encoding="utf-8") as f:
             works = json.load(f)
             # 过滤掉展览（以防旧数据包含）
             return [w for w in works if is_artwork(w)]
@@ -276,7 +277,7 @@ col_dl1, col_dl2 = st.columns(2)
 
 with col_dl1:
     try:
-        with open("aaajiao_works.json", "rb") as f:
+        with WORKS_JSON_PATH.open("rb") as f:
             st.download_button(
                 label="📄 下载 JSON",
                 data=f,
@@ -289,7 +290,7 @@ with col_dl1:
 
 with col_dl2:
     try:
-        with open("aaajiao_portfolio.md", "rb") as f:
+        with PORTFOLIO_MARKDOWN_PATH.open("rb") as f:
             st.download_button(
                 label="📝 下载 Markdown",
                 data=f,
@@ -455,7 +456,7 @@ if works_for_images:
                 status.text(f"[{i+1}/{len(works_to_process)}] {title}...")
 
                 try:
-                    enriched = scraper.enrich_work_with_images(work, output_dir="output")
+                    enriched = scraper.enrich_work_with_images(work, output_dir=str(OUTPUT_DIR))
                     if merge_full_metadata and full_works:
                         enriched = merge_work_with_full_data(enriched, full_works)
                     enriched_works.append(enriched)
@@ -496,16 +497,16 @@ if works_for_images:
 
             report_content = "".join(report_lines)
 
-            os.makedirs("output", exist_ok=True)
-            with open("output/portfolio_with_images.md", "w", encoding="utf-8") as f:
+            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            with (OUTPUT_DIR / "portfolio_with_images.md").open("w", encoding="utf-8") as f:
                 f.write(report_content)
 
             # 保存到 reports 文件夹（带时间戳）
-            os.makedirs("reports", exist_ok=True)
+            REPORTS_DIR.mkdir(parents=True, exist_ok=True)
             timestamp = time.strftime('%Y%m%d_%H%M%S')
             report_filename = f"portfolio_images_{timestamp}.md"
-            report_path = os.path.join("reports", report_filename)
-            with open(report_path, "w", encoding="utf-8") as f:
+            report_path = REPORTS_DIR / report_filename
+            with report_path.open("w", encoding="utf-8") as f:
                 f.write(report_content)
 
             st.success(f"✅ 图片整合完成！报告已保存到 `{report_path}`")
@@ -599,11 +600,11 @@ if works_for_images:
             report = "".join(lines)
 
             # 保存到 reports 文件夹（带时间戳）
-            os.makedirs("reports", exist_ok=True)
+            REPORTS_DIR.mkdir(parents=True, exist_ok=True)
             timestamp = time.strftime('%Y%m%d_%H%M%S')
             report_filename = f"web_report_{timestamp}.md"
-            report_path = os.path.join("reports", report_filename)
-            with open(report_path, "w", encoding="utf-8") as f:
+            report_path = REPORTS_DIR / report_filename
+            with report_path.open("w", encoding="utf-8") as f:
                 f.write(report)
 
             st.success(f"✅ 已为 {len(sorted_works)} 个作品生成报告！保存到 `{report_path}`")

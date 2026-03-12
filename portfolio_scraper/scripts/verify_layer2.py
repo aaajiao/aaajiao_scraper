@@ -5,13 +5,13 @@
 测试几个不同类型的作品，检查 Layer 2 返回的数据是否完整准确。
 
 Usage:
-    python scripts/verify_layer2.py
+    python portfolio_scraper/scripts/verify_layer2.py
 """
-import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+PRODUCT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PRODUCT_ROOT))
 
 from scraper import AaajiaoScraper
 

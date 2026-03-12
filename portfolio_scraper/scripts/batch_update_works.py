@@ -6,21 +6,21 @@
 采用 Layer 1 (BS4) + Layer 2 (Schema Extract) 混合策略。
 
 Usage:
-    python scripts/batch_update_works.py --dry-run          # 预览模式
-    python scripts/batch_update_works.py --limit 10         # 只处理前 10 个
-    python scripts/batch_update_works.py                    # 处理所有作品
+    python portfolio_scraper/scripts/batch_update_works.py --dry-run          # 预览模式
+    python portfolio_scraper/scripts/batch_update_works.py --limit 10         # 只处理前 10 个
+    python portfolio_scraper/scripts/batch_update_works.py                    # 处理所有作品
 """
 import json
 import sys
-import time
 import argparse
 from pathlib import Path
-from typing import Dict, Any, List
 
-# 添加项目根目录到 path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# 添加 Python 产品线根目录到 path
+PRODUCT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PRODUCT_ROOT))
 
 from scraper import AaajiaoScraper
+from scraper.paths import resolve_repo_path
 
 
 def batch_update(
@@ -43,7 +43,10 @@ def batch_update(
         更新的作品数量
     """
     # 加载现有数据
-    with open(input_file, 'r', encoding='utf-8') as f:
+    input_path = resolve_repo_path(input_file)
+    output_path = resolve_repo_path(output_file)
+
+    with input_path.open('r', encoding='utf-8') as f:
         works = json.load(f)
 
     # 初始化 scraper
@@ -121,17 +124,19 @@ def batch_update(
 
         # 每 20 个保存一次进度
         if i % 20 == 0:
-            with open(output_file, 'w', encoding='utf-8') as f:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with output_path.open('w', encoding='utf-8') as f:
                 json.dump(works, f, ensure_ascii=False, indent=2)
             print(f"    💾 进度已保存 ({i}/{len(to_update)})")
 
     # 最终保存
-    with open(output_file, 'w', encoding='utf-8') as f:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open('w', encoding='utf-8') as f:
         json.dump(works, f, ensure_ascii=False, indent=2)
 
     print()
     print(f"✅ 完成! 更新: {updated}, 错误: {errors}")
-    print(f"💾 保存到: {output_file}")
+    print(f"💾 保存到: {output_path}")
 
     return updated
 

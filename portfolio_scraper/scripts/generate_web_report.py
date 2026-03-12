@@ -1,13 +1,14 @@
 
-import sys
-import os
 import logging
+import sys
 from datetime import datetime
+from pathlib import Path
 
-# Add project root
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+PRODUCT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PRODUCT_ROOT))
 
 from scraper import AaajiaoScraper
+from scraper.paths import REPORTS_DIR
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("WebReport")
@@ -86,11 +87,12 @@ def generate_web_image_report():
         lines.append("---\n")
 
     # Save
-    report_file = "aaajiao_web_images_report.md"
-    with open(report_file, "w", encoding="utf-8") as f:
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    report_file = REPORTS_DIR / "aaajiao_web_images_report.md"
+    with report_file.open("w", encoding="utf-8") as f:
         f.write("".join(lines))
         
-    logger.info(f"✅ Report generated: {os.path.abspath(report_file)}")
+    logger.info(f"✅ Report generated: {report_file}")
 
 if __name__ == "__main__":
     generate_web_image_report()

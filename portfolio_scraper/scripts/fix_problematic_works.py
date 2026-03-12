@@ -9,7 +9,7 @@ This script identifies and fixes the following issues:
 4. Missing fields
 
 Usage:
-    python scripts/fix_problematic_works.py [--dry-run]
+    python portfolio_scraper/scripts/fix_problematic_works.py [--dry-run]
 """
 
 import json
@@ -17,9 +17,10 @@ import re
 import sys
 from pathlib import Path
 
-# Add project root to path
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
+PRODUCT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PRODUCT_ROOT))
+
+from scraper.paths import WORKS_JSON_PATH
 
 
 def fix_type_null(work: dict) -> bool:
@@ -229,13 +230,13 @@ def main():
     parser.add_argument('--dry-run', action='store_true', help='Show what would be changed without saving')
     args = parser.parse_args()
 
-    json_path = PROJECT_ROOT / 'aaajiao_works.json'
+    json_path = WORKS_JSON_PATH
 
     if not json_path.exists():
         print(f"Error: {json_path} not found")
         return 1
 
-    with open(json_path, 'r', encoding='utf-8') as f:
+    with json_path.open('r', encoding='utf-8') as f:
         works = json.load(f)
 
     print(f"Loaded {len(works)} works from {json_path}")
@@ -276,7 +277,7 @@ def main():
     if args.dry_run:
         print("\n[DRY RUN] No changes saved")
     else:
-        with open(json_path, 'w', encoding='utf-8') as f:
+        with json_path.open('w', encoding='utf-8') as f:
             json.dump(works, f, ensure_ascii=False, indent=2)
         print(f"\nChanges saved to {json_path}")
 

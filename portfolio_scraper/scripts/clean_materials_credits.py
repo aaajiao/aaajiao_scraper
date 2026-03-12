@@ -9,13 +9,13 @@ This script:
 
 Usage:
     # Preview changes (dry-run)
-    python scripts/clean_materials_credits.py --dry-run
+    python portfolio_scraper/scripts/clean_materials_credits.py --dry-run
 
     # Apply changes
-    python scripts/clean_materials_credits.py
+    python portfolio_scraper/scripts/clean_materials_credits.py
 
     # Output to different file
-    python scripts/clean_materials_credits.py -o cleaned_works.json
+    python portfolio_scraper/scripts/clean_materials_credits.py -o cleaned_works.json
 """
 
 import argparse
@@ -24,6 +24,11 @@ import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+
+PRODUCT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PRODUCT_ROOT))
+
+from scraper.paths import resolve_repo_path
 
 
 # === Credits detection patterns ===
@@ -210,22 +215,17 @@ def main():
     args = parser.parse_args()
 
     # Resolve paths
-    input_path = Path(args.input_file)
-    if not input_path.is_absolute():
-        # Try relative to script directory first, then cwd
-        script_dir = Path(__file__).parent.parent
-        if (script_dir / input_path).exists():
-            input_path = script_dir / input_path
+    input_path = resolve_repo_path(args.input_file)
 
     if not input_path.exists():
         print(f"Error: Input file not found: {input_path}")
         sys.exit(1)
 
-    output_path = Path(args.output) if args.output else input_path
+    output_path = resolve_repo_path(args.output) if args.output else input_path
 
     # Load data
     print(f"Loading: {input_path}")
-    with open(input_path, 'r', encoding='utf-8') as f:
+    with input_path.open('r', encoding='utf-8') as f:
         works = json.load(f)
 
     # Process
@@ -234,7 +234,8 @@ def main():
     # Save (unless dry-run)
     if not args.dry_run:
         print(f"\nSaving to: {output_path}")
-        with open(output_path, 'w', encoding='utf-8') as f:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with output_path.open('w', encoding='utf-8') as f:
             json.dump(cleaned_works, f, ensure_ascii=False, indent=2)
         print("Done!")
     else:

@@ -84,7 +84,7 @@ aaajiao-scraper = "scraper.cli:main"
 # ==================
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = ["portfolio_scraper"]
 include = ["scraper*"]
 exclude = ["tests*", "scripts*"]
 
@@ -126,6 +126,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # imported but unused
 "tests/**/*.py" = ["N802", "N803"]  # function/argument naming
+"portfolio_scraper/tests/**/*.py" = ["N802", "N803"]  # function/argument naming
 
 [tool.ruff.lint.isort]
 known-first-party = ["scraper"]
@@ -172,7 +173,7 @@ ignore_missing_imports = true
 # ==================
 [tool.pytest.ini_options]
 minversion = "7.0"
-testpaths = ["tests"]
+testpaths = ["portfolio_scraper/tests", "tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
@@ -180,7 +181,7 @@ addopts = [
     "-ra",
     "--strict-markers",
     "--strict-config",
-    "--cov=scraper",
+    "--cov=portfolio_scraper/scraper",
     "--cov-report=term-missing",
     "--cov-report=html",
     "--cov-report=xml",
@@ -193,7 +194,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["scraper"]
+source = ["portfolio_scraper/scraper"]
 omit = [
     "*/tests/*",
     "*/scripts/*",

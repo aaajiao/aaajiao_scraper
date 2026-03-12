@@ -1,7 +1,6 @@
+from pathlib import Path
 
-import os
-
-TARGET_FILE = "../scraper/firecrawl.py"
+TARGET_FILE = Path(__file__).resolve().parents[1] / "scraper" / "firecrawl.py"
 
 NEW_METHOD = r'''    def agent_search(self, prompt: str, urls: Optional[List[str]] = None, max_credits: int = 50) -> Optional[Dict[str, Any]]:
         """
@@ -164,7 +163,7 @@ NEW_METHOD = r'''    def agent_search(self, prompt: str, urls: Optional[List[str
 '''
 
 def update_file():
-    with open(TARGET_FILE, "r", encoding="utf-8") as f:
+    with TARGET_FILE.open("r", encoding="utf-8") as f:
         lines = f.readlines()
     
     # Define the range to replace (0-indexed) working with lines 560 to 713 (1-indexed)
@@ -189,7 +188,7 @@ def update_file():
 
     new_lines = lines[:start_idx] + [NEW_METHOD + "\n"] + lines[end_idx:]
     
-    with open(TARGET_FILE, "w", encoding="utf-8") as f:
+    with TARGET_FILE.open("w", encoding="utf-8") as f:
         f.writelines(new_lines)
     
     print("File updated successfully.")

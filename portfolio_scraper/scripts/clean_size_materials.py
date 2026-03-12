@@ -3,14 +3,20 @@
 清洗现有数据，将尺寸和时长信息从 materials 字段分离到独立字段。
 
 Usage:
-    python scripts/clean_size_materials.py aaajiao_works.json --dry-run
-    python scripts/clean_size_materials.py aaajiao_works.json -o cleaned.json
+    python portfolio_scraper/scripts/clean_size_materials.py aaajiao_works.json --dry-run
+    python portfolio_scraper/scripts/clean_size_materials.py aaajiao_works.json -o cleaned.json
 """
 import json
 import re
 import sys
 import argparse
+from pathlib import Path
 from typing import Tuple
+
+PRODUCT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PRODUCT_ROOT))
+
+from scraper.paths import resolve_repo_path
 
 
 def clean_materials(materials: str) -> Tuple[str, str, str]:
@@ -101,7 +107,8 @@ def process_file(input_path: str, output_path: str = None, dry_run: bool = False
     Returns:
         修改的作品数量
     """
-    with open(input_path, 'r', encoding='utf-8') as f:
+    input_file = resolve_repo_path(input_path)
+    with input_file.open('r', encoding='utf-8') as f:
         works = json.load(f)
     
     changes = 0
@@ -146,9 +153,11 @@ def process_file(input_path: str, output_path: str = None, dry_run: bool = False
     print(f"\n{'[DRY RUN] ' if dry_run else ''}Total changes: {changes} / {len(works)} works")
     
     if not dry_run and output_path:
-        with open(output_path, 'w', encoding='utf-8') as f:
+        output_file = resolve_repo_path(output_path)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        with output_file.open('w', encoding='utf-8') as f:
             json.dump(works, f, ensure_ascii=False, indent=2)
-        print(f"✅ Saved to: {output_path}")
+        print(f"✅ Saved to: {output_file}")
     
     return changes
 

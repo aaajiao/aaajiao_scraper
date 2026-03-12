@@ -18,6 +18,7 @@ from typing import Any, Dict, List
 import requests
 
 from .constants import BASE_URL
+from .paths import resolve_shared_artifact_path
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +50,11 @@ class ReportMixin:
             >>> # After scraping...
             >>> scraper.save_to_json("output/works.json")
         """
-        with open(filename, "w", encoding="utf-8") as f:
+        target_path = resolve_shared_artifact_path(filename)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        with target_path.open("w", encoding="utf-8") as f:
             json.dump(self.works, f, ensure_ascii=False, indent=2)
-        logger.info(f"JSON data saved: {filename} ({len(self.works)} works)")
+        logger.info(f"JSON data saved: {target_path} ({len(self.works)} works)")
 
     def generate_markdown(self, filename: str = "aaajiao_portfolio.md") -> None:
         """Generate Markdown format portfolio document for basic scraper.
@@ -128,10 +131,12 @@ class ReportMixin:
 
             lines.append("---\n")
 
-        with open(filename, "w", encoding="utf-8") as f:
+        target_path = resolve_shared_artifact_path(filename)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        with target_path.open("w", encoding="utf-8") as f:
             f.write("".join(lines))
 
-        logger.info(f"Markdown file generated: {filename}")
+        logger.info(f"Markdown file generated: {target_path}")
 
     def generate_agent_report(
         self,
@@ -426,4 +431,3 @@ class ReportMixin:
 
         lines.append("---\n\n")
         return lines
-

@@ -5,7 +5,14 @@ Incremental Scrape Example - 增量爬取示例
 只处理新增或修改的作品，节省时间和API消耗
 """
 
+import sys
+from pathlib import Path
+
+PRODUCT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PRODUCT_ROOT))
+
 from scraper import AaajiaoScraper
+from scraper.paths import OUTPUT_DIR
 
 
 def main():
@@ -47,9 +54,9 @@ def main():
         # 保存为带时间戳的文件
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_file = f"output/incremental_{timestamp}.json"
+        output_file = OUTPUT_DIR / f"incremental_{timestamp}.json"
         
-        scraper.save_to_json(output_file)
+        scraper.save_to_json(str(output_file))
         print(f"   ✅ 已保存到 {output_file}")
     
     # 4. 使用提示
