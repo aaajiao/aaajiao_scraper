@@ -170,19 +170,6 @@ private struct SidebarView: View {
                         .font(.headline)
                     Text("Import one URL or run a site sync to start a review queue.")
                         .foregroundStyle(.secondary)
-                    HStack {
-                        Button("Import URL…") {
-                            model.requestImportSheet()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .appArrowCursor()
-
-                        Button("Sync Entire Site") {
-                            model.startSync()
-                        }
-                        .disabled(!model.canRunProtectedActions || model.isBusy)
-                        .appArrowCursor()
-                    }
 
                     if !model.hasSavedOpenAIKey {
                         Button("Open Settings") {
@@ -234,17 +221,25 @@ private struct SidebarOverviewPanel: View {
                     systemImage: "internaldrive",
                     tint: model.settings.workspace_status == "seed_version_mismatch" ? .orange : .secondary
                 )
-                StatusSummaryRow(
-                    title: "Baseline",
-                    value: baselineLabel(model.settings.baseline_status),
-                    systemImage: "arrow.down.circle",
-                    tint: baselineTint(model.settings)
-                )
-            }
-
-            if let commitURL = model.baselineCommitURL {
-                Link("Open baseline commit on GitHub", destination: commitURL)
-                    .font(.caption)
+                if let commitURL = model.baselineCommitURL {
+                    Link(destination: commitURL) {
+                        StatusSummaryRow(
+                            title: "Baseline",
+                            value: baselineLabel(model.settings.baseline_status),
+                            systemImage: "arrow.down.circle",
+                            tint: baselineTint(model.settings)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .appArrowCursor()
+                } else {
+                    StatusSummaryRow(
+                        title: "Baseline",
+                        value: baselineLabel(model.settings.baseline_status),
+                        systemImage: "arrow.down.circle",
+                        tint: baselineTint(model.settings)
+                    )
+                }
             }
 
             if !model.settings.workspace_path.isEmpty {
