@@ -17,9 +17,9 @@ enum HelperClientError: LocalizedError {
     }
 }
 
-final class HelperClient {
-    func bootstrapWorkspace(openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> BootstrapResponse {
-        try runCommand(
+final class HelperClient: @unchecked Sendable {
+    func bootstrapWorkspace(openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> BootstrapResponse {
+        try await runCommandAsync(
             arguments: ["bootstrapWorkspace"],
             openAIKey: openAIKey,
             openAIModel: openAIModel,
@@ -28,8 +28,8 @@ final class HelperClient {
         )
     }
 
-    func listPendingRecords(openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> PendingRecordsResponse {
-        try runCommand(
+    func listPendingRecords(openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> PendingRecordsResponse {
+        try await runCommandAsync(
             arguments: ["listPendingRecords"],
             openAIKey: openAIKey,
             openAIModel: openAIModel,
@@ -38,8 +38,8 @@ final class HelperClient {
         )
     }
 
-    func resetWorkspace(openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> BootstrapResponse {
-        try runCommand(
+    func resetWorkspace(openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> BootstrapResponse {
+        try await runCommandAsync(
             arguments: ["resetWorkspace"],
             openAIKey: openAIKey,
             openAIModel: openAIModel,
@@ -48,8 +48,8 @@ final class HelperClient {
         )
     }
 
-    func refreshWorkspaceBaseline(openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> BootstrapResponse {
-        try runCommand(
+    func refreshWorkspaceBaseline(openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> BootstrapResponse {
+        try await runCommandAsync(
             arguments: ["refreshWorkspaceBaseline"],
             openAIKey: openAIKey,
             openAIModel: openAIModel,
@@ -58,8 +58,8 @@ final class HelperClient {
         )
     }
 
-    func startIncrementalSync(openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> StartSyncResponse {
-        try runCommand(
+    func startIncrementalSync(openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> StartSyncResponse {
+        try await runCommandAsync(
             arguments: ["startIncrementalSync"],
             openAIKey: openAIKey,
             openAIModel: openAIModel,
@@ -68,8 +68,8 @@ final class HelperClient {
         )
     }
 
-    func submitManualURL(_ url: String, openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> SubmitURLResponse {
-        try runCommand(
+    func submitManualURL(_ url: String, openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> SubmitURLResponse {
+        try await runCommandAsync(
             arguments: ["submitManualURL", "--url", url],
             openAIKey: openAIKey,
             openAIModel: openAIModel,
@@ -78,8 +78,8 @@ final class HelperClient {
         )
     }
 
-    func acceptRecord(id: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> RecordStatusResponse {
-        try runCommand(
+    func acceptRecord(id: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> RecordStatusResponse {
+        try await runCommandAsync(
             arguments: ["acceptRecord", "--id", "\(id)"],
             openAIKey: openAIKey,
             openAIModel: openAIModel,
@@ -88,8 +88,8 @@ final class HelperClient {
         )
     }
 
-    func rejectRecord(id: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> RecordStatusResponse {
-        try runCommand(
+    func rejectRecord(id: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> RecordStatusResponse {
+        try await runCommandAsync(
             arguments: ["rejectRecord", "--id", "\(id)"],
             openAIKey: openAIKey,
             openAIModel: openAIModel,
@@ -98,8 +98,8 @@ final class HelperClient {
         )
     }
 
-    func getBatchDetail(batchID: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> BatchDetailResponse {
-        try runCommand(
+    func getBatchDetail(batchID: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> BatchDetailResponse {
+        try await runCommandAsync(
             arguments: ["getBatchDetail", "--batch-id", "\(batchID)"],
             openAIKey: openAIKey,
             openAIModel: openAIModel,
@@ -108,8 +108,8 @@ final class HelperClient {
         )
     }
 
-    func getApplyPreview(batchID: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> ApplyPreview {
-        try runCommand(
+    func getApplyPreview(batchID: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> ApplyPreview {
+        try await runCommandAsync(
             arguments: ["getApplyPreview", "--batch-id", "\(batchID)"],
             openAIKey: openAIKey,
             openAIModel: openAIModel,
@@ -118,8 +118,8 @@ final class HelperClient {
         )
     }
 
-    func applyAcceptedRecords(batchID: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> ApplyResponse {
-        try runCommand(
+    func applyAcceptedRecords(batchID: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> ApplyResponse {
+        try await runCommandAsync(
             arguments: ["applyAcceptedRecords", "--batch-id", "\(batchID)"],
             openAIKey: openAIKey,
             openAIModel: openAIModel,
@@ -128,8 +128,8 @@ final class HelperClient {
         )
     }
 
-    func deleteBatch(batchID: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> DeleteBatchResponse {
-        try runCommand(
+    func deleteBatch(batchID: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> DeleteBatchResponse {
+        try await runCommandAsync(
             arguments: ["deleteBatch", "--batch-id", "\(batchID)"],
             openAIKey: openAIKey,
             openAIModel: openAIModel,
@@ -138,7 +138,32 @@ final class HelperClient {
         )
     }
 
-    private func runCommand<T: Decodable>(
+    private func runCommandAsync<T: Decodable & Sendable>(
+        arguments: [String],
+        openAIKey: String,
+        openAIModel: String,
+        openAIModelSource: String,
+        as type: T.Type
+    ) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    let result = try self.runCommand(
+                        arguments: arguments,
+                        openAIKey: openAIKey,
+                        openAIModel: openAIModel,
+                        openAIModelSource: openAIModelSource,
+                        as: type
+                    )
+                    continuation.resume(returning: result)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private func runCommand<T: Decodable & Sendable>(
         arguments: [String],
         openAIKey: String,
         openAIModel: String,

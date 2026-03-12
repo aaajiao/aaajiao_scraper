@@ -333,7 +333,7 @@ final class AppModel: ObservableObject {
     func bootstrapAndRefresh() {
         Task {
             do {
-                let response = try helper.bootstrapWorkspace(
+                let response = try await helper.bootstrapWorkspace(
                     openAIKey: savedOpenAIKey,
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
                     openAIModelSource: savedOpenAIModelSelection.source
@@ -359,7 +359,7 @@ final class AppModel: ObservableObject {
     }
 
     func refresh(allowFallbackBatch: Bool) async throws {
-        let response = try helper.listPendingRecords(
+        let response = try await helper.listPendingRecords(
             openAIKey: savedOpenAIKey,
             openAIModel: savedOpenAIModelSelection.effectiveModel,
             openAIModelSource: savedOpenAIModelSelection.source
@@ -405,7 +405,7 @@ final class AppModel: ObservableObject {
         setStatus("Syncing site...", tone: .info)
         Task {
             do {
-                let result = try helper.startIncrementalSync(
+                let result = try await helper.startIncrementalSync(
                     openAIKey: savedOpenAIKey,
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
                     openAIModelSource: savedOpenAIModelSelection.source
@@ -438,7 +438,7 @@ final class AppModel: ObservableObject {
         setStatus("Resetting workspace and refreshing the GitHub baseline...", tone: .info)
         Task {
             do {
-                let response = try helper.resetWorkspace(
+                let response = try await helper.resetWorkspace(
                     openAIKey: savedOpenAIKey,
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
                     openAIModelSource: savedOpenAIModelSelection.source
@@ -466,7 +466,7 @@ final class AppModel: ObservableObject {
         setStatus("Refreshing the GitHub baseline...", tone: .info)
         Task {
             do {
-                let response = try helper.refreshWorkspaceBaseline(
+                let response = try await helper.refreshWorkspaceBaseline(
                     openAIKey: savedOpenAIKey,
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
                     openAIModelSource: savedOpenAIModelSelection.source
@@ -494,7 +494,7 @@ final class AppModel: ObservableObject {
         setStatus("Importing URL...", tone: .info)
         Task {
             do {
-                let result = try helper.submitManualURL(
+                let result = try await helper.submitManualURL(
                     trimmed,
                     openAIKey: savedOpenAIKey,
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
@@ -516,7 +516,7 @@ final class AppModel: ObservableObject {
         guard let record = selectedRecord else { return }
         Task {
             do {
-                _ = try helper.acceptRecord(
+                _ = try await helper.acceptRecord(
                     id: record.id,
                     openAIKey: savedOpenAIKey,
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
@@ -544,7 +544,7 @@ final class AppModel: ObservableObject {
             do {
                 guard let batchID = currentBatchID else { return }
                 if visibleCurrentRecords.count <= 1 {
-                    _ = try helper.deleteBatch(
+                    _ = try await helper.deleteBatch(
                         batchID: batchID,
                         openAIKey: savedOpenAIKey,
                         openAIModel: savedOpenAIModelSelection.effectiveModel,
@@ -556,7 +556,7 @@ final class AppModel: ObservableObject {
                     return
                 }
 
-                _ = try helper.rejectRecord(
+                _ = try await helper.rejectRecord(
                     id: record.id,
                     openAIKey: savedOpenAIKey,
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
@@ -580,7 +580,7 @@ final class AppModel: ObservableObject {
         isShowingDiscardConfirmation = false
         Task {
             do {
-                _ = try helper.deleteBatch(
+                _ = try await helper.deleteBatch(
                     batchID: batchID,
                     openAIKey: savedOpenAIKey,
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
@@ -603,7 +603,7 @@ final class AppModel: ObservableObject {
                 if currentApplyPreview == nil {
                     currentBusyAction = .prepareGitHubSync
                     setStatus("Preparing GitHub sync preview...", tone: .info)
-                    currentApplyPreview = try helper.getApplyPreview(
+                    currentApplyPreview = try await helper.getApplyPreview(
                         batchID: batchID,
                         openAIKey: savedOpenAIKey,
                         openAIModel: savedOpenAIModelSelection.effectiveModel,
@@ -635,7 +635,7 @@ final class AppModel: ObservableObject {
         setStatus("Syncing accepted results to GitHub...", tone: .info)
         Task {
             do {
-                let result = try helper.applyAcceptedRecords(
+                let result = try await helper.applyAcceptedRecords(
                     batchID: batchID,
                     openAIKey: savedOpenAIKey,
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
@@ -714,7 +714,7 @@ final class AppModel: ObservableObject {
     }
 
     private func loadBatch(batchID: Int, updateStatusMessage: Bool) async throws {
-        let detail = try helper.getBatchDetail(
+        let detail = try await helper.getBatchDetail(
             batchID: batchID,
             openAIKey: savedOpenAIKey,
             openAIModel: savedOpenAIModelSelection.effectiveModel,
@@ -724,7 +724,7 @@ final class AppModel: ObservableObject {
         currentBatchDetail = detail
         syncSelection(with: detail.records.filter { $0.status != "rejected" })
         if detail.accepted_count > 0 {
-            currentApplyPreview = try helper.getApplyPreview(
+            currentApplyPreview = try await helper.getApplyPreview(
                 batchID: batchID,
                 openAIKey: savedOpenAIKey,
                 openAIModel: savedOpenAIModelSelection.effectiveModel,

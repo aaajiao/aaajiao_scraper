@@ -29,7 +29,12 @@ struct ContentView: View {
                 Button {
                     model.requestImportSheet()
                 } label: {
-                    Label("Import URL…", systemImage: "plus.circle")
+                    AnimatedToolbarLabel(
+                        title: "Import URL…",
+                        systemImage: "plus.circle",
+                        style: .pulse,
+                        isAnimating: model.isImportingURL
+                    )
                 }
                 .help("Import a single artwork URL")
                 .appArrowCursor()
@@ -37,7 +42,12 @@ struct ContentView: View {
                 Button {
                     model.startSync()
                 } label: {
-                    Label("Sync Entire Site", systemImage: "arrow.trianglehead.2.clockwise")
+                    AnimatedToolbarLabel(
+                        title: "Sync Entire Site",
+                        systemImage: "arrow.trianglehead.2.clockwise",
+                        style: .spin,
+                        isAnimating: model.isSyncingSite
+                    )
                 }
                 .disabled(!model.canRunProtectedActions || model.isBusy)
                 .appArrowCursor()
@@ -53,7 +63,12 @@ struct ContentView: View {
                 Button {
                     model.refreshWorkspaceBaseline()
                 } label: {
-                    Label("Refresh Baseline", systemImage: "arrow.down.circle")
+                    AnimatedToolbarLabel(
+                        title: "Refresh Baseline",
+                        systemImage: "arrow.down.circle",
+                        style: .lift,
+                        isAnimating: model.isRefreshingBaseline
+                    )
                 }
                 .disabled(!model.canRefreshBaseline)
                 .appArrowCursor()
@@ -736,7 +751,12 @@ private struct ToolbarGitHubSyncButton: View {
                 Button {
                     model.requestApply()
                 } label: {
-                    Label(model.gitHubSyncActionTitle, systemImage: model.gitHubSyncActionSymbol)
+                    AnimatedToolbarLabel(
+                        title: model.gitHubSyncActionTitle,
+                        systemImage: model.gitHubSyncActionSymbol,
+                        style: model.isSyncingGitHub ? .spin : .pulse,
+                        isAnimating: model.isPreparingGitHubSync || model.isSyncingGitHub
+                    )
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!model.canRequestGitHubSync)
@@ -745,12 +765,85 @@ private struct ToolbarGitHubSyncButton: View {
                 Button {
                     model.requestApply()
                 } label: {
-                    Label(model.gitHubSyncActionTitle, systemImage: model.gitHubSyncActionSymbol)
+                    AnimatedToolbarLabel(
+                        title: model.gitHubSyncActionTitle,
+                        systemImage: model.gitHubSyncActionSymbol,
+                        style: .pulse,
+                        isAnimating: false
+                    )
                 }
                 .buttonStyle(.bordered)
                 .disabled(true)
                 .appArrowCursor()
             }
+        }
+    }
+}
+
+private enum ToolbarAnimationStyle {
+    case pulse
+    case spin
+    case lift
+}
+
+private struct AnimatedToolbarLabel: View {
+    let title: String
+    let systemImage: String
+    let style: ToolbarAnimationStyle
+    let isAnimating: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: !isEffectivelyAnimating)) { context in
+            let time = context.date.timeIntervalSinceReferenceDate
+            Label {
+                Text(title)
+            } icon: {
+                Image(systemName: systemImage)
+                    .rotationEffect(rotationAngle(at: time))
+                    .scaleEffect(iconScale(at: time))
+                    .offset(y: verticalOffset(at: time))
+            }
+        }
+        .animation(.easeOut(duration: 0.18), value: isEffectivelyAnimating)
+    }
+
+    private var isEffectivelyAnimating: Bool {
+        isAnimating && !reduceMotion
+    }
+
+    private func rotationAngle(at time: TimeInterval) -> Angle {
+        guard isEffectivelyAnimating else { return .degrees(0) }
+        switch style {
+        case .spin:
+            return .degrees((time * 320).truncatingRemainder(dividingBy: 360))
+        case .pulse, .lift:
+            return .degrees(0)
+        }
+    }
+
+    private func iconScale(at time: TimeInterval) -> CGFloat {
+        guard isEffectivelyAnimating else { return 1 }
+        let wave = sin(time * .pi * 2)
+        switch style {
+        case .pulse:
+            return 1 + 0.08 * wave
+        case .spin:
+            return 1.03
+        case .lift:
+            return 1 + 0.06 * wave
+        }
+    }
+
+    private func verticalOffset(at time: TimeInterval) -> CGFloat {
+        guard isEffectivelyAnimating else { return 0 }
+        let wave = sin(time * .pi * 2)
+        switch style {
+        case .lift:
+            return -1.8 * CGFloat(wave)
+        case .pulse, .spin:
+            return 0
         }
     }
 }
