@@ -67,6 +67,7 @@ def test_validation_response_format_uses_strict_required_schema():
         "credits",
         "description_en",
         "description_cn",
+        "video_link",
         "confidence",
         "should_apply",
         "rejection_reason",
@@ -243,6 +244,116 @@ def test_get_batch_detail_includes_image_urls(tmp_path, monkeypatch):
         "https://cdn.example.com/work-1.jpg",
         "https://cdn.example.com/work-2.jpg",
     ]
+
+
+def test_import_url_prefers_hybrid_extraction_and_preserves_richer_fields(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+    helper.ensure_workspace()
+
+    class FakeScraper:
+        def __init__(self, use_cache: bool = True):
+            self.use_cache = use_cache
+
+        def extract_metadata_bs4(self, url: str):
+            return {
+                "url": url,
+                "title": "One ritual",
+                "title_cn": "一个仪式",
+                "year": "2025",
+                "type": "Video",
+                "images": ["https://cdn.example.com/basic.jpg"],
+                "high_res_images": ["https://cdn.example.com/basic.jpg"],
+                "video_link": "",
+                "materials": "",
+                "size": "",
+                "duration": "",
+                "credits": "",
+                "description_en": "",
+                "description_cn": "",
+                "source": "local",
+            }
+
+        def extract_work_details_v2(self, url: str):
+            return {
+                "url": url,
+                "title": "One ritual",
+                "title_cn": "一个仪式",
+                "year": "2025",
+                "type": "Video",
+                "images": ["https://cdn.example.com/basic.jpg"],
+                "high_res_images": ["https://cdn.example.com/highres.jpg"],
+                "video_link": "https://vimeo.com/example",
+                "materials": "",
+                "size": "Dimension variable / 尺寸可变",
+                "duration": "12'00''",
+                "credits": "",
+                "description_en": "English description",
+                "description_cn": "中文描述",
+                "source": "hybrid_layer2",
+            }
+
+    helper._call_openai_validation = lambda url, base_data, content_block: helper.AIValidationCallResult(
+        payload=helper.AIValidationResult(
+            page_type="artwork",
+            title="One ritual",
+            title_cn="一个仪式",
+            year="2025",
+            type="Video",
+            materials="",
+            size="Dimension variable / 尺寸可变",
+            duration="12'00''",
+            credits="",
+            description_en="English description",
+            description_cn="中文描述",
+            video_link="",
+            confidence=0.96,
+            should_apply=True,
+            rejection_reason="",
+        ),
+        available=True,
+        error_state="",
+    )
+
+    result = helper._import_url(
+        "https://eventstructure.com/One-ritual",
+        {
+            "AaajiaoScraper": FakeScraper,
+            "is_artwork": lambda data: True,
+            "normalize_year": lambda value: value,
+        },
+    )
+
+    assert result["should_apply"] is True
+    assert result["proposed"]["source"] == "hybrid_layer2"
+    assert result["proposed"]["video_link"] == "https://vimeo.com/example"
+    assert result["proposed"]["high_res_images"] == ["https://cdn.example.com/highres.jpg"]
+
+
+def test_merge_existing_work_with_proposed_keeps_stronger_existing_fields():
+    helper = _load_helper_module()
+
+    existing = {
+        "url": "https://eventstructure.com/One-ritual",
+        "title": "One ritual",
+        "video_link": "https://vimeo.com/original",
+        "high_res_images": ["https://cdn.example.com/highres.jpg"],
+        "description_en": "Existing description",
+    }
+    proposed = {
+        "url": "https://eventstructure.com/One-ritual",
+        "title": "One ritual",
+        "video_link": "",
+        "high_res_images": [],
+        "description_en": "Updated description",
+    }
+
+    merged = helper._merge_existing_work_with_proposed(existing, proposed)
+
+    assert merged["video_link"] == "https://vimeo.com/original"
+    assert merged["high_res_images"] == ["https://cdn.example.com/highres.jpg"]
+    assert merged["description_en"] == "Updated description"
 
 
 def test_apply_accepted_records_cleans_up_applied_batch(tmp_path, monkeypatch):

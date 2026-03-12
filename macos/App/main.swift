@@ -1129,10 +1129,12 @@ private struct RecordDetailPanel: View {
                 DetailContentRow(label: "Size", value: record.size)
                 DetailContentRow(label: "Duration", value: record.duration)
                 DetailContentRow(label: "Credits", value: record.credits)
+                DetailContentRow(label: "Video", value: record.video_link)
                 DetailContentRow(label: "Mode", value: record.is_update ? "Update" : "New record")
             }
 
             ImageURLSection(images: record.images)
+            ImageURLSection(title: "High-Res Image URLs", emptyMessage: "No high-res image URLs found", images: record.high_res_images)
 
             if !record.description_en.isEmpty {
                 TextBlockSection(title: "Description EN", value: record.description_en)
@@ -1166,15 +1168,17 @@ private struct RecordDetailPanel: View {
 }
 
 private struct ImageURLSection: View {
+    var title: String = "Image URLs"
+    var emptyMessage: String = "No image URLs found"
     let images: [String]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Image URLs")
+            Text(title)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
             if images.isEmpty {
-                Text("No image URLs found")
+                Text(emptyMessage)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {

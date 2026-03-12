@@ -92,8 +92,10 @@ PROPOSED_FIELDS = {
     "credits",
     "description_en",
     "description_cn",
+    "video_link",
     "url",
     "images",
+    "high_res_images",
     "source",
 }
 
@@ -125,6 +127,7 @@ class AIValidationResult(BaseModel):
     credits: str = ""
     description_en: str = ""
     description_cn: str = ""
+    video_link: str = ""
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     should_apply: bool = False
     rejection_reason: str = ""
@@ -800,6 +803,7 @@ def _blank_ai_validation(base_data: Dict[str, Any], rejection_reason: str) -> AI
         credits=_normalize_string(base_data.get("credits")),
         description_en=_normalize_string(base_data.get("description_en")),
         description_cn=_normalize_string(base_data.get("description_cn")),
+        video_link=_normalize_string(base_data.get("video_link")),
         confidence=0.0,
         should_apply=False,
         rejection_reason=rejection_reason,
@@ -833,6 +837,7 @@ def _validation_response_format() -> Dict[str, Any]:
             "credits",
             "description_en",
             "description_cn",
+            "video_link",
             "confidence",
             "should_apply",
             "rejection_reason",
@@ -849,6 +854,7 @@ def _validation_response_format() -> Dict[str, Any]:
             "credits": {"type": "string"},
             "description_en": {"type": "string"},
             "description_cn": {"type": "string"},
+            "video_link": {"type": "string"},
             "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
             "should_apply": {"type": "boolean"},
             "rejection_reason": {"type": "string"},
@@ -1060,16 +1066,37 @@ def _has_required_artwork_fields(record: Dict[str, Any]) -> bool:
 
 
 def _sanitize_proposed_record(data: Dict[str, Any], url: str) -> Dict[str, Any]:
-    sanitized: Dict[str, Any] = {"url": url, "source": "macos_local"}
+    sanitized: Dict[str, Any] = {
+        "url": url,
+        "source": _normalize_string(data.get("source")) or "macos_local",
+    }
     for field in PROPOSED_FIELDS:
-        if field == "images":
-            images = data.get("images", [])
-            sanitized["images"] = images if isinstance(images, list) else []
+        if field in {"images", "high_res_images"}:
+            image_values = data.get(field, [])
+            sanitized[field] = image_values if isinstance(image_values, list) else []
         elif field in {"url", "source"}:
             continue
         else:
             sanitized[field] = _normalize_string(data.get(field))
     return sanitized
+
+
+def _is_meaningful_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return any(_is_meaningful_value(item) for item in value)
+    return True
+
+
+def _merge_existing_work_with_proposed(existing: Dict[str, Any], proposed: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(existing)
+    for key, value in proposed.items():
+        if _is_meaningful_value(value) or key not in merged:
+            merged[key] = value
+    return merged
 
 
 def _gate_record(
@@ -1118,40 +1145,54 @@ def _import_url(url: str, modules: Dict[str, Any]) -> Dict[str, Any]:
     with workspace_cwd():
         scraper = scraper_cls(use_cache=True)
         base_data = scraper.extract_metadata_bs4(url)
-    if not base_data:
-        raise RuntimeError("Local extraction returned no data")
+        hybrid_data = scraper.extract_work_details_v2(url)
+    if not base_data and not hybrid_data:
+        raise RuntimeError("No extraction data returned")
 
-    base_data = _normalize_base_data(modules, base_data)
-    is_work = modules["is_artwork"](base_data)
+    if base_data:
+        base_data = _normalize_base_data(modules, base_data)
+    if hybrid_data:
+        hybrid_data = _normalize_base_data(modules, hybrid_data)
+
+    validation_base = base_data or hybrid_data or {}
+    content_source = hybrid_data or base_data or {}
+    is_work = modules["is_artwork"](validation_base)
     content_block = {
         "main_text": "\n\n".join(
             part
             for part in [
-                _normalize_string(base_data.get("title")),
-                _normalize_string(base_data.get("title_cn")),
-                _normalize_string(base_data.get("materials")),
-                _normalize_string(base_data.get("description_en")),
-                _normalize_string(base_data.get("description_cn")),
+                _normalize_string(content_source.get("title")),
+                _normalize_string(content_source.get("title_cn")),
+                _normalize_string(content_source.get("materials")),
+                _normalize_string(content_source.get("description_en")),
+                _normalize_string(content_source.get("description_cn")),
             ]
             if part
         )[:12000],
-        "images": base_data.get("images", []),
+        "images": (
+            content_source.get("high_res_images")
+            if isinstance(content_source.get("high_res_images"), list) and content_source.get("high_res_images")
+            else content_source.get("images", [])
+        ),
         "tags_footer": {
-            "type": _normalize_string(base_data.get("type")),
-            "year": _normalize_string(base_data.get("year")),
+            "type": _normalize_string(content_source.get("type")),
+            "year": _normalize_string(content_source.get("year")),
+            "video_link": _normalize_string(content_source.get("video_link")),
         },
     }
-    ai_result = _call_openai_validation(url, base_data, content_block)
+    ai_result = _call_openai_validation(url, validation_base, content_block)
     validated = ai_result.payload
-    merged = dict(base_data)
-    merged.update(validated.model_dump())
+    merged = _merge_existing_work_with_proposed(content_source, validated.model_dump())
     merged["url"] = url
-    merged["images"] = base_data.get("images", []) if isinstance(base_data.get("images"), list) else []
-    merged["source"] = "macos_local"
+    if not isinstance(merged.get("images"), list):
+        merged["images"] = []
+    if not isinstance(merged.get("high_res_images"), list):
+        merged["high_res_images"] = merged.get("images", []) if isinstance(merged.get("images"), list) else []
+    merged["source"] = _normalize_string(content_source.get("source")) or "macos_local"
     proposed = _sanitize_proposed_record(merged, url)
     page_type, should_apply, rejection_reason = _gate_record(
         url=url,
-        base_data=base_data,
+        base_data=validation_base,
         validated=validated,
         ai_available=ai_result.available,
         is_artwork=is_work,
@@ -1215,7 +1256,13 @@ def _record_to_dto(row: sqlite3.Row) -> Dict[str, Any]:
         "credits": _normalize_string(proposed.get("credits")),
         "description_en": _normalize_string(proposed.get("description_en")),
         "description_cn": _normalize_string(proposed.get("description_cn")),
+        "video_link": _normalize_string(proposed.get("video_link")),
         "images": images if isinstance(images, list) else [],
+        "high_res_images": (
+            proposed.get("high_res_images", [])
+            if isinstance(proposed.get("high_res_images", []), list)
+            else []
+        ),
         "error_message": row["error_message"],
     }
 
@@ -1314,9 +1361,13 @@ def _merge_accepted_records(batch_id: int) -> Tuple[List[Dict[str, Any]], int, i
         proposed = json.loads(row["proposed_record_json"])
         if proposed["url"] in by_url:
             updated_count += 1
+            by_url[proposed["url"]] = _merge_existing_work_with_proposed(
+                by_url[proposed["url"]],
+                proposed,
+            )
         else:
             new_count += 1
-        by_url[proposed["url"]] = proposed
+            by_url[proposed["url"]] = proposed
 
     merged = list(by_url.values())
     modules = _load_snapshot_modules()
