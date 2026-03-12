@@ -19,6 +19,7 @@ struct ProposedRecord: Codable, Identifiable, Hashable {
     let credits: String
     let description_en: String
     let description_cn: String
+    let images: [String]
     let error_message: String?
 
     var displayTitle: String {

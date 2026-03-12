@@ -209,6 +209,40 @@ def test_get_batch_detail_returns_all_record_states(tmp_path, monkeypatch):
         helper.RECORD_REJECTED,
         helper.RECORD_FAILED,
     }
+    accepted_record = next(record for record in detail["records"] if record["status"] == helper.RECORD_ACCEPTED)
+    assert accepted_record["images"] == []
+
+
+def test_get_batch_detail_includes_image_urls(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+
+    batch_id = helper._create_batch("manual")
+    helper._insert_record(
+        batch_id=batch_id,
+        url="https://eventstructure.com/image-work",
+        status=helper.RECORD_READY_FOR_REVIEW,
+        page_type="artwork",
+        confidence=0.91,
+        is_update=False,
+        proposed={
+            "title": "Image Work",
+            "url": "https://eventstructure.com/image-work",
+            "images": [
+                "https://cdn.example.com/work-1.jpg",
+                "https://cdn.example.com/work-2.jpg",
+            ],
+        },
+        error=None,
+    )
+
+    detail = helper.get_batch_detail(batch_id)
+
+    assert detail["records"][0]["images"] == [
+        "https://cdn.example.com/work-1.jpg",
+        "https://cdn.example.com/work-2.jpg",
+    ]
 
 
 def test_apply_accepted_records_cleans_up_applied_batch(tmp_path, monkeypatch):

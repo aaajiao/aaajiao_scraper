@@ -1195,6 +1195,7 @@ def _refresh_batch_status(conn: sqlite3.Connection, batch_id: int) -> None:
 
 def _record_to_dto(row: sqlite3.Row) -> Dict[str, Any]:
     proposed = json.loads(row["proposed_record_json"]) if row["proposed_record_json"] else {}
+    images = proposed.get("images", [])
     return {
         "id": row["id"],
         "batch_id": row["batch_id"],
@@ -1214,6 +1215,7 @@ def _record_to_dto(row: sqlite3.Row) -> Dict[str, Any]:
         "credits": _normalize_string(proposed.get("credits")),
         "description_en": _normalize_string(proposed.get("description_en")),
         "description_cn": _normalize_string(proposed.get("description_cn")),
+        "images": images if isinstance(images, list) else [],
         "error_message": row["error_message"],
     }
 

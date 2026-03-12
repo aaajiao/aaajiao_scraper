@@ -1132,6 +1132,8 @@ private struct RecordDetailPanel: View {
                 DetailContentRow(label: "Mode", value: record.is_update ? "Update" : "New record")
             }
 
+            ImageURLSection(images: record.images)
+
             if !record.description_en.isEmpty {
                 TextBlockSection(title: "Description EN", value: record.description_en)
             }
@@ -1159,6 +1161,47 @@ private struct RecordDetailPanel: View {
             return "Failed"
         default:
             return status.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+}
+
+private struct ImageURLSection: View {
+    let images: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Image URLs")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            if images.isEmpty {
+                Text("No image URLs found")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(images.enumerated()), id: \.offset) { index, imageURL in
+                        HStack(alignment: .top, spacing: 10) {
+                            Text("\(index + 1).")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 18, alignment: .leading)
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(imageURL)
+                                    .font(.caption)
+                                    .textSelection(.enabled)
+                                    .foregroundStyle(.primary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                if let url = URL(string: imageURL), !imageURL.isEmpty {
+                                    Link("Open Image", destination: url)
+                                        .font(.caption)
+                                }
+                            }
+                        }
+                        .padding(12)
+                        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                }
+            }
         }
     }
 }
