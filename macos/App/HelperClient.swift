@@ -88,6 +88,16 @@ final class HelperClient {
         )
     }
 
+    func getBatchDetail(batchID: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> BatchDetailResponse {
+        try runCommand(
+            arguments: ["getBatchDetail", "--batch-id", "\(batchID)"],
+            openAIKey: openAIKey,
+            openAIModel: openAIModel,
+            openAIModelSource: openAIModelSource,
+            as: BatchDetailResponse.self
+        )
+    }
+
     func getApplyPreview(batchID: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> ApplyPreview {
         try runCommand(
             arguments: ["getApplyPreview", "--batch-id", "\(batchID)"],

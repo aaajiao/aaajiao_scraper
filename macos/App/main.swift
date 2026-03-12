@@ -40,19 +40,23 @@ private func openAIModelSourceLabel(_ source: String) -> String {
     }
 }
 
+enum ImporterFlowState: String {
+    case idle
+    case imported
+    case reviewing
+    case readyToSync
+    case syncing
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var manualURL = ""
-    @Published var batches: [BatchSummary] = []
-    @Published var pendingRecords: [ProposedRecord] = []
+    @Published var currentBatchID: Int?
+    @Published var currentBatchDetail: BatchDetailResponse?
     @Published var selectedRecordID: Int?
-    @Published var selectedBatchID: Int?
-    @Published var applyPreview: ApplyPreview?
-    @Published var previewBatchID: Int?
-    @Published var pendingApplyBatch: BatchSummary?
-    @Published var pendingDeleteBatch: BatchSummary?
+    @Published var currentApplyPreview: ApplyPreview?
+    @Published var currentFlowState: ImporterFlowState = .idle
     @Published var isShowingApplyConfirmation = false
-    @Published var isShowingDeleteConfirmation = false
     @Published var isShowingResetConfirmation = false
     @Published var statusMessage = "Ready"
     @Published var settings = AppSettings.empty
@@ -70,10 +74,6 @@ final class AppModel: ObservableObject {
         settingsDraftOpenAIKey = savedKey
         settingsDraftOpenAIModelPreset = modelSelection.preset
         settingsDraftCustomOpenAIModel = modelSelection.customModel
-    }
-
-    var selectedRecord: ProposedRecord? {
-        pendingRecords.first { $0.id == selectedRecordID }
     }
 
     var savedOpenAIKey: String {
@@ -125,10 +125,51 @@ final class AppModel: ObservableObject {
         hasSavedOpenAIKey
     }
 
-    var visiblePendingRecords: [ProposedRecord] {
-        guard let selectedBatchID else { return pendingRecords }
-        let filtered = pendingRecords.filter { $0.batch_id == selectedBatchID }
-        return filtered.isEmpty ? pendingRecords : filtered
+    var currentBatchSummary: BatchSummary? {
+        currentBatchDetail?.batch
+    }
+
+    var visibleCurrentRecords: [ProposedRecord] {
+        (currentBatchDetail?.records ?? []).filter { $0.status != "rejected" }
+    }
+
+    var selectedRecord: ProposedRecord? {
+        if let selectedRecordID {
+            return visibleCurrentRecords.first { $0.id == selectedRecordID }
+        }
+        return visibleCurrentRecords.first
+    }
+
+    var hasAcceptedRecords: Bool {
+        (currentBatchDetail?.accepted_count ?? 0) > 0
+    }
+
+    var hasCurrentRun: Bool {
+        currentBatchDetail != nil
+    }
+
+    var currentRunTitle: String {
+        guard let batch = currentBatchSummary else { return "No current results" }
+        return batch.mode == "manual" ? "Single URL import" : "Site sync in review"
+    }
+
+    var reviewStatusValue: String {
+        guard let detail = currentBatchDetail else { return "Nothing to review" }
+        if detail.accepted_count > 0 {
+            return "\(detail.accepted_count) accepted"
+        }
+        if detail.pending_count > 0 {
+            return "\(detail.pending_count) pending"
+        }
+        if detail.failed_count > 0 {
+            return "\(detail.failed_count) failed"
+        }
+        return "Ready"
+    }
+
+    var canSyncCurrentRun: Bool {
+        guard let preview = currentApplyPreview else { return false }
+        return hasAcceptedRecords && preview.will_push
     }
 
     func bootstrapIfNeeded() {
@@ -147,11 +188,11 @@ final class AppModel: ObservableObject {
                 )
                 settings = response.settings
                 syncDraftWithSavedSettingsIfNeeded()
-                try await refresh()
+                try await refresh(allowFallbackBatch: true)
                 if response.status == "initialized" {
-                    statusMessage = "Workspace initialized from bundled seed"
+                    statusMessage = "Workspace initialized"
                 } else if response.status == "seed_version_mismatch" {
-                    statusMessage = "Bundled snapshot changed. Reset Workspace only if you want to replace the current local snapshot."
+                    statusMessage = "Workspace snapshot differs from the bundled seed"
                 }
             } catch {
                 statusMessage = display(error)
@@ -162,44 +203,47 @@ final class AppModel: ObservableObject {
     func refreshFromUI() {
         Task {
             do {
-                try await refresh()
+                try await refresh(allowFallbackBatch: currentBatchID == nil)
             } catch {
                 statusMessage = display(error)
             }
         }
     }
 
-    func refresh() async throws {
+    func refresh(allowFallbackBatch: Bool) async throws {
         let response = try helper.listPendingRecords(
             openAIKey: savedOpenAIKey,
             openAIModel: savedOpenAIModelSelection.effectiveModel,
             openAIModelSource: savedOpenAIModelSelection.source
         )
         settings = response.settings
-        batches = response.batches
-        pendingRecords = response.pending_records
         syncDraftWithSavedSettingsIfNeeded()
 
-        if let previewBatchID, !batches.contains(where: { $0.id == previewBatchID }) {
-            self.previewBatchID = nil
-            applyPreview = nil
+        if let currentBatchID {
+            do {
+                try await loadBatch(batchID: currentBatchID, updateStatusMessage: false)
+                return
+            } catch {
+                clearCurrentRun()
+            }
         }
 
-        if let selectedBatchID, !batches.contains(where: { $0.id == selectedBatchID }) {
-            self.selectedBatchID = nil
+        if allowFallbackBatch, let latestBatch = response.batches.first {
+            do {
+                try await loadBatch(batchID: latestBatch.id, updateStatusMessage: false)
+                statusMessage = "Loaded the latest review results"
+                return
+            } catch {
+                clearCurrentRun()
+            }
         }
 
-        let visibleRecords = visiblePendingRecords
-        if let selectedRecordID, visibleRecords.contains(where: { $0.id == selectedRecordID }) {
-            self.selectedRecordID = selectedRecordID
+        if !hasSavedOpenAIKey {
+            currentFlowState = .idle
+            statusMessage = "OpenAI key missing. Save a key to enable imports."
         } else {
-            self.selectedRecordID = visibleRecords.first?.id ?? pendingRecords.first?.id
-        }
-
-        if pendingRecords.isEmpty {
-            statusMessage = hasSavedOpenAIKey ? "No pending records" : "OpenAI key missing. Save a key to enable imports."
-        } else {
-            statusMessage = "Loaded \(pendingRecords.count) review records"
+            currentFlowState = .idle
+            statusMessage = "Ready for a new import"
         }
     }
 
@@ -208,6 +252,7 @@ final class AppModel: ObservableObject {
             statusMessage = "OpenAI key missing. Save a key to continue."
             return
         }
+        currentFlowState = .syncing
         Task {
             do {
                 let result = try helper.startIncrementalSync(
@@ -215,9 +260,10 @@ final class AppModel: ObservableObject {
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
                     openAIModelSource: savedOpenAIModelSelection.source
                 )
-                try await refresh()
-                statusMessage = "Synced \(result.urls_processed) URLs into batch #\(result.batch_id)"
+                try await loadBatch(batchID: result.batch_id, updateStatusMessage: false)
+                statusMessage = "Synced \(result.urls_processed) URLs"
             } catch {
+                currentFlowState = .idle
                 statusMessage = display(error)
             }
         }
@@ -236,9 +282,10 @@ final class AppModel: ObservableObject {
                     openAIModelSource: savedOpenAIModelSelection.source
                 )
                 settings = response.settings
+                clearCurrentRun()
                 isShowingResetConfirmation = false
-                try await refresh()
-                statusMessage = "Workspace reset from bundled seed"
+                try await refresh(allowFallbackBatch: false)
+                statusMessage = "Workspace reset"
             } catch {
                 statusMessage = display(error)
             }
@@ -252,6 +299,7 @@ final class AppModel: ObservableObject {
         }
         let trimmed = manualURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        currentFlowState = .syncing
         Task {
             do {
                 let result = try helper.submitManualURL(
@@ -261,9 +309,10 @@ final class AppModel: ObservableObject {
                     openAIModelSource: savedOpenAIModelSelection.source
                 )
                 manualURL = ""
-                try await refresh()
-                statusMessage = "Queued \(result.url) in batch #\(result.batch_id)"
+                try await loadBatch(batchID: result.batch_id, updateStatusMessage: false)
+                statusMessage = "Imported \(result.url)"
             } catch {
+                currentFlowState = .idle
                 statusMessage = display(error)
             }
         }
@@ -279,129 +328,89 @@ final class AppModel: ObservableObject {
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
                     openAIModelSource: savedOpenAIModelSelection.source
                 )
-                try await refresh()
-                statusMessage = "Accepted record #\(record.id)"
+                if let batchID = currentBatchID {
+                    try await loadBatch(batchID: batchID, updateStatusMessage: false)
+                }
+                statusMessage = "Accepted \(record.displayTitle)"
             } catch {
                 statusMessage = display(error)
             }
         }
     }
 
-    func rejectSelectedRecord() {
+    func deleteSelectedRecord() {
         guard let record = selectedRecord else { return }
         Task {
             do {
+                guard let batchID = currentBatchID else { return }
+                if visibleCurrentRecords.count <= 1 {
+                    _ = try helper.deleteBatch(
+                        batchID: batchID,
+                        openAIKey: savedOpenAIKey,
+                        openAIModel: savedOpenAIModelSelection.effectiveModel,
+                        openAIModelSource: savedOpenAIModelSelection.source
+                    )
+                    clearCurrentRun()
+                    try await refresh(allowFallbackBatch: false)
+                    statusMessage = "Discarded current results"
+                    return
+                }
+
                 _ = try helper.rejectRecord(
                     id: record.id,
                     openAIKey: savedOpenAIKey,
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
                     openAIModelSource: savedOpenAIModelSelection.source
                 )
-                try await refresh()
-                statusMessage = "Rejected record #\(record.id)"
+                try await loadBatch(batchID: batchID, updateStatusMessage: false)
+                statusMessage = "Deleted \(record.displayTitle)"
             } catch {
                 statusMessage = display(error)
             }
         }
     }
 
-    func loadApplyPreview(for batch: BatchSummary) {
+    func discardCurrentRun() {
+        guard let batchID = currentBatchID else { return }
         Task {
             do {
-                let preview = try helper.getApplyPreview(
-                    batchID: batch.id,
+                _ = try helper.deleteBatch(
+                    batchID: batchID,
                     openAIKey: savedOpenAIKey,
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
                     openAIModelSource: savedOpenAIModelSelection.source
                 )
-                previewBatchID = batch.id
-                applyPreview = preview
-                statusMessage = preview.error_message.isEmpty ? "Preview ready for batch #\(batch.id)" : preview.error_message
+                clearCurrentRun()
+                try await refresh(allowFallbackBatch: false)
+                statusMessage = "Discarded current results"
             } catch {
                 statusMessage = display(error)
             }
         }
     }
 
-    func focusBatch(_ batch: BatchSummary) {
-        selectedBatchID = batch.id
-        if let firstRecord = pendingRecords.first(where: { $0.batch_id == batch.id }) {
-            selectedRecordID = firstRecord.id
-            let reviewCount = pendingRecords.filter { $0.batch_id == batch.id }.count
-            statusMessage = "Showing \(reviewCount) review records for batch #\(batch.id)"
-        } else {
-            statusMessage = "Batch #\(batch.id) has no review records."
-        }
-    }
-
-    func clearBatchFilter() {
-        selectedBatchID = nil
-        if let selectedRecordID, pendingRecords.contains(where: { $0.id == selectedRecordID }) {
-            self.selectedRecordID = selectedRecordID
-        } else {
-            selectedRecordID = pendingRecords.first?.id
-        }
-        statusMessage = pendingRecords.isEmpty ? "No pending records" : "Showing all review records"
-    }
-
-    func requestApply(batch: BatchSummary) {
-        guard canRunProtectedActions else {
-            statusMessage = "OpenAI key missing. Save a key to continue."
-            return
-        }
-        pendingApplyBatch = batch
+    func requestApply() {
+        guard hasAcceptedRecords else { return }
         isShowingApplyConfirmation = true
     }
 
-    func requestDelete(batch: BatchSummary) {
-        pendingDeleteBatch = batch
-        isShowingDeleteConfirmation = true
-    }
-
     func confirmApply() {
-        guard let batch = pendingApplyBatch else { return }
+        guard let batchID = currentBatchID else { return }
+        currentFlowState = .syncing
         Task {
             do {
                 let result = try helper.applyAcceptedRecords(
-                    batchID: batch.id,
+                    batchID: batchID,
                     openAIKey: savedOpenAIKey,
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
                     openAIModelSource: savedOpenAIModelSelection.source
                 )
                 isShowingApplyConfirmation = false
-                pendingApplyBatch = nil
-                applyPreview = result.preview
-                previewBatchID = result.batch_id
-                try await refresh()
-                statusMessage = "Applied batch #\(result.batch_id) at \(result.applied_commit_sha)"
+                clearCurrentRun()
+                try await refresh(allowFallbackBatch: false)
+                statusMessage = "Synced to GitHub at \(result.applied_commit_sha)"
             } catch {
-                statusMessage = display(error)
-            }
-        }
-    }
-
-    func confirmDelete() {
-        guard let batch = pendingDeleteBatch else { return }
-        Task {
-            do {
-                let result = try helper.deleteBatch(
-                    batchID: batch.id,
-                    openAIKey: savedOpenAIKey,
-                    openAIModel: savedOpenAIModelSelection.effectiveModel,
-                    openAIModelSource: savedOpenAIModelSelection.source
-                )
-                isShowingDeleteConfirmation = false
-                pendingDeleteBatch = nil
-                if previewBatchID == result.batch_id {
-                    previewBatchID = nil
-                    applyPreview = nil
-                }
-                if selectedBatchID == result.batch_id {
-                    selectedBatchID = nil
-                }
-                try await refresh()
-                statusMessage = "Deleted batch #\(result.batch_id) and \(result.deleted_records) record(s)"
-            } catch {
+                currentFlowState = hasAcceptedRecords ? .readyToSync : .reviewing
                 statusMessage = display(error)
             }
         }
@@ -462,6 +471,57 @@ final class AppModel: ObservableObject {
         NSApplication.shared.terminate(nil)
     }
 
+    private func loadBatch(batchID: Int, updateStatusMessage: Bool) async throws {
+        let detail = try helper.getBatchDetail(
+            batchID: batchID,
+            openAIKey: savedOpenAIKey,
+            openAIModel: savedOpenAIModelSelection.effectiveModel,
+            openAIModelSource: savedOpenAIModelSelection.source
+        )
+        currentBatchID = batchID
+        currentBatchDetail = detail
+        syncSelection(with: detail.records.filter { $0.status != "rejected" })
+        if detail.accepted_count > 0 {
+            currentApplyPreview = try helper.getApplyPreview(
+                batchID: batchID,
+                openAIKey: savedOpenAIKey,
+                openAIModel: savedOpenAIModelSelection.effectiveModel,
+                openAIModelSource: savedOpenAIModelSelection.source
+            )
+        } else {
+            currentApplyPreview = nil
+        }
+        currentFlowState = flowState(for: detail)
+        if updateStatusMessage {
+            statusMessage = "Loaded current results"
+        }
+    }
+
+    private func clearCurrentRun() {
+        currentBatchID = nil
+        currentBatchDetail = nil
+        selectedRecordID = nil
+        currentApplyPreview = nil
+        currentFlowState = .idle
+    }
+
+    private func syncSelection(with records: [ProposedRecord]) {
+        if let selectedRecordID, records.contains(where: { $0.id == selectedRecordID }) {
+            return
+        }
+        selectedRecordID = records.first?.id
+    }
+
+    private func flowState(for detail: BatchDetailResponse) -> ImporterFlowState {
+        if detail.accepted_count > 0 {
+            return .readyToSync
+        }
+        if detail.total_records > 0 {
+            return .reviewing
+        }
+        return .idle
+    }
+
     private func syncDraftWithSavedSettingsIfNeeded() {
         guard !isSettingsDirty else { return }
         settingsDraftOpenAIKey = savedOpenAIKey
@@ -481,45 +541,36 @@ struct ContentView: View {
         VStack(spacing: 0) {
             WindowHeaderView()
             Divider()
-            ImportActionsView()
-                .padding(.horizontal, 20)
-                .padding(.vertical, 16)
-            Divider()
-            NavigationSplitView {
-                ReviewSidebarView()
-            } detail: {
-                DetailWorkspaceView()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    StatusOverviewSection()
+                    ImportURLSection()
+                    SyncSiteSection()
+                    ReviewResultsSection()
+                    if model.hasAcceptedRecords {
+                        GitHubSyncSection()
+                    }
+                }
+                .padding(24)
             }
-            .navigationSplitViewStyle(.balanced)
             Divider()
             WorkspaceFooterView()
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 14)
         }
-        .frame(width: 960, height: 720)
+        .frame(width: 980, height: 760)
+        .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { model.bootstrapIfNeeded() }
-        .alert("Apply accepted records and push to git?", isPresented: $model.isShowingApplyConfirmation) {
-            Button("Cancel", role: .cancel) {
-                model.pendingApplyBatch = nil
-            }
-            Button("Apply", role: .destructive) {
+        .alert("Sync accepted results to GitHub?", isPresented: $model.isShowingApplyConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Sync", role: .destructive) {
                 model.confirmApply()
             }
         } message: {
-            if let batch = model.pendingApplyBatch {
-                Text("Batch #\(batch.id) will update aaajiao_works.json and aaajiao_portfolio.md, then commit and push.")
-            }
-        }
-        .alert("Delete batch from local activity?", isPresented: $model.isShowingDeleteConfirmation) {
-            Button("Cancel", role: .cancel) {
-                model.pendingDeleteBatch = nil
-            }
-            Button("Delete", role: .destructive) {
-                model.confirmDelete()
-            }
-        } message: {
-            if let batch = model.pendingDeleteBatch {
-                Text("Batch #\(batch.id) and all of its imported records will be removed from the local importer activity. This does not change the repository.")
+            if let preview = model.currentApplyPreview {
+                Text("This will sync \(preview.accepted_count) accepted result(s) to GitHub.")
+            } else {
+                Text("This will sync accepted results to GitHub.")
             }
         }
         .alert("Reset workspace from bundled seed?", isPresented: $model.isShowingResetConfirmation) {
@@ -540,100 +591,64 @@ private struct WindowHeaderView: View {
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("aaajiao Importer")
-                    .font(.title3.weight(.semibold))
-                Text("Review imported portfolio records, then explicitly apply accepted changes.")
+                    .font(.system(size: 28, weight: .semibold, design: .rounded))
+                Text("Import one URL or sync the site, review the results, then sync accepted changes to GitHub.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
 
             Spacer()
 
-            VStack(alignment: .trailing, spacing: 8) {
-                HStack(spacing: 8) {
-                    Button("Refresh") {
-                        model.refreshFromUI()
-                    }
-                    .keyboardShortcut("r", modifiers: [.command])
-                }
-
-                Text(model.statusMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.trailing)
-                    .frame(maxWidth: 260, alignment: .trailing)
-            }
+            Text(model.statusMessage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.trailing)
+                .frame(maxWidth: 260, alignment: .trailing)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 20)
     }
 }
 
-private struct ImportActionsView: View {
+private struct StatusOverviewSection: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .center, spacing: 12) {
-                SummaryTile(
-                    title: "OpenAI",
-                    value: model.hasSavedOpenAIKey ? "Configured" : "Missing",
-                    systemImage: model.hasSavedOpenAIKey ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
-                    tint: model.hasSavedOpenAIKey ? .green : .orange
-                )
-                SummaryTile(
-                    title: "Model",
-                    value: model.effectiveOpenAIModel,
-                    systemImage: "cpu",
-                    tint: .secondary
-                )
-                SummaryTile(
-                    title: "Queue",
-                    value: "\(model.pendingRecords.count) records",
-                    systemImage: "tray.full",
-                    tint: model.pendingRecords.isEmpty ? .secondary : .blue
-                )
-                SummaryTile(
-                    title: "Workspace",
-                    value: workspaceLabel(model.settings.workspace_status),
-                    systemImage: "externaldrive",
-                    tint: model.settings.workspace_status == "seed_version_mismatch" ? .orange : .secondary
-                )
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
-                    Button("Start Sync") { model.startSync() }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!model.canRunProtectedActions)
-
-                    TextField("Paste an eventstructure.com artwork URL", text: $model.manualURL)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit {
-                            model.submitURL()
-                        }
-
-                    Button("Import URL") { model.submitURL() }
-                        .disabled(!model.canRunProtectedActions || model.manualURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-
-                Text("Current model: \(model.effectiveOpenAIModel) (\(openAIModelSourceLabel(model.effectiveOpenAIModelSource)))")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-
-                if let workspaceStatus = model.settings.workspace_status, workspaceStatus == "seed_version_mismatch" {
-                    Text("Bundled snapshot changed. Reset Workspace only if you want to replace the current local snapshot with the app's latest bundled copy.")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                }
-
-                if !model.hasSavedOpenAIKey {
-                    Text("Imports and apply actions are disabled until an OpenAI key is saved below.")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(spacing: 14) {
+            StatusCard(
+                title: "OpenAI",
+                value: model.hasSavedOpenAIKey ? "Configured" : "Missing",
+                detail: model.hasSavedOpenAIKey ? model.effectiveOpenAIModel : "Save your API key in Settings",
+                systemImage: model.hasSavedOpenAIKey ? "checkmark.circle.fill" : "key.slash",
+                tint: model.hasSavedOpenAIKey ? .green : .orange
+            )
+            StatusCard(
+                title: "Current Run",
+                value: model.currentRunTitle,
+                detail: model.currentBatchSummary.map { "#\($0.id) \($0.mode == "manual" ? "Manual" : "Sync")" } ?? "No imported results loaded",
+                systemImage: "tray.full",
+                tint: model.hasCurrentRun ? .blue : .secondary
+            )
+            StatusCard(
+                title: "Review",
+                value: model.reviewStatusValue,
+                detail: reviewDetail(model.currentBatchDetail),
+                systemImage: "checklist",
+                tint: model.hasAcceptedRecords ? .green : .secondary
+            )
+            StatusCard(
+                title: "Workspace",
+                value: workspaceLabel(model.settings.workspace_status),
+                detail: model.settings.workspace_path.isEmpty ? "Unavailable" : "Local workspace ready",
+                systemImage: "externaldrive",
+                tint: model.settings.workspace_status == "seed_version_mismatch" ? .orange : .secondary
+            )
         }
+    }
+
+    private func reviewDetail(_ detail: BatchDetailResponse?) -> String {
+        guard let detail else { return "Nothing in review" }
+        return "\(detail.total_records) total | \(detail.failed_count) failed"
     }
 
     private func workspaceLabel(_ status: String?) -> String {
@@ -650,234 +665,184 @@ private struct ImportActionsView: View {
     }
 }
 
-private struct ReviewSidebarView: View {
+private struct ImportURLSection: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Group {
-            if model.visiblePendingRecords.isEmpty {
-                ContentUnavailablePanel(
-                    title: "No review records",
-                    message: model.hasSavedOpenAIKey ? "Run a sync or import a URL to populate the review queue." : "Save an OpenAI key in Settings to enable imports."
-                )
-            } else {
-                VStack(spacing: 0) {
-                    if let selectedBatchID = model.selectedBatchID {
-                        HStack(spacing: 8) {
-                            Text("Filtered to batch #\(selectedBatchID)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Button("Show All") {
-                                model.clearBatchFilter()
-                            }
-                            .buttonStyle(.link)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.top, 10)
-                    }
-
-                    List(selection: $model.selectedRecordID) {
-                        Section(queueSectionTitle) {
-                            ForEach(model.visiblePendingRecords) { record in
-                                ReviewRow(record: record)
-                                    .tag(record.id)
-                            }
-                        }
-                    }
-                    .listStyle(.sidebar)
-                }
-            }
-        }
-        .frame(minWidth: 280)
-    }
-
-    private var queueSectionTitle: String {
-        if let selectedBatchID = model.selectedBatchID {
-            return "Review Queue · Batch #\(selectedBatchID)"
-        }
-        return "Review Queue"
-    }
-}
-
-private struct DetailWorkspaceView: View {
-    @EnvironmentObject private var model: AppModel
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                if let record = model.selectedRecord {
-                    RecordDetailCard(record: record)
-                } else {
-                    ContentUnavailablePanel(
-                        title: "No record selected",
-                        message: "Choose a record from the sidebar to inspect its proposed fields."
-                    )
-                }
-
-                BatchActivityCard()
-            }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
-
-private struct RecordDetailCard: View {
-    @EnvironmentObject private var model: AppModel
-    let record: ProposedRecord
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(record.displayTitle)
+        SectionCard {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Import URL")
                     .font(.title3.weight(.semibold))
-                if !record.title_cn.isEmpty {
-                    Text(record.title_cn)
+                Text("Paste one eventstructure.com artwork URL and import it for review.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 12) {
+                    TextField("Paste an artwork URL", text: $model.manualURL)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit {
+                            model.submitURL()
+                        }
+
+                    Button("Import") {
+                        model.submitURL()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!model.canRunProtectedActions || model.manualURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+
+                if !model.hasSavedOpenAIKey {
+                    HStack(spacing: 10) {
+                        Label("OpenAI key required before you can import.", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                        Spacer()
+                        Button("Open Settings") {
+                            presentSettingsWindow(openWindow)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct SyncSiteSection: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        SectionCard(material: .thinMaterial) {
+            HStack(alignment: .center, spacing: 20) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Sync Entire Site")
+                        .font(.system(size: 24, weight: .semibold, design: .rounded))
+                    Text("Run an incremental site sync, review the imported results below, and keep only the entries you accept.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
-            }
 
-            QuickFactsGrid(record: record)
-            RecordActionsRow(record: record)
+                Spacer()
 
-            Form {
-                Section("Metadata") {
-                    DetailContentRow(label: "URL", value: record.url)
-                    DetailContentRow(label: "Year", value: record.year)
-                    DetailContentRow(label: "Type", value: record.type)
-                    DetailContentRow(label: "Materials", value: record.materials)
-                    DetailContentRow(label: "Size", value: record.size)
-                    DetailContentRow(label: "Duration", value: record.duration)
-                    DetailContentRow(label: "Credits", value: record.credits)
-                    DetailContentRow(label: "Mode", value: record.is_update ? "Update" : "New record")
+                Button("Sync Entire Site") {
+                    model.startSync()
                 }
-
-                if !record.description_en.isEmpty {
-                    Section("Description EN") {
-                        Text(record.description_en)
-                            .textSelection(.enabled)
-                    }
-                }
-
-                if !record.description_cn.isEmpty {
-                    Section("Description CN") {
-                        Text(record.description_cn)
-                            .textSelection(.enabled)
-                    }
-                }
-
-                if let errorMessage = record.error_message, !errorMessage.isEmpty {
-                    Section("Validation Note") {
-                        Text(errorMessage)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-                }
-            }
-
-            HStack(spacing: 10) {
-                Button("Accept") { model.acceptSelectedRecord() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(record.status == "accepted")
-                Button("Reject") { model.rejectSelectedRecord() }
-                    .disabled(record.status == "rejected")
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(!model.canRunProtectedActions)
             }
         }
     }
 }
 
-private struct BatchActivityCard: View {
+private struct ReviewResultsSection: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Batch Activity")
-                .font(.headline)
-            Text("Open Queue shows this batch's records for accept/reject. Apply Check shows what would be written if you apply accepted records.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if model.batches.isEmpty {
-                ContentUnavailablePanel(
-                    title: "No batches yet",
-                    message: "Run a sync or import a URL to create a batch."
-                )
-            } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(model.batches) { batch in
-                        let reviewCount = model.pendingRecords.filter { $0.batch_id == batch.id }.count
-
-                        VStack(alignment: .leading, spacing: 10) {
-                            HStack(alignment: .top, spacing: 12) {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("#\(batch.id) \(batch.mode.capitalized)")
-                                        .font(.body.weight(.semibold))
-                                    Text("\(batch.status) · accepted \(batch.accepted_records) · ready \(batch.ready_records) · total \(batch.total_records)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                    if reviewCount > 0 {
-                                        Text("\(reviewCount) review record\(reviewCount == 1 ? "" : "s") available")
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    if !batch.last_error.isEmpty {
-                                        Text(batch.last_error)
-                                            .font(.caption)
-                                            .foregroundStyle(.orange)
-                                            .lineLimit(2)
-                                    }
-                                }
-                                Spacer()
-                                HStack(spacing: 8) {
-                                    Button("Open Queue") { model.focusBatch(batch) }
-                                        .disabled(reviewCount == 0)
-                                    Button("Apply Check") { model.loadApplyPreview(for: batch) }
-                                    Button("Delete", role: .destructive) { model.requestDelete(batch: batch) }
-                                }
-                            }
+        SectionCard {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Review Results")
+                            .font(.title3.weight(.semibold))
+                        Text("Check the imported content before accepting it.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if model.hasCurrentRun {
+                        Button("Discard Run", role: .destructive) {
+                            model.discardCurrentRun()
                         }
-                        .padding(12)
-                        .background(
-                            Color(nsColor: .controlBackgroundColor),
-                            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        )
                     }
                 }
-            }
 
-            if let preview = model.applyPreview, let batch = model.batches.first(where: { $0.id == preview.batch_id }) {
-                Form {
-                    Section("Apply Preview") {
-                        DetailContentRow(label: "Batch", value: "#\(preview.batch_id)")
-                        DetailContentRow(label: "Accepted", value: "\(preview.accepted_count)")
-                        DetailContentRow(label: "New", value: "\(preview.new_count)")
-                        DetailContentRow(label: "Updated", value: "\(preview.updated_count)")
-                        DetailContentRow(label: "Will Push", value: preview.will_push ? "Yes" : "No")
+                if let detail = model.currentBatchDetail {
+                    RunSummaryStrip(detail: detail)
+
+                    if model.visibleCurrentRecords.isEmpty {
+                        EmptyStatePanel(
+                            title: "No reviewable results",
+                            message: "This run no longer has any visible items. Start a new import or sync."
+                        )
+                    } else if model.visibleCurrentRecords.count == 1, let record = model.selectedRecord {
+                        RecordDetailPanel(record: record)
+                    } else {
+                        HStack(alignment: .top, spacing: 18) {
+                            RecordListPanel()
+                                .frame(width: 300)
+                            if let record = model.selectedRecord {
+                                RecordDetailPanel(record: record)
+                            } else {
+                                EmptyStatePanel(
+                                    title: "Select a result",
+                                    message: "Choose an item from the list to inspect its details."
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    EmptyStatePanel(
+                        title: "No current results",
+                        message: "Import one URL or run a site sync to populate this area."
+                    )
+                }
+            }
+        }
+    }
+}
+
+private struct GitHubSyncSection: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        SectionCard(material: .thinMaterial) {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Sync to GitHub")
+                        .font(.title3.weight(.semibold))
+                    Text("Only accepted results will be synced.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let preview = model.currentApplyPreview {
+                    HStack(spacing: 12) {
+                        SummaryPill(label: "Accepted", value: "\(preview.accepted_count)")
+                        SummaryPill(label: "New", value: "\(preview.new_count)")
+                        SummaryPill(label: "Updated", value: "\(preview.updated_count)")
                     }
 
-                    Section("Target Files") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Target Files")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
                         ForEach(preview.target_files, id: \.self) { file in
                             Text(file)
+                                .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
                         }
                     }
 
                     if !preview.error_message.isEmpty {
-                        Section("Preview Note") {
-                            Text(preview.error_message)
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled)
-                        }
+                        Label(preview.error_message, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
                     }
 
-                    Section {
-                        Button("Apply Accepted Records") { model.requestApply(batch: batch) }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(!model.canRunProtectedActions || !preview.will_push || preview.accepted_count == 0)
+                    HStack {
+                        Spacer()
+                        Button("Sync to GitHub") {
+                            model.requestApply()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .disabled(!model.canRunProtectedActions || !model.canSyncCurrentRun)
                     }
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
                 }
             }
         }
@@ -894,14 +859,11 @@ private struct WorkspaceFooterView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
-                Text("The importer runs against a local workspace snapshot until you explicitly apply accepted records.")
+                Text("Local review data is temporary and is cleaned up after a successful GitHub sync.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button("Quit") {
-                model.quitApplication()
-            }
             Menu("Workspace") {
                 Button("Reset Workspace", role: .destructive) {
                     model.requestWorkspaceReset()
@@ -915,99 +877,69 @@ private struct WorkspaceFooterView: View {
     }
 }
 
-private struct SummaryTile: View {
+private struct StatusCard: View {
     let title: String
     let value: String
+    let detail: String
     let systemImage: String
     let tint: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             Label(title, systemImage: systemImage)
-                .font(.caption)
+                .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
             Text(value)
                 .font(.headline)
                 .foregroundStyle(tint)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-}
-
-private struct ReviewRow: View {
-    let record: ProposedRecord
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(record.displayTitle)
-                .font(.body.weight(.medium))
                 .lineLimit(2)
-            Text("\(record.status) · \(record.page_type) · \(String(format: "%.2f", record.confidence))")
+            Text(detail)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text(record.url)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
                 .lineLimit(2)
         }
-        .padding(.vertical, 3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
 
-private struct ContentUnavailablePanel: View {
-    let title: String
-    let message: String
+private struct SectionCard<Content: View>: View {
+    let material: Material
+    let content: Content
+
+    init(material: Material = .regularMaterial, @ViewBuilder content: () -> Content) {
+        self.material = material
+        self.content = content()
+    }
 
     var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "tray")
-                .font(.title2)
-                .foregroundStyle(.secondary)
-            Text(title)
-                .font(.headline)
-            Text(message)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(32)
+        content
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(material, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.05), lineWidth: 1)
+            )
     }
 }
 
-private struct QuickFactsGrid: View {
-    let record: ProposedRecord
+private struct RunSummaryStrip: View {
+    let detail: BatchDetailResponse
 
     var body: some View {
         HStack(spacing: 12) {
-            FactChip(label: "Status", value: record.status)
-            FactChip(label: "Batch", value: "#\(record.batch_id)")
-            FactChip(label: "Confidence", value: String(format: "%.2f", record.confidence))
+            SummaryPill(label: "Mode", value: detail.batch.mode == "manual" ? "Single URL" : "Site Sync")
+            SummaryPill(label: "Total", value: "\(detail.total_records)")
+            SummaryPill(label: "Accepted", value: "\(detail.accepted_count)")
+            SummaryPill(label: "Pending", value: "\(detail.pending_count)")
+            SummaryPill(label: "Failed", value: "\(detail.failed_count)")
         }
     }
 }
 
-private struct RecordActionsRow: View {
-    let record: ProposedRecord
-
-    var body: some View {
-        HStack(spacing: 10) {
-            if let url = URL(string: record.url), !record.url.isEmpty {
-                Link("Open Source Page", destination: url)
-            }
-            Button("Copy URL") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(record.url, forType: .string)
-            }
-            .disabled(record.url.isEmpty)
-        }
-        .font(.callout)
-    }
-}
-
-private struct FactChip: View {
+private struct SummaryPill: View {
     let label: String
     let value: String
 
@@ -1021,7 +953,178 @@ private struct FactChip: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+private struct RecordListPanel: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(model.visibleCurrentRecords) { record in
+                Button {
+                    model.selectedRecordID = record.id
+                } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(record.displayTitle)
+                                .font(.body.weight(.medium))
+                                .foregroundStyle(.primary)
+                                .lineLimit(2)
+                            Text(statusLabel(record.status))
+                                .font(.caption)
+                                .foregroundStyle(statusTint(record.status))
+                            Text(record.url)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                        Spacer(minLength: 0)
+                        if model.selectedRecordID == record.id {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.blue)
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        model.selectedRecordID == record.id ? Color.accentColor.opacity(0.10) : Color(nsColor: .controlBackgroundColor),
+                        in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func statusLabel(_ status: String) -> String {
+        switch status {
+        case "accepted":
+            return "Accepted"
+        case "needs_review":
+            return "Needs review"
+        case "ready_for_review":
+            return "Ready for review"
+        case "failed":
+            return "Failed"
+        default:
+            return status.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    private func statusTint(_ status: String) -> Color {
+        switch status {
+        case "accepted":
+            return .green
+        case "failed":
+            return .orange
+        default:
+            return .secondary
+        }
+    }
+}
+
+private struct RecordDetailPanel: View {
+    @EnvironmentObject private var model: AppModel
+    let record: ProposedRecord
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(record.displayTitle)
+                    .font(.title3.weight(.semibold))
+                if !record.title_cn.isEmpty {
+                    Text(record.title_cn)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            HStack(spacing: 12) {
+                SummaryPill(label: "Status", value: statusLabel(record.status))
+                SummaryPill(label: "Confidence", value: String(format: "%.2f", record.confidence))
+                SummaryPill(label: "Type", value: record.type.isEmpty ? "Unknown" : record.type)
+            }
+
+            HStack(spacing: 10) {
+                if let url = URL(string: record.url), !record.url.isEmpty {
+                    Link("Open Source Page", destination: url)
+                }
+                Button("Copy URL") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(record.url, forType: .string)
+                }
+                .disabled(record.url.isEmpty)
+                Spacer()
+                Button("Delete", role: .destructive) {
+                    model.deleteSelectedRecord()
+                }
+                Button("Accept") {
+                    model.acceptSelectedRecord()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(record.status == "accepted" || record.status == "failed")
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                DetailContentRow(label: "URL", value: record.url)
+                DetailContentRow(label: "Year", value: record.year)
+                DetailContentRow(label: "Materials", value: record.materials)
+                DetailContentRow(label: "Size", value: record.size)
+                DetailContentRow(label: "Duration", value: record.duration)
+                DetailContentRow(label: "Credits", value: record.credits)
+                DetailContentRow(label: "Mode", value: record.is_update ? "Update" : "New record")
+            }
+
+            if !record.description_en.isEmpty {
+                TextBlockSection(title: "Description EN", value: record.description_en)
+            }
+
+            if !record.description_cn.isEmpty {
+                TextBlockSection(title: "Description CN", value: record.description_cn)
+            }
+
+            if let errorMessage = record.error_message, !errorMessage.isEmpty {
+                TextBlockSection(title: record.status == "failed" ? "Import Error" : "Validation Note", value: errorMessage, tint: .secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func statusLabel(_ status: String) -> String {
+        switch status {
+        case "accepted":
+            return "Accepted"
+        case "needs_review":
+            return "Needs review"
+        case "ready_for_review":
+            return "Ready for review"
+        case "failed":
+            return "Failed"
+        default:
+            return status.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+}
+
+private struct TextBlockSection: View {
+    let title: String
+    let value: String
+    var tint: Color = .primary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .textSelection(.enabled)
+                .foregroundStyle(tint)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
     }
 }
 
@@ -1037,6 +1140,28 @@ private struct DetailContentRow: View {
                     .multilineTextAlignment(.trailing)
             }
         }
+    }
+}
+
+private struct EmptyStatePanel: View {
+    let title: String
+    let message: String
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "tray")
+                .font(.title2)
+                .foregroundStyle(.secondary)
+            Text(title)
+                .font(.headline)
+            Text(message)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, minHeight: 180)
+        .padding(24)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
 
@@ -1132,6 +1257,21 @@ private struct MenuBarMenuView: View {
             Divider()
 
             Button {
+                model.refreshFromUI()
+            } label: {
+                Label("Reload Results", systemImage: "arrow.clockwise")
+            }
+
+            Button {
+                model.startSync()
+            } label: {
+                Label("Sync Entire Site", systemImage: "arrow.trianglehead.2.clockwise")
+            }
+            .disabled(!model.canRunProtectedActions)
+
+            Divider()
+
+            Button {
                 model.quitApplication()
             } label: {
                 Label("Quit aaajiao Importer", systemImage: "power")
@@ -1153,12 +1293,12 @@ private struct AppCommands: Commands {
         }
 
         CommandMenu("Actions") {
-            Button("Refresh") {
+            Button("Reload Results") {
                 model.refreshFromUI()
             }
             .keyboardShortcut("r", modifiers: [.command])
 
-            Button("Start Sync") {
+            Button("Sync Entire Site") {
                 model.startSync()
             }
             .keyboardShortcut("i", modifiers: [.command, .shift])

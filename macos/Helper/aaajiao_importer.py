@@ -98,6 +98,17 @@ PROPOSED_FIELDS = {
 }
 
 
+def _vacuum_db_if_needed() -> None:
+    path = db_path()
+    if not path.exists():
+        return
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("VACUUM")
+    finally:
+        conn.close()
+
+
 class AIValidationResult(BaseModel):
     """Structured AI validation payload."""
 
@@ -316,6 +327,7 @@ def ensure_workspace() -> str:
 
     _copy_seed_payload()
     init_db()
+    prune_terminal_batches()
     workspace_manifest = _load_json(workspace_manifest_path())
     workspace_seed_version = _normalize_string(workspace_manifest.get("workspace_seed_version"))
     bundle_seed_version = _normalize_string(seed_manifest.get("seed_version"))
@@ -391,6 +403,55 @@ def connect_db() -> Iterable[sqlite3.Connection]:
         conn.commit()
     finally:
         conn.close()
+
+
+def cleanup_batch(batch_id: int) -> int:
+    with connect_db() as conn:
+        deleted_records = conn.execute(
+            "SELECT COUNT(*) FROM records WHERE batch_id = ?",
+            (batch_id,),
+        ).fetchone()[0]
+        conn.execute("DELETE FROM records WHERE batch_id = ?", (batch_id,))
+        conn.execute("DELETE FROM batches WHERE id = ?", (batch_id,))
+    if deleted_records:
+        _vacuum_db_if_needed()
+    return int(deleted_records)
+
+
+def prune_terminal_batches() -> int:
+    path = db_path()
+    if not path.exists():
+        return 0
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    try:
+        batch_ids = [
+            row["id"]
+            for row in conn.execute(
+                "SELECT id FROM batches WHERE status IN (?, ?)",
+                (BATCH_COMPLETED, BATCH_FAILED),
+            )
+        ]
+        if not batch_ids:
+            return 0
+        deleted_records = conn.execute(
+            f"SELECT COUNT(*) FROM records WHERE batch_id IN ({','.join('?' for _ in batch_ids)})",
+            batch_ids,
+        ).fetchone()[0]
+        conn.execute(
+            f"DELETE FROM records WHERE batch_id IN ({','.join('?' for _ in batch_ids)})",
+            batch_ids,
+        )
+        conn.execute(
+            f"DELETE FROM batches WHERE id IN ({','.join('?' for _ in batch_ids)})",
+            batch_ids,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    if deleted_records or batch_ids:
+        _vacuum_db_if_needed()
+    return len(batch_ids)
 
 
 @contextlib.contextmanager
@@ -1092,6 +1153,47 @@ def _record_to_dto(row: sqlite3.Row) -> Dict[str, Any]:
     }
 
 
+def _batch_detail(conn: sqlite3.Connection, batch_id: int) -> Dict[str, Any]:
+    row = conn.execute("SELECT * FROM batches WHERE id = ?", (batch_id,)).fetchone()
+    if row is None:
+        raise RuntimeError(f"Batch {batch_id} not found")
+    records = [
+        _record_to_dto(record_row)
+        for record_row in conn.execute(
+            "SELECT * FROM records WHERE batch_id = ? ORDER BY id DESC",
+            (batch_id,),
+        )
+    ]
+    accepted_count = sum(1 for record in records if record["status"] == RECORD_ACCEPTED)
+    deleted_count = sum(1 for record in records if record["status"] == RECORD_REJECTED)
+    failed_count = sum(1 for record in records if record["status"] == RECORD_FAILED)
+    ready_count = sum(
+        1
+        for record in records
+        if record["status"] in {RECORD_READY_FOR_REVIEW, RECORD_NEEDS_REVIEW}
+    )
+    return {
+        "batch": {
+            "id": row["id"],
+            "mode": row["mode"],
+            "status": row["status"],
+            "total_records": row["total_records"],
+            "accepted_records": accepted_count,
+            "ready_records": sum(
+                1 for record in records if record["status"] == RECORD_READY_FOR_REVIEW
+            ),
+            "last_error": row["last_error"] or "",
+        },
+        "records": records,
+        "total_records": len(records),
+        "accepted_count": accepted_count,
+        "deleted_count": deleted_count,
+        "failed_count": failed_count,
+        "syncable_count": accepted_count,
+        "pending_count": ready_count,
+    }
+
+
 def _batch_summaries(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     batches: List[Dict[str, Any]] = []
     for row in conn.execute("SELECT * FROM batches ORDER BY id DESC LIMIT 20"):
@@ -1274,6 +1376,11 @@ def reject_record(record_id: int) -> Dict[str, Any]:
     return _set_record_status(record_id, RECORD_REJECTED)
 
 
+def get_batch_detail(batch_id: int) -> Dict[str, Any]:
+    with connect_db() as conn:
+        return _batch_detail(conn, batch_id)
+
+
 def get_apply_preview(batch_id: int) -> Dict[str, Any]:
     accepted_rows = _record_rows(statuses=[RECORD_ACCEPTED], batch_id=batch_id)
     preview = {
@@ -1352,6 +1459,7 @@ def apply_accepted_records(batch_id: int, dry_run: bool = False) -> Dict[str, An
             sha=sha,
             last_error="",
         )
+    cleanup_batch(batch_id)
     return {"batch_id": batch_id, "applied_commit_sha": sha, "preview": preview, "dry_run": False}
 
 
@@ -1360,13 +1468,8 @@ def delete_batch(batch_id: int) -> Dict[str, Any]:
         row = conn.execute("SELECT id FROM batches WHERE id = ?", (batch_id,)).fetchone()
         if row is None:
             raise RuntimeError(f"Batch {batch_id} not found")
-        deleted_records = conn.execute(
-            "SELECT COUNT(*) FROM records WHERE batch_id = ?",
-            (batch_id,),
-        ).fetchone()[0]
-        conn.execute("DELETE FROM records WHERE batch_id = ?", (batch_id,))
-        conn.execute("DELETE FROM batches WHERE id = ?", (batch_id,))
-    return {"batch_id": batch_id, "deleted_records": int(deleted_records)}
+    deleted_records = cleanup_batch(batch_id)
+    return {"batch_id": batch_id, "deleted_records": deleted_records}
 
 
 def list_pending_records() -> Dict[str, Any]:
@@ -1403,6 +1506,9 @@ def parse_args() -> argparse.Namespace:
     reject = sub.add_parser("rejectRecord")
     reject.add_argument("--id", type=int, required=True)
 
+    batch_detail = sub.add_parser("getBatchDetail")
+    batch_detail.add_argument("--batch-id", type=int, required=True)
+
     preview = sub.add_parser("getApplyPreview")
     preview.add_argument("--batch-id", type=int, required=True)
 
@@ -1435,6 +1541,8 @@ def main() -> None:
         result = accept_record(args.id)
     elif args.command == "rejectRecord":
         result = reject_record(args.id)
+    elif args.command == "getBatchDetail":
+        result = get_batch_detail(args.batch_id)
     elif args.command == "getApplyPreview":
         result = get_apply_preview(args.batch_id)
     elif args.command == "deleteBatch":

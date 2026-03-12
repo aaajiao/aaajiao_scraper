@@ -36,6 +36,17 @@ struct BatchSummary: Codable, Identifiable, Hashable {
     let last_error: String
 }
 
+struct BatchDetailResponse: Codable, Hashable {
+    let batch: BatchSummary
+    let records: [ProposedRecord]
+    let total_records: Int
+    let accepted_count: Int
+    let deleted_count: Int
+    let failed_count: Int
+    let syncable_count: Int
+    let pending_count: Int
+}
+
 struct ApplyPreview: Codable, Hashable {
     let batch_id: Int
     let accepted_count: Int
