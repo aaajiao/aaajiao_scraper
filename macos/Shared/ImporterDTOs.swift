@@ -69,6 +69,12 @@ struct AppSettings: Codable, Hashable {
     let workspace_status: String?
     let workspace_seed_version: String?
     let bundle_seed_version: String?
+    let baseline_status: String?
+    let baseline_source_url: String?
+    let baseline_branch: String?
+    let baseline_commit: String?
+    let baseline_updated_at: String?
+    let baseline_error: String?
 
     static let empty = AppSettings(
         workspace_path: "",
@@ -78,7 +84,13 @@ struct AppSettings: Codable, Hashable {
         openai_model_source: "",
         workspace_status: nil,
         workspace_seed_version: nil,
-        bundle_seed_version: nil
+        bundle_seed_version: nil,
+        baseline_status: nil,
+        baseline_source_url: nil,
+        baseline_branch: nil,
+        baseline_commit: nil,
+        baseline_updated_at: nil,
+        baseline_error: nil
     )
 }
 

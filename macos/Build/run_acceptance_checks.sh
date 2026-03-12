@@ -18,6 +18,7 @@ fi
 
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/aaajiao_acceptance.XXXXXX")"
 WORKSPACE_ROOT="${TMP_ROOT}/workspace"
+BASELINE_REMOTE="${TMP_ROOT}/baseline.git"
 BOOTSTRAP_JSON="${TMP_ROOT}/bootstrap.json"
 LIST_JSON="${TMP_ROOT}/list.json"
 ACCEPT_JSON="${TMP_ROOT}/accept.json"
@@ -30,8 +31,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
+git clone --quiet --bare "${REPO_ROOT}" "${BASELINE_REMOTE}"
+BASELINE_BRANCH="$(git -C "${REPO_ROOT}" branch --show-current)"
+
 AAAJIAO_IMPORTER_WORKSPACE_ROOT="${WORKSPACE_ROOT}" \
 AAAJIAO_REPO_ROOT="${REPO_ROOT}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_URL="${BASELINE_REMOTE}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH="${BASELINE_BRANCH}" \
 "${HELPER_BIN}" bootstrapWorkspace > "${BOOTSTRAP_JSON}"
 
 export WORKSPACE_ROOT
@@ -97,22 +103,32 @@ PY
 
 AAAJIAO_IMPORTER_WORKSPACE_ROOT="${WORKSPACE_ROOT}" \
 AAAJIAO_REPO_ROOT="${REPO_ROOT}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_URL="${BASELINE_REMOTE}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH="${BASELINE_BRANCH}" \
 "${HELPER_BIN}" listPendingRecords > "${LIST_JSON}"
 
 AAAJIAO_IMPORTER_WORKSPACE_ROOT="${WORKSPACE_ROOT}" \
 AAAJIAO_REPO_ROOT="${REPO_ROOT}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_URL="${BASELINE_REMOTE}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH="${BASELINE_BRANCH}" \
 "${HELPER_BIN}" acceptRecord --id 1 > "${ACCEPT_JSON}"
 
 AAAJIAO_IMPORTER_WORKSPACE_ROOT="${WORKSPACE_ROOT}" \
 AAAJIAO_REPO_ROOT="${REPO_ROOT}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_URL="${BASELINE_REMOTE}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH="${BASELINE_BRANCH}" \
 "${HELPER_BIN}" getApplyPreview --batch-id 1 > "${PREVIEW_JSON}"
 
 AAAJIAO_IMPORTER_WORKSPACE_ROOT="${WORKSPACE_ROOT}" \
 AAAJIAO_REPO_ROOT="${REPO_ROOT}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_URL="${BASELINE_REMOTE}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH="${BASELINE_BRANCH}" \
 "${HELPER_BIN}" applyAcceptedRecords --batch-id 1 --dry-run > "${DRY_RUN_JSON}"
 
 AAAJIAO_IMPORTER_WORKSPACE_ROOT="${WORKSPACE_ROOT}" \
 AAAJIAO_REPO_ROOT="${REPO_ROOT}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_URL="${BASELINE_REMOTE}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH="${BASELINE_BRANCH}" \
 "${HELPER_BIN}" resetWorkspace > "${RESET_JSON}"
 
 export BOOTSTRAP_JSON LIST_JSON ACCEPT_JSON PREVIEW_JSON DRY_RUN_JSON RESET_JSON WORKSPACE_ROOT
@@ -129,9 +145,10 @@ dry_run = json.loads(Path(os.environ["DRY_RUN_JSON"]).read_text(encoding="utf-8"
 reset_result = json.loads(Path(os.environ["RESET_JSON"]).read_text(encoding="utf-8"))
 workspace_root = Path(os.environ["WORKSPACE_ROOT"])
 
-assert bootstrap["status"] in {"initialized", "ready"}
+assert bootstrap["status"] in {"initialized_synced", "baseline_synced"}
 assert bootstrap["settings"]["openai_model"] == "gpt-4.1", bootstrap
 assert bootstrap["settings"]["openai_model_source"] == "default", bootstrap
+assert bootstrap["settings"]["baseline_status"] == "synced", bootstrap
 assert len(listing["pending_records"]) == 1, listing
 assert listing["pending_records"][0]["title"] == "Codex Fixture Work", listing
 assert accepted["status"] == "accepted", accepted
@@ -144,9 +161,10 @@ if not preview["will_push"]:
 assert dry_run["dry_run"] is True, dry_run
 assert (workspace_root / "aaajiao_works.json").exists()
 assert (workspace_root / "aaajiao_portfolio.md").exists()
-assert reset_result["status"] in {"initialized", "ready"}, reset_result
+assert reset_result["status"] in {"reset_synced", "reset_seed_fallback"}, reset_result
 workspace_manifest = json.loads((workspace_root / "workspace_manifest.json").read_text(encoding="utf-8"))
 assert workspace_manifest["workspace_status"] in {"ready", "seed_version_mismatch"}, workspace_manifest
+assert workspace_manifest["baseline_status"] in {"synced", "seed_fallback"}, workspace_manifest
 PY
 
 echo "Acceptance checks passed"

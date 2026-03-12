@@ -3,6 +3,7 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
 from requests import Response
 
 
@@ -44,6 +45,52 @@ def _run_git(cwd: Path, *args: str) -> str:
         check=True,
     )
     return result.stdout.strip()
+
+
+def _commit_baseline_files(repo: Path, *, title: str, markdown: str) -> str:
+    works = [
+        {
+            "title": title,
+            "title_cn": "",
+            "year": "2026",
+            "type": "installation",
+            "materials": "steel",
+            "size": "100 x 100 cm",
+            "duration": "",
+            "credits": "",
+            "description_en": f"{title} description",
+            "description_cn": "",
+            "video_link": "",
+            "url": f"https://eventstructure.com/{title.lower().replace(' ', '-')}",
+            "images": [],
+            "high_res_images": [],
+            "source": "baseline_fixture",
+        }
+    ]
+    (repo / "aaajiao_works.json").write_text(
+        json.dumps(works, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (repo / "aaajiao_portfolio.md").write_text(markdown, encoding="utf-8")
+    _run_git(repo, "add", "aaajiao_works.json", "aaajiao_portfolio.md")
+    status = _run_git(repo, "status", "--short")
+    if status:
+        _run_git(repo, "commit", "-m", f"baseline: {title}")
+    return _run_git(repo, "rev-parse", "HEAD")
+
+
+def _prepare_baseline_remote(tmp_path: Path, *, title: str = "Remote Baseline Work", markdown: str = "# Remote\n"):
+    remote_repo = tmp_path / "baseline.git"
+    working_repo = tmp_path / "baseline_work"
+    subprocess.run(["git", "init", "--bare", str(remote_repo)], check=True, capture_output=True, text=True)
+    working_repo.mkdir()
+    _run_git(working_repo, "init", "-b", "main")
+    _run_git(working_repo, "config", "user.name", "Tester")
+    _run_git(working_repo, "config", "user.email", "tester@example.com")
+    commit_sha = _commit_baseline_files(working_repo, title=title, markdown=markdown)
+    _run_git(working_repo, "remote", "add", "origin", str(remote_repo))
+    _run_git(working_repo, "push", "-u", "origin", "main")
+    return remote_repo, working_repo, commit_sha
 
 
 def test_validation_response_format_uses_strict_required_schema():
@@ -158,6 +205,188 @@ def test_ensure_workspace_auto_realigns_seed_when_no_activity(tmp_path, monkeypa
     assert status == "ready"
     assert workspace_manifest["workspace_status"] == "ready"
     assert workspace_manifest["workspace_seed_version"] == "seed-new"
+
+
+def test_bootstrap_workspace_syncs_remote_baseline(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    workspace_root = tmp_path / "workspace"
+    remote_repo, _, commit_sha = _prepare_baseline_remote(tmp_path, title="Remote Bootstrap Work")
+
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+    monkeypatch.setenv("AAAJIAO_IMPORTER_BASELINE_REMOTE_URL", str(remote_repo))
+    monkeypatch.setenv("AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH", "main")
+
+    response = helper.bootstrap_workspace()
+
+    works = json.loads((workspace_root / "aaajiao_works.json").read_text(encoding="utf-8"))
+    manifest = helper._load_json(helper.workspace_manifest_path())
+    assert response["status"] == "initialized_synced"
+    assert works[0]["title"] == "Remote Bootstrap Work"
+    assert manifest["baseline_status"] == helper.BASELINE_STATUS_SYNCED
+    assert manifest["baseline_commit"] == commit_sha
+    assert manifest["baseline_source_url"] == str(remote_repo)
+
+
+def test_reset_workspace_syncs_latest_remote_baseline(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    workspace_root = tmp_path / "workspace"
+    remote_repo, working_repo, _ = _prepare_baseline_remote(tmp_path, title="Remote Reset Old")
+
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+    monkeypatch.setenv("AAAJIAO_IMPORTER_BASELINE_REMOTE_URL", str(remote_repo))
+    monkeypatch.setenv("AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH", "main")
+
+    helper.bootstrap_workspace()
+    latest_commit = _commit_baseline_files(working_repo, title="Remote Reset New", markdown="# Reset New\n")
+    _run_git(working_repo, "push", "origin", "main")
+
+    response = helper.reset_workspace()
+
+    works = json.loads((workspace_root / "aaajiao_works.json").read_text(encoding="utf-8"))
+    manifest = helper._load_json(helper.workspace_manifest_path())
+    assert response["status"] == "reset_synced"
+    assert works[0]["title"] == "Remote Reset New"
+    assert manifest["baseline_commit"] == latest_commit
+
+
+def test_bootstrap_workspace_falls_back_to_seed_when_remote_unavailable(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    workspace_root = tmp_path / "workspace"
+
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+    monkeypatch.setenv("AAAJIAO_IMPORTER_BASELINE_REMOTE_URL", str(tmp_path / "missing.git"))
+    monkeypatch.setenv("AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH", "main")
+
+    response = helper.bootstrap_workspace()
+
+    manifest = helper._load_json(helper.workspace_manifest_path())
+    seed_works = json.loads((helper.seed_root() / helper.REPO_WORKS).read_text(encoding="utf-8"))
+    works = json.loads((workspace_root / "aaajiao_works.json").read_text(encoding="utf-8"))
+    assert response["status"] == "initialized_seed_fallback"
+    assert manifest["baseline_status"] == helper.BASELINE_STATUS_SEED_FALLBACK
+    assert manifest["baseline_error"]
+    assert works[0]["title"] == seed_works[0]["title"]
+
+
+def test_reset_workspace_falls_back_to_seed_when_remote_unavailable(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    workspace_root = tmp_path / "workspace"
+    remote_repo, _, _ = _prepare_baseline_remote(tmp_path, title="Remote Reset Source")
+
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+    monkeypatch.setenv("AAAJIAO_IMPORTER_BASELINE_REMOTE_URL", str(remote_repo))
+    monkeypatch.setenv("AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH", "main")
+
+    helper.bootstrap_workspace()
+    monkeypatch.setenv("AAAJIAO_IMPORTER_BASELINE_REMOTE_URL", str(tmp_path / "missing.git"))
+
+    response = helper.reset_workspace()
+
+    manifest = helper._load_json(helper.workspace_manifest_path())
+    seed_works = json.loads((helper.seed_root() / helper.REPO_WORKS).read_text(encoding="utf-8"))
+    works = json.loads((workspace_root / "aaajiao_works.json").read_text(encoding="utf-8"))
+    assert response["status"] == "reset_seed_fallback"
+    assert manifest["baseline_status"] == helper.BASELINE_STATUS_SEED_FALLBACK
+    assert manifest["baseline_error"]
+    assert works[0]["title"] == seed_works[0]["title"]
+
+
+def test_bootstrap_workspace_skips_remote_refresh_when_review_is_pending(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    workspace_root = tmp_path / "workspace"
+    remote_repo, working_repo, _ = _prepare_baseline_remote(tmp_path, title="Pending Review Baseline")
+
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+    monkeypatch.setenv("AAAJIAO_IMPORTER_BASELINE_REMOTE_URL", str(remote_repo))
+    monkeypatch.setenv("AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH", "main")
+
+    helper.bootstrap_workspace()
+    original_works = (workspace_root / "aaajiao_works.json").read_text(encoding="utf-8")
+    batch_id = helper._create_batch("manual")
+    helper._insert_record(
+        batch_id=batch_id,
+        url="https://eventstructure.com/pending-review-work",
+        status=helper.RECORD_READY_FOR_REVIEW,
+        page_type="artwork",
+        confidence=0.95,
+        is_update=False,
+        proposed={"title": "Pending Review Work", "url": "https://eventstructure.com/pending-review-work"},
+        error=None,
+    )
+    _commit_baseline_files(working_repo, title="Should Not Overwrite", markdown="# Pending\n")
+    _run_git(working_repo, "push", "origin", "main")
+
+    response = helper.bootstrap_workspace()
+
+    manifest = helper._load_json(helper.workspace_manifest_path())
+    assert response["status"] == "baseline_sync_skipped_pending_review"
+    assert (workspace_root / "aaajiao_works.json").read_text(encoding="utf-8") == original_works
+    assert manifest["baseline_status"] == helper.BASELINE_STATUS_SYNC_SKIPPED_PENDING_REVIEW
+
+
+def test_refresh_workspace_baseline_updates_only_target_files(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    workspace_root = tmp_path / "workspace"
+    remote_repo, working_repo, _ = _prepare_baseline_remote(tmp_path, title="Refresh Old")
+
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+    monkeypatch.setenv("AAAJIAO_IMPORTER_BASELINE_REMOTE_URL", str(remote_repo))
+    monkeypatch.setenv("AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH", "main")
+
+    helper.bootstrap_workspace()
+    snapshot_before = (helper.snapshot_root() / "scraper" / "__init__.py").read_text(encoding="utf-8")
+    cache_path = helper.workspace_root() / ".cache" / "sitemap_lastmod.json"
+    cache_before = cache_path.read_text(encoding="utf-8")
+    latest_commit = _commit_baseline_files(working_repo, title="Refresh New", markdown="# Refresh New\n")
+    _run_git(working_repo, "push", "origin", "main")
+
+    response = helper.refresh_workspace_baseline()
+
+    works = json.loads((workspace_root / "aaajiao_works.json").read_text(encoding="utf-8"))
+    manifest = helper._load_json(helper.workspace_manifest_path())
+    assert response["status"] == "baseline_synced"
+    assert works[0]["title"] == "Refresh New"
+    assert (helper.snapshot_root() / "scraper" / "__init__.py").read_text(encoding="utf-8") == snapshot_before
+    assert cache_path.read_text(encoding="utf-8") == cache_before
+    assert manifest["baseline_commit"] == latest_commit
+
+
+def test_refresh_workspace_baseline_rejects_active_review_state(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    workspace_root = tmp_path / "workspace"
+    remote_repo, _, _ = _prepare_baseline_remote(tmp_path, title="Refresh Blocked")
+
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+    monkeypatch.setenv("AAAJIAO_IMPORTER_BASELINE_REMOTE_URL", str(remote_repo))
+    monkeypatch.setenv("AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH", "main")
+
+    helper.bootstrap_workspace()
+    original_works = (workspace_root / "aaajiao_works.json").read_text(encoding="utf-8")
+    batch_id = helper._create_batch("manual")
+    helper._insert_record(
+        batch_id=batch_id,
+        url="https://eventstructure.com/blocked-refresh-work",
+        status=helper.RECORD_ACCEPTED,
+        page_type="artwork",
+        confidence=0.95,
+        is_update=False,
+        proposed={"title": "Blocked Refresh Work", "url": "https://eventstructure.com/blocked-refresh-work"},
+        error=None,
+    )
+
+    with pytest.raises(RuntimeError, match="Pending review results prevent refreshing the workspace baseline"):
+        helper.refresh_workspace_baseline()
+
+    manifest = helper._load_json(helper.workspace_manifest_path())
+    assert (workspace_root / "aaajiao_works.json").read_text(encoding="utf-8") == original_works
+    assert manifest["baseline_status"] == helper.BASELINE_STATUS_SYNC_SKIPPED_PENDING_REVIEW
 
 
 def test_get_batch_detail_returns_all_record_states(tmp_path, monkeypatch):

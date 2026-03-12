@@ -45,7 +45,7 @@ Expected result:
 - `acceptRecord` works
 - `getApplyPreview` works
 - `applyAcceptedRecords --dry-run` regenerates workspace files
-- `resetWorkspace` recreates the workspace from bundled seed
+- `resetWorkspace` recreates the workspace and refreshes the GitHub baseline, or reports a clear seed fallback
 - `applyAcceptedRecords` can commit and push in a temporary git sandbox
 
 ## 5. Optional live validation

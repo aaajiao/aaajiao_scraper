@@ -40,6 +40,29 @@ private func openAIModelSourceLabel(_ source: String) -> String {
     }
 }
 
+private func githubCommitURL(sourceURL: String?, commit: String?) -> URL? {
+    let trimmedCommit = commit?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    guard !trimmedCommit.isEmpty else { return nil }
+    let trimmedSource = sourceURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    guard !trimmedSource.isEmpty else { return nil }
+
+    let repoPath: String
+    if trimmedSource.hasPrefix("https://github.com/") || trimmedSource.hasPrefix("http://github.com/") {
+        repoPath = trimmedSource
+            .replacingOccurrences(of: "https://github.com/", with: "")
+            .replacingOccurrences(of: "http://github.com/", with: "")
+    } else if trimmedSource.hasPrefix("git@github.com:") {
+        repoPath = trimmedSource.replacingOccurrences(of: "git@github.com:", with: "")
+    } else {
+        return nil
+    }
+
+    let normalizedRepoPath = repoPath.hasSuffix(".git")
+        ? String(repoPath.dropLast(4))
+        : repoPath
+    return URL(string: "https://github.com/\(normalizedRepoPath)/commit/\(trimmedCommit)")
+}
+
 enum ImporterFlowState: String {
     case idle
     case imported
@@ -52,6 +75,7 @@ enum ImporterBusyAction {
     case importURL
     case syncSite
     case syncGitHub
+    case refreshBaseline
 }
 
 @MainActor
@@ -148,6 +172,10 @@ final class AppModel: ObservableObject {
         currentBusyAction == .syncGitHub
     }
 
+    var isRefreshingBaseline: Bool {
+        currentBusyAction == .refreshBaseline
+    }
+
     var currentBatchSummary: BatchSummary? {
         currentBatchDetail?.batch
     }
@@ -195,6 +223,21 @@ final class AppModel: ObservableObject {
         return hasAcceptedRecords && preview.will_push
     }
 
+    var hasBlockingReviewState: Bool {
+        if settings.baseline_status == "sync_skipped_pending_review" {
+            return true
+        }
+        return (currentBatchDetail?.total_records ?? 0) > 0
+    }
+
+    var canRefreshBaseline: Bool {
+        !isBusy && !hasBlockingReviewState
+    }
+
+    var baselineCommitURL: URL? {
+        githubCommitURL(sourceURL: settings.baseline_source_url, commit: settings.baseline_commit)
+    }
+
     func bootstrapIfNeeded() {
         guard !hasBootstrapped else { return }
         hasBootstrapped = true
@@ -212,11 +255,7 @@ final class AppModel: ObservableObject {
                 settings = response.settings
                 syncDraftWithSavedSettingsIfNeeded()
                 try await refresh(allowFallbackBatch: true)
-                if response.status == "initialized" {
-                    statusMessage = "Workspace initialized"
-                } else if response.status == "seed_version_mismatch" {
-                    statusMessage = "Workspace snapshot differs from the bundled seed"
-                }
+                statusMessage = workspaceStatusMessage(for: response)
             } catch {
                 statusMessage = display(error)
             }
@@ -300,6 +339,9 @@ final class AppModel: ObservableObject {
     }
 
     func confirmWorkspaceReset() {
+        currentFlowState = .syncing
+        currentBusyAction = .refreshBaseline
+        statusMessage = "Resetting workspace and refreshing the GitHub baseline..."
         Task {
             do {
                 let response = try helper.resetWorkspace(
@@ -311,8 +353,36 @@ final class AppModel: ObservableObject {
                 clearCurrentRun()
                 isShowingResetConfirmation = false
                 try await refresh(allowFallbackBatch: false)
-                statusMessage = "Workspace reset"
+                statusMessage = workspaceStatusMessage(for: response)
             } catch {
+                currentFlowState = .idle
+                currentBusyAction = nil
+                statusMessage = display(error)
+            }
+        }
+    }
+
+    func refreshWorkspaceBaseline() {
+        guard canRefreshBaseline else {
+            statusMessage = "Finish or discard the current review results before refreshing the baseline."
+            return
+        }
+        currentFlowState = .syncing
+        currentBusyAction = .refreshBaseline
+        statusMessage = "Refreshing the GitHub baseline..."
+        Task {
+            do {
+                let response = try helper.refreshWorkspaceBaseline(
+                    openAIKey: savedOpenAIKey,
+                    openAIModel: savedOpenAIModelSelection.effectiveModel,
+                    openAIModelSource: savedOpenAIModelSelection.source
+                )
+                settings = response.settings
+                try await refresh(allowFallbackBatch: false)
+                statusMessage = workspaceStatusMessage(for: response)
+            } catch {
+                currentFlowState = hasAcceptedRecords ? .readyToSync : (hasCurrentRun ? .reviewing : .idle)
+                currentBusyAction = nil
                 statusMessage = display(error)
             }
         }
@@ -566,6 +636,27 @@ final class AppModel: ObservableObject {
     private func display(_ error: Error) -> String {
         error.localizedDescription
     }
+
+    private func workspaceStatusMessage(for response: BootstrapResponse) -> String {
+        switch response.status {
+        case "initialized_synced":
+            return "Workspace initialized from the latest GitHub baseline."
+        case "initialized_seed_fallback":
+            return "GitHub baseline unavailable. Workspace initialized from the bundled seed."
+        case "baseline_synced":
+            return "Workspace baseline refreshed from GitHub."
+        case "baseline_seed_fallback":
+            return "GitHub baseline refresh failed. Using bundled seed files."
+        case "baseline_sync_skipped_pending_review":
+            return "Skipped baseline refresh to protect current review results."
+        case "reset_synced":
+            return "Workspace reset and refreshed from the latest GitHub baseline."
+        case "reset_seed_fallback":
+            return "Workspace reset with bundled seed because GitHub was unavailable."
+        default:
+            return "Workspace updated."
+        }
+    }
 }
 
 struct ContentView: View {
@@ -613,7 +704,7 @@ struct ContentView: View {
                 model.confirmWorkspaceReset()
             }
         } message: {
-            Text("This removes the local importer workspace and recreates it from the bundled seed.")
+            Text("This removes the local importer workspace, restores bundled code and cache, then refreshes artwork data from the latest GitHub baseline when available.")
         }
     }
 }
@@ -626,7 +717,7 @@ private struct WindowHeaderView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("aaajiao Importer")
                     .font(.system(size: 28, weight: .semibold, design: .rounded))
-                Text("Import one URL or sync the site, review the results, then sync accepted changes to GitHub.")
+                Text("Import one URL or sync the site, review the results, then sync accepted changes to GitHub. Workspace code and cache come from the bundled app seed; artwork data prefers the latest GitHub baseline.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -673,9 +764,17 @@ private struct StatusOverviewSection: View {
             StatusCard(
                 title: "Workspace",
                 value: workspaceLabel(model.settings.workspace_status),
-                detail: model.settings.workspace_path.isEmpty ? "Unavailable" : "Local workspace ready",
+                detail: model.settings.workspace_path.isEmpty ? "Unavailable" : "Bundled code and cache loaded locally",
                 systemImage: "externaldrive",
                 tint: model.settings.workspace_status == "seed_version_mismatch" ? .orange : .secondary
+            )
+            StatusCard(
+                title: "Baseline",
+                value: baselineLabel(model.settings.baseline_status),
+                detail: baselineDetail(model.settings),
+                detailURL: model.baselineCommitURL,
+                systemImage: "arrow.down.circle",
+                tint: baselineTint(model.settings)
             )
         }
     }
@@ -695,6 +794,51 @@ private struct StatusOverviewSection: View {
             return "Missing"
         default:
             return "Unknown"
+        }
+    }
+
+    private func baselineLabel(_ status: String?) -> String {
+        switch status {
+        case "synced":
+            return "GitHub Latest"
+        case "seed_fallback":
+            return "Seed Fallback"
+        case "sync_skipped_pending_review":
+            return "Refresh Skipped"
+        case "missing":
+            return "Missing"
+        default:
+            return "Unknown"
+        }
+    }
+
+    private func baselineDetail(_ settings: AppSettings) -> String {
+        if let error = settings.baseline_error, !error.isEmpty {
+            if settings.baseline_status == "seed_fallback" {
+                return "Using bundled seed after GitHub refresh failed"
+            }
+            return error
+        }
+        if settings.baseline_status == "sync_skipped_pending_review" {
+            return "Pending review results are protected from overwrite"
+        }
+        if let commit = settings.baseline_commit, !commit.isEmpty {
+            return "Commit \(String(commit.prefix(7)))"
+        }
+        if let branch = settings.baseline_branch, !branch.isEmpty {
+            return "\(branch) baseline"
+        }
+        return "No baseline metadata"
+    }
+
+    private func baselineTint(_ settings: AppSettings) -> Color {
+        switch settings.baseline_status {
+        case "synced":
+            return .green
+        case "seed_fallback", "sync_skipped_pending_review":
+            return .orange
+        default:
+            return .secondary
         }
     }
 }
@@ -914,12 +1058,16 @@ private struct WorkspaceFooterView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
-                Text("Local review data is temporary and is cleaned up after a successful GitHub sync.")
+                Text(footerDetail)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
             Spacer()
             Menu("Workspace") {
+                Button("Refresh Baseline") {
+                    model.refreshWorkspaceBaseline()
+                }
+                .disabled(!model.canRefreshBaseline)
                 Button("Reset Workspace", role: .destructive) {
                     model.requestWorkspaceReset()
                 }
@@ -930,12 +1078,23 @@ private struct WorkspaceFooterView: View {
             }
         }
     }
+
+    private var footerDetail: String {
+        if model.hasBlockingReviewState {
+            return "Finish or discard current review results before refreshing the GitHub baseline."
+        }
+        if let error = model.settings.baseline_error, !error.isEmpty {
+            return "Latest GitHub baseline unavailable. The workspace is currently using bundled fallback data."
+        }
+        return "Local review data is temporary and is cleaned up after a successful GitHub sync."
+    }
 }
 
 private struct StatusCard: View {
     let title: String
     let value: String
     let detail: String
+    var detailURL: URL? = nil
     let systemImage: String
     let tint: Color
 
@@ -948,10 +1107,16 @@ private struct StatusCard: View {
                 .font(.headline)
                 .foregroundStyle(tint)
                 .lineLimit(2)
-            Text(detail)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
+            if let detailURL {
+                Link(detail, destination: detailURL)
+                    .font(.caption)
+                    .lineLimit(2)
+            } else {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
@@ -1295,6 +1460,21 @@ private struct SettingsView: View {
                     LabeledContent("Workspace") {
                         Text(model.settings.workspace_path.isEmpty ? "Unavailable" : model.settings.workspace_path)
                             .textSelection(.enabled)
+                    }
+                    LabeledContent("Baseline") {
+                        Text(model.settings.baseline_status ?? "Unknown")
+                    }
+                    if let commit = model.settings.baseline_commit, !commit.isEmpty {
+                        LabeledContent("Baseline commit") {
+                            VStack(alignment: .trailing, spacing: 4) {
+                                Text(commit)
+                                    .textSelection(.enabled)
+                                if let commitURL = model.baselineCommitURL {
+                                    Link("Open commit on GitHub", destination: commitURL)
+                                        .font(.caption)
+                                }
+                            }
+                        }
                     }
                 }
 

@@ -48,6 +48,16 @@ final class HelperClient {
         )
     }
 
+    func refreshWorkspaceBaseline(openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> BootstrapResponse {
+        try runCommand(
+            arguments: ["refreshWorkspaceBaseline"],
+            openAIKey: openAIKey,
+            openAIModel: openAIModel,
+            openAIModelSource: openAIModelSource,
+            as: BootstrapResponse.self
+        )
+    }
+
     func startIncrementalSync(openAIKey: String, openAIModel: String, openAIModelSource: String) throws -> StartSyncResponse {
         try runCommand(
             arguments: ["startIncrementalSync"],

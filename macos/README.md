@@ -7,10 +7,13 @@ At build time it copies the current `scraper/`, `.cache/`, `aaajiao_works.json`,
 `aaajiao_portfolio.md` into `macos/` seed/vendor directories. At runtime it initializes a
 workspace under `~/Library/Application Support/AaajiaoImporter/workspace` and performs all
 processing there until the user explicitly applies accepted changes back to the repository root.
+Bundled seed data provides the local scraper code, cache, and offline fallback. The workspace
+data baseline for `aaajiao_works.json` and `aaajiao_portfolio.md` is refreshed from GitHub
+`main` whenever the workspace can safely do so.
 
 Current flow:
 
-1. Bootstrap a dedicated workspace from bundled seed data.
+1. Bootstrap a dedicated workspace from bundled seed data, then refresh the data baseline from GitHub.
 2. Run incremental sync or submit a manual artwork URL.
 3. Review `ready_for_review` and `needs_review` records in the menu bar app.
 4. Preview the apply transaction, then explicitly confirm the git writeback.
@@ -26,6 +29,7 @@ The helper now exposes the planned command surface:
 
 - `bootstrapWorkspace`
 - `resetWorkspace`
+- `refreshWorkspaceBaseline`
 - `startIncrementalSync`
 - `submitManualURL`
 - `listPendingRecords`
@@ -56,7 +60,8 @@ open macos/Build/RELEASE_CHECKLIST.md
 
 `prepare_seed.sh` now writes `macos/Seed/seed_manifest.json`.
 At runtime the helper writes `workspace_manifest.json` into the local workspace and validates
-the bundled seed version before reusing the workspace.
+the bundled seed version before reusing the workspace. The manifest also records the latest
+GitHub baseline status, commit, and fallback error details for the workspace data files.
 
 `wheelhouse_requirements.txt` is the pinned runtime dependency lock for the bundled Python
 environment. `refresh_wheelhouse.sh` downloads wheels into `macos/Vendor/wheelhouse/`, and

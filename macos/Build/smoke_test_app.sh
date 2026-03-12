@@ -31,6 +31,7 @@ fi
 
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/aaajiao_importer_smoke.XXXXXX")"
 WORKSPACE_ROOT="${TMP_ROOT}/workspace"
+BASELINE_REMOTE="${TMP_ROOT}/baseline.git"
 BOOTSTRAP_JSON="${TMP_ROOT}/bootstrap.json"
 OVERVIEW_JSON="${TMP_ROOT}/overview.json"
 
@@ -40,12 +41,18 @@ cleanup() {
 trap cleanup EXIT
 
 echo "Running helper smoke tests..."
+git clone --quiet --bare "${REPO_ROOT}" "${BASELINE_REMOTE}"
+BASELINE_BRANCH="$(git -C "${REPO_ROOT}" branch --show-current)"
 AAAJIAO_IMPORTER_WORKSPACE_ROOT="${WORKSPACE_ROOT}" \
 AAAJIAO_REPO_ROOT="${REPO_ROOT}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_URL="${BASELINE_REMOTE}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH="${BASELINE_BRANCH}" \
 "${HELPER_BIN}" bootstrapWorkspace > "${BOOTSTRAP_JSON}"
 
 AAAJIAO_IMPORTER_WORKSPACE_ROOT="${WORKSPACE_ROOT}" \
 AAAJIAO_REPO_ROOT="${REPO_ROOT}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_URL="${BASELINE_REMOTE}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH="${BASELINE_BRANCH}" \
 "${HELPER_BIN}" overview > "${OVERVIEW_JSON}"
 
 export BOOTSTRAP_JSON OVERVIEW_JSON WORKSPACE_ROOT INFO_PLIST APP_BINARY
@@ -62,11 +69,13 @@ workspace_manifest = json.loads((workspace_root / "workspace_manifest.json").rea
 info_plist = plistlib.loads(Path(os.environ["INFO_PLIST"]).read_bytes())
 binary_data = Path(os.environ["APP_BINARY"]).read_bytes()
 
-assert bootstrap["status"] in {"initialized", "ready"}, bootstrap
+assert bootstrap["status"] in {"initialized_synced", "baseline_synced"}, bootstrap
 assert overview["settings"]["workspace_path"] == str(workspace_root), overview
 assert overview["settings"]["openai_model"] == "gpt-4.1", overview
 assert overview["settings"]["openai_model_source"] == "default", overview
 assert workspace_manifest["workspace_status"] in {"ready", "seed_version_mismatch"}, workspace_manifest
+assert workspace_manifest["baseline_status"] == "synced", workspace_manifest
+assert workspace_manifest["baseline_commit"], workspace_manifest
 assert (workspace_root / "aaajiao_works.json").exists()
 assert (workspace_root / "aaajiao_portfolio.md").exists()
 assert info_plist["CFBundleIconFile"] == "jiaozip", info_plist

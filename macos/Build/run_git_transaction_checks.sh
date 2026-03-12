@@ -35,9 +35,12 @@ BRANCH_NAME="$(git -C "${TEST_REPO}" branch --show-current)"
 git -C "${TEST_REPO}" remote remove origin >/dev/null 2>&1 || true
 git -C "${TEST_REPO}" remote add origin "${REMOTE_REPO}"
 git -C "${TEST_REPO}" push --quiet -u origin "HEAD:refs/heads/${BRANCH_NAME}"
+INITIAL_HEAD="$(git -C "${TEST_REPO}" rev-parse HEAD)"
 
 AAAJIAO_IMPORTER_WORKSPACE_ROOT="${WORKSPACE_ROOT}" \
 AAAJIAO_REPO_ROOT="${TEST_REPO}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_URL="${REMOTE_REPO}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH="${BRANCH_NAME}" \
 "${HELPER_BIN}" bootstrapWorkspace >/dev/null
 
 export WORKSPACE_ROOT
@@ -107,13 +110,17 @@ PY
 
 AAAJIAO_IMPORTER_WORKSPACE_ROOT="${WORKSPACE_ROOT}" \
 AAAJIAO_REPO_ROOT="${TEST_REPO}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_URL="${REMOTE_REPO}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH="${BRANCH_NAME}" \
 "${HELPER_BIN}" getApplyPreview --batch-id 1 > "${PREVIEW_JSON}"
 
 AAAJIAO_IMPORTER_WORKSPACE_ROOT="${WORKSPACE_ROOT}" \
 AAAJIAO_REPO_ROOT="${TEST_REPO}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_URL="${REMOTE_REPO}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH="${BRANCH_NAME}" \
 "${HELPER_BIN}" applyAcceptedRecords --batch-id 1 > "${APPLY_JSON}"
 
-export TEST_REPO REMOTE_REPO BRANCH_NAME PREVIEW_JSON APPLY_JSON
+export TEST_REPO REMOTE_REPO BRANCH_NAME PREVIEW_JSON APPLY_JSON INITIAL_HEAD
 /usr/bin/python3 - <<'PY'
 import json
 import os
@@ -123,6 +130,7 @@ from pathlib import Path
 test_repo = Path(os.environ["TEST_REPO"])
 remote_repo = Path(os.environ["REMOTE_REPO"])
 branch_name = os.environ["BRANCH_NAME"]
+initial_head = os.environ["INITIAL_HEAD"]
 preview = json.loads(Path(os.environ["PREVIEW_JSON"]).read_text(encoding="utf-8"))
 apply_result = json.loads(Path(os.environ["APPLY_JSON"]).read_text(encoding="utf-8"))
 
@@ -143,11 +151,11 @@ remote_head = subprocess.run(
     text=True,
     check=True,
 ).stdout.strip()
-assert head == remote_head == apply_result["applied_commit_sha"], (head, remote_head, apply_result)
+assert head == initial_head, (head, initial_head, apply_result)
+assert remote_head == apply_result["applied_commit_sha"], (remote_head, apply_result)
 
 last_commit_files = subprocess.run(
-    ["git", "show", "--name-only", "--format=", "HEAD"],
-    cwd=test_repo,
+    ["git", f"--git-dir={remote_repo}", "show", "--name-only", "--format=", remote_head],
     capture_output=True,
     text=True,
     check=True,

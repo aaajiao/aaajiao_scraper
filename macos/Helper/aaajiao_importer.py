@@ -30,6 +30,9 @@ REPO_WORKS = "aaajiao_works.json"
 REPO_PORTFOLIO = "aaajiao_portfolio.md"
 TARGET_FILES = (REPO_WORKS, REPO_PORTFOLIO)
 PUBLISH_REPO_DIR = "publish_repo"
+BASELINE_REPO_DIR = "baseline_repo"
+BASELINE_REMOTE_URL = "https://github.com/aaajiao/aaajiao_scraper.git"
+BASELINE_REMOTE_BRANCH = "main"
 AUTO_APPLY_CONFIDENCE = 0.85
 SEED_MANIFEST_NAME = "seed_manifest.json"
 WORKSPACE_MANIFEST_NAME = "workspace_manifest.json"
@@ -81,6 +84,18 @@ BATCH_FAILED = "failed"
 
 PENDING_RECORD_STATUSES = (RECORD_READY_FOR_REVIEW, RECORD_ACCEPTED, RECORD_NEEDS_REVIEW)
 TERMINAL_BATCH_STATUSES = (BATCH_COMPLETED, BATCH_FAILED)
+BASELINE_STATUS_MISSING = "missing"
+BASELINE_STATUS_SYNCED = "synced"
+BASELINE_STATUS_SEED_FALLBACK = "seed_fallback"
+BASELINE_STATUS_SYNC_SKIPPED_PENDING_REVIEW = "sync_skipped_pending_review"
+BASELINE_MANIFEST_FIELDS = (
+    "baseline_status",
+    "baseline_source_url",
+    "baseline_branch",
+    "baseline_commit",
+    "baseline_updated_at",
+    "baseline_error",
+)
 PROPOSED_FIELDS = {
     "title",
     "title_cn",
@@ -143,6 +158,10 @@ class AIValidationCallResult(BaseModel):
     error_state: str = ""
 
 
+AIValidationResult.model_rebuild()
+AIValidationCallResult.model_rebuild()
+
+
 def workspace_root() -> Path:
     env_root = os.environ.get("AAAJIAO_IMPORTER_WORKSPACE_ROOT")
     if env_root:
@@ -184,8 +203,15 @@ def publish_repo_root() -> Path:
     return workspace_root() / PUBLISH_REPO_DIR
 
 
+def baseline_repo_root() -> Path:
+    return workspace_root() / BASELINE_REPO_DIR
+
+
 def seed_snapshot_root() -> Path:
-    return bundle_root() / "python_snapshot"
+    direct = bundle_root() / "python_snapshot"
+    if direct.exists():
+        return direct
+    return bundle_root() / "Vendor" / "python_snapshot"
 
 
 def seed_manifest_path() -> Path:
@@ -202,6 +228,16 @@ def _normalize_string(value: Any) -> str:
     if isinstance(value, str):
         return value.strip()
     return str(value).strip()
+
+
+def baseline_remote_url() -> str:
+    override = _normalize_string(os.environ.get("AAAJIAO_IMPORTER_BASELINE_REMOTE_URL"))
+    return override or BASELINE_REMOTE_URL
+
+
+def baseline_remote_branch() -> str:
+    override = _normalize_string(os.environ.get("AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH"))
+    return override or BASELINE_REMOTE_BRANCH
 
 
 def _collapse_whitespace(value: Any) -> str:
@@ -306,6 +342,121 @@ def _load_seed_manifest() -> Dict[str, Any]:
     return _fallback_seed_manifest()
 
 
+def _baseline_manifest_defaults() -> Dict[str, str]:
+    return {
+        "baseline_status": BASELINE_STATUS_SEED_FALLBACK,
+        "baseline_source_url": baseline_remote_url(),
+        "baseline_branch": baseline_remote_branch(),
+        "baseline_commit": "",
+        "baseline_updated_at": "",
+        "baseline_error": "",
+    }
+
+
+def _baseline_manifest_state(
+    existing_manifest: Optional[Dict[str, Any]] = None,
+    overrides: Optional[Dict[str, Any]] = None,
+) -> Dict[str, str]:
+    state = _baseline_manifest_defaults()
+    if existing_manifest:
+        for field in BASELINE_MANIFEST_FIELDS:
+            value = existing_manifest.get(field)
+            if value is not None:
+                state[field] = _normalize_string(value)
+    if overrides:
+        for field, value in overrides.items():
+            if field in BASELINE_MANIFEST_FIELDS and value is not None:
+                state[field] = _normalize_string(value)
+    if not state["baseline_source_url"]:
+        state["baseline_source_url"] = baseline_remote_url()
+    if not state["baseline_branch"]:
+        state["baseline_branch"] = baseline_remote_branch()
+    return state
+
+
+def _workspace_manifest_or_empty() -> Dict[str, Any]:
+    path = workspace_manifest_path()
+    if path.exists():
+        return _load_json(path)
+    return {}
+
+
+def _copy_file_atomic(source: Path, target: Path) -> None:
+    temp_target = target.with_suffix(f"{target.suffix}.tmp")
+    shutil.copy2(source, temp_target)
+    temp_target.replace(target)
+
+
+def _restore_workspace_targets_from_seed() -> None:
+    for name in TARGET_FILES:
+        _copy_file_atomic(seed_root() / name, workspace_root() / name)
+
+
+def _validate_works_file(path: Path) -> None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"{path.name} is not valid JSON: {exc}") from exc
+    if not isinstance(payload, list):
+        raise RuntimeError(f"{path.name} must contain a JSON array")
+
+
+def _reset_baseline_repo(root: Path) -> None:
+    shutil.rmtree(root, ignore_errors=True)
+    root.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _baseline_git_error(exc: subprocess.CalledProcessError) -> str:
+    stderr = _normalize_string(exc.stderr)
+    stdout = _normalize_string(exc.stdout)
+    if stderr:
+        return stderr
+    if stdout:
+        return stdout
+    return str(exc)
+
+
+def _clone_remote_baseline_repo() -> Tuple[Path, str]:
+    root = baseline_repo_root()
+    _reset_baseline_repo(root)
+    try:
+        _run_git(
+            root.parent,
+            [
+                "clone",
+                "--branch",
+                baseline_remote_branch(),
+                "--single-branch",
+                baseline_remote_url(),
+                root.name,
+            ],
+        )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"Failed to clone GitHub baseline: {_baseline_git_error(exc)}") from exc
+    return root, _git_head(root)
+
+
+def _sync_remote_baseline_into_workspace() -> Dict[str, str]:
+    root, commit_sha = _clone_remote_baseline_repo()
+    works_path = root / REPO_WORKS
+    portfolio_path = root / REPO_PORTFOLIO
+    if not works_path.exists():
+        raise RuntimeError(f"Remote baseline is missing {REPO_WORKS}")
+    if not portfolio_path.exists():
+        raise RuntimeError(f"Remote baseline is missing {REPO_PORTFOLIO}")
+    _validate_works_file(works_path)
+    for source, name in ((works_path, REPO_WORKS), (portfolio_path, REPO_PORTFOLIO)):
+        _copy_file_atomic(source, workspace_root() / name)
+    return {
+        "baseline_status": BASELINE_STATUS_SYNCED,
+        "baseline_source_url": baseline_remote_url(),
+        "baseline_branch": baseline_remote_branch(),
+        "baseline_commit": commit_sha,
+        "baseline_updated_at": now_iso(),
+        "baseline_error": "",
+    }
+
+
 def _copy_seed_payload(*, overwrite: bool = False) -> None:
     snapshot_path = snapshot_root()
     cache_path = workspace_root() / ".cache"
@@ -333,25 +484,47 @@ def _workspace_has_local_activity() -> bool:
     return bool(batches or records)
 
 
+def _workspace_has_active_review_state() -> bool:
+    with sqlite3.connect(db_path()) as conn:
+        active_batches = conn.execute(
+            "SELECT COUNT(*) FROM batches WHERE status NOT IN (?, ?)",
+            TERMINAL_BATCH_STATUSES,
+        ).fetchone()[0]
+        pending_records = conn.execute(
+            "SELECT COUNT(*) FROM records WHERE status IN (?, ?, ?)",
+            PENDING_RECORD_STATUSES,
+        ).fetchone()[0]
+    return bool(active_batches or pending_records)
+
+
 def _write_workspace_manifest(
     seed_manifest: Dict[str, Any],
     *,
     workspace_status: str,
     workspace_seed_version: str,
     initialized_at: Optional[str] = None,
+    previous_manifest: Optional[Dict[str, Any]] = None,
+    baseline_updates: Optional[Dict[str, Any]] = None,
+    update_bootstrap_time: bool = True,
 ) -> None:
+    existing_manifest = previous_manifest or _workspace_manifest_or_empty()
+    baseline_state = _baseline_manifest_state(existing_manifest, baseline_updates)
+    last_bootstrap_at = _normalize_string(existing_manifest.get("last_bootstrap_at"))
     manifest = {
         "manifest_version": MANIFEST_VERSION,
         "app_name": APP_NAME,
         "workspace_root": str(workspace_root()),
-        "initialized_at": initialized_at or now_iso(),
-        "last_bootstrap_at": now_iso(),
+        "initialized_at": initialized_at
+        or _normalize_string(existing_manifest.get("initialized_at"))
+        or now_iso(),
+        "last_bootstrap_at": now_iso() if update_bootstrap_time or not last_bootstrap_at else last_bootstrap_at,
         "workspace_status": workspace_status,
         "workspace_seed_version": workspace_seed_version,
         "bundle_seed_version": _normalize_string(seed_manifest.get("seed_version")),
         "source_commit": _normalize_string(seed_manifest.get("source_commit")),
         "tracked_files": [REPO_WORKS, REPO_PORTFOLIO],
     }
+    manifest.update(baseline_state)
     _write_json_atomic(workspace_manifest_path(), manifest)
 
 
@@ -366,13 +539,19 @@ def ensure_workspace() -> str:
             seed_manifest,
             workspace_status="ready",
             workspace_seed_version=_normalize_string(seed_manifest.get("seed_version")),
+            baseline_updates={
+                "baseline_status": BASELINE_STATUS_SEED_FALLBACK,
+                "baseline_source_url": baseline_remote_url(),
+                "baseline_branch": baseline_remote_branch(),
+                "baseline_updated_at": now_iso(),
+                "baseline_error": "",
+            },
         )
         return "initialized"
 
     _copy_seed_payload()
     init_db()
-    prune_terminal_batches()
-    workspace_manifest = _load_json(workspace_manifest_path())
+    workspace_manifest = _workspace_manifest_or_empty()
     workspace_seed_version = _normalize_string(workspace_manifest.get("workspace_seed_version"))
     bundle_seed_version = _normalize_string(seed_manifest.get("seed_version"))
     if not workspace_seed_version:
@@ -387,8 +566,100 @@ def ensure_workspace() -> str:
         workspace_status=workspace_status,
         workspace_seed_version=workspace_seed_version,
         initialized_at=_normalize_string(workspace_manifest.get("initialized_at")) or now_iso(),
+        previous_manifest=workspace_manifest,
     )
     return workspace_status
+
+
+def _synchronize_workspace_baseline(
+    *,
+    fallback_to_seed: bool,
+    allow_skip_if_reviewing: bool,
+    block_if_reviewing: bool,
+    update_bootstrap_time: bool,
+) -> Dict[str, str]:
+    seed_manifest = _load_seed_manifest()
+    workspace_manifest = _workspace_manifest_or_empty()
+    initialized_at = _normalize_string(workspace_manifest.get("initialized_at")) or now_iso()
+    workspace_status = _normalize_string(workspace_manifest.get("workspace_status")) or "ready"
+    workspace_seed_version = (
+        _normalize_string(workspace_manifest.get("workspace_seed_version"))
+        or _normalize_string(seed_manifest.get("seed_version"))
+    )
+    if _workspace_has_active_review_state():
+        message = "Pending review results prevent refreshing the workspace baseline"
+        if block_if_reviewing:
+            _write_workspace_manifest(
+                seed_manifest,
+                workspace_status=workspace_status,
+                workspace_seed_version=workspace_seed_version,
+                initialized_at=initialized_at,
+                previous_manifest=workspace_manifest,
+                baseline_updates={
+                    "baseline_status": BASELINE_STATUS_SYNC_SKIPPED_PENDING_REVIEW,
+                    "baseline_source_url": baseline_remote_url(),
+                    "baseline_branch": baseline_remote_branch(),
+                    "baseline_error": message,
+                },
+                update_bootstrap_time=update_bootstrap_time,
+            )
+            raise RuntimeError(message)
+        if allow_skip_if_reviewing:
+            result = {
+                "baseline_status": BASELINE_STATUS_SYNC_SKIPPED_PENDING_REVIEW,
+                "baseline_source_url": baseline_remote_url(),
+                "baseline_branch": baseline_remote_branch(),
+                "baseline_error": message,
+            }
+            _write_workspace_manifest(
+                seed_manifest,
+                workspace_status=workspace_status,
+                workspace_seed_version=workspace_seed_version,
+                initialized_at=initialized_at,
+                previous_manifest=workspace_manifest,
+                baseline_updates=result,
+                update_bootstrap_time=update_bootstrap_time,
+            )
+            return result
+
+    try:
+        result = _sync_remote_baseline_into_workspace()
+    except Exception as exc:
+        error_message = _normalize_string(exc)
+        if not fallback_to_seed:
+            _write_workspace_manifest(
+                seed_manifest,
+                workspace_status=workspace_status,
+                workspace_seed_version=workspace_seed_version,
+                initialized_at=initialized_at,
+                previous_manifest=workspace_manifest,
+                baseline_updates={
+                    "baseline_source_url": baseline_remote_url(),
+                    "baseline_branch": baseline_remote_branch(),
+                    "baseline_error": error_message,
+                },
+                update_bootstrap_time=update_bootstrap_time,
+            )
+            raise RuntimeError(error_message) from exc
+        _restore_workspace_targets_from_seed()
+        result = {
+            "baseline_status": BASELINE_STATUS_SEED_FALLBACK,
+            "baseline_source_url": baseline_remote_url(),
+            "baseline_branch": baseline_remote_branch(),
+            "baseline_commit": "",
+            "baseline_updated_at": now_iso(),
+            "baseline_error": error_message,
+        }
+    _write_workspace_manifest(
+        seed_manifest,
+        workspace_status=workspace_status,
+        workspace_seed_version=workspace_seed_version,
+        initialized_at=initialized_at,
+        previous_manifest=workspace_manifest,
+        baseline_updates=result,
+        update_bootstrap_time=update_bootstrap_time,
+    )
+    return result
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -1344,6 +1615,7 @@ def _settings_payload() -> Dict[str, Any]:
     if workspace_manifest_path().exists():
         workspace_manifest = _load_json(workspace_manifest_path())
     seed_manifest = _load_seed_manifest()
+    baseline_state = _baseline_manifest_state(workspace_manifest)
     return {
         "workspace_path": str(workspace_root()),
         "repo_path": str(repo_root()),
@@ -1353,6 +1625,12 @@ def _settings_payload() -> Dict[str, Any]:
         "workspace_status": _normalize_string(workspace_manifest.get("workspace_status")) or "missing",
         "workspace_seed_version": _normalize_string(workspace_manifest.get("workspace_seed_version")),
         "bundle_seed_version": _normalize_string(seed_manifest.get("seed_version")),
+        "baseline_status": baseline_state["baseline_status"] or BASELINE_STATUS_MISSING,
+        "baseline_source_url": baseline_state["baseline_source_url"],
+        "baseline_branch": baseline_state["baseline_branch"],
+        "baseline_commit": baseline_state["baseline_commit"],
+        "baseline_updated_at": baseline_state["baseline_updated_at"],
+        "baseline_error": baseline_state["baseline_error"],
     }
 
 
@@ -1387,7 +1665,26 @@ def _merge_accepted_records(batch_id: int) -> Tuple[List[Dict[str, Any]], int, i
 
 
 def bootstrap_workspace() -> Dict[str, Any]:
-    status = ensure_workspace()
+    initial_status = ensure_workspace()
+    prune_terminal_batches()
+    baseline_result = _synchronize_workspace_baseline(
+        fallback_to_seed=True,
+        allow_skip_if_reviewing=initial_status != "initialized",
+        block_if_reviewing=False,
+        update_bootstrap_time=True,
+    )
+    if initial_status == "initialized":
+        status = (
+            "initialized_synced"
+            if baseline_result["baseline_status"] == BASELINE_STATUS_SYNCED
+            else "initialized_seed_fallback"
+        )
+    elif baseline_result["baseline_status"] == BASELINE_STATUS_SYNCED:
+        status = "baseline_synced"
+    elif baseline_result["baseline_status"] == BASELINE_STATUS_SYNC_SKIPPED_PENDING_REVIEW:
+        status = "baseline_sync_skipped_pending_review"
+    else:
+        status = "baseline_seed_fallback"
     return {"settings": _settings_payload(), "status": status}
 
 
@@ -1395,7 +1692,26 @@ def reset_workspace() -> Dict[str, Any]:
     root = workspace_root()
     if root.exists():
         shutil.rmtree(root)
-    status = ensure_workspace()
+    ensure_workspace()
+    baseline_result = _synchronize_workspace_baseline(
+        fallback_to_seed=True,
+        allow_skip_if_reviewing=False,
+        block_if_reviewing=False,
+        update_bootstrap_time=True,
+    )
+    status = "reset_synced" if baseline_result["baseline_status"] == BASELINE_STATUS_SYNCED else "reset_seed_fallback"
+    return {"settings": _settings_payload(), "status": status}
+
+
+def refresh_workspace_baseline() -> Dict[str, Any]:
+    ensure_workspace()
+    _synchronize_workspace_baseline(
+        fallback_to_seed=False,
+        allow_skip_if_reviewing=False,
+        block_if_reviewing=True,
+        update_bootstrap_time=False,
+    )
+    status = "baseline_synced"
     return {"settings": _settings_payload(), "status": status}
 
 
@@ -1622,6 +1938,7 @@ def delete_batch(batch_id: int) -> Dict[str, Any]:
 
 def list_pending_records() -> Dict[str, Any]:
     ensure_workspace()
+    prune_terminal_batches()
     with connect_db() as conn:
         batches = _batch_summaries(conn)
 
@@ -1642,6 +1959,7 @@ def parse_args() -> argparse.Namespace:
 
     sub.add_parser("bootstrapWorkspace", aliases=["bootstrap"])
     sub.add_parser("resetWorkspace")
+    sub.add_parser("refreshWorkspaceBaseline", aliases=["refresh-baseline"])
     sub.add_parser("listPendingRecords", aliases=["overview"])
     sub.add_parser("startIncrementalSync", aliases=["start-incremental-sync"])
 
@@ -1679,6 +1997,8 @@ def main() -> None:
         result = bootstrap_workspace()
     elif args.command == "resetWorkspace":
         result = reset_workspace()
+    elif args.command in {"refreshWorkspaceBaseline", "refresh-baseline"}:
+        result = refresh_workspace_baseline()
     elif args.command in {"listPendingRecords", "overview"}:
         result = list_pending_records()
     elif args.command in {"startIncrementalSync", "start-incremental-sync"}:
