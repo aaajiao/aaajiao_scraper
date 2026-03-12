@@ -55,9 +55,9 @@ python3 -m pytest tests/test_macos_helper.py -v
 
 ## Documentation
 
-- Python scraper and GUI: `portfolio_scraper/README.md`
-- macOS importer: `macos/README.md`
-- Agent repository guidance: `AGENTS.md`
+- Python scraper and GUI: [`portfolio_scraper/README.md`](portfolio_scraper/README.md)
+- macOS importer: [`macos/README.md`](macos/README.md)
+- Agent repository guidance: [`AGENTS.md`](AGENTS.md)
 
 ## Shared Artifacts
 
