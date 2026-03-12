@@ -289,7 +289,7 @@ def test_import_url_prefers_hybrid_extraction_and_preserves_richer_fields(tmp_pa
                 "size": "Dimension variable / 尺寸可变",
                 "duration": "12'00''",
                 "credits": "",
-                "description_en": "English description",
+                "description_en": "English description\n\nSecond paragraph",
                 "description_cn": "中文描述",
                 "source": "hybrid_layer2",
             }
@@ -305,7 +305,7 @@ def test_import_url_prefers_hybrid_extraction_and_preserves_richer_fields(tmp_pa
             size="Dimension variable / 尺寸可变",
             duration="12'00''",
             credits="",
-            description_en="English description",
+            description_en="English description Second paragraph",
             description_cn="中文描述",
             video_link="",
             confidence=0.96,
@@ -329,6 +329,7 @@ def test_import_url_prefers_hybrid_extraction_and_preserves_richer_fields(tmp_pa
     assert result["proposed"]["source"] == "hybrid_layer2"
     assert result["proposed"]["video_link"] == "https://vimeo.com/example"
     assert result["proposed"]["high_res_images"] == ["https://cdn.example.com/highres.jpg"]
+    assert result["proposed"]["description_en"] == "English description\n\nSecond paragraph"
 
 
 def test_merge_existing_work_with_proposed_keeps_stronger_existing_fields():
@@ -354,6 +355,23 @@ def test_merge_existing_work_with_proposed_keeps_stronger_existing_fields():
     assert merged["video_link"] == "https://vimeo.com/original"
     assert merged["high_res_images"] == ["https://cdn.example.com/highres.jpg"]
     assert merged["description_en"] == "Updated description"
+
+
+def test_merge_existing_work_with_proposed_preserves_existing_paragraph_formatting():
+    helper = _load_helper_module()
+
+    existing = {
+        "url": "https://eventstructure.com/One-ritual",
+        "description_en": "First paragraph.\n\nSecond paragraph.",
+    }
+    proposed = {
+        "url": "https://eventstructure.com/One-ritual",
+        "description_en": "First paragraph. Second paragraph.",
+    }
+
+    merged = helper._merge_existing_work_with_proposed(existing, proposed)
+
+    assert merged["description_en"] == "First paragraph.\n\nSecond paragraph."
 
 
 def test_apply_accepted_records_cleans_up_applied_batch(tmp_path, monkeypatch):

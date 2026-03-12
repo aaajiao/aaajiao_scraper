@@ -204,6 +204,10 @@ def _normalize_string(value: Any) -> str:
     return str(value).strip()
 
 
+def _collapse_whitespace(value: Any) -> str:
+    return " ".join(_normalize_string(value).split())
+
+
 def _normalized_page_type(value: Any) -> str:
     normalized = _normalize_string(value).lower()
     if normalized in {"artwork", "exhibition", "unknown"}:
@@ -1094,6 +1098,10 @@ def _is_meaningful_value(value: Any) -> bool:
 def _merge_existing_work_with_proposed(existing: Dict[str, Any], proposed: Dict[str, Any]) -> Dict[str, Any]:
     merged = dict(existing)
     for key, value in proposed.items():
+        current = merged.get(key)
+        if isinstance(current, str) and isinstance(value, str):
+            if _is_meaningful_value(current) and _collapse_whitespace(current) == _collapse_whitespace(value):
+                continue
         if _is_meaningful_value(value) or key not in merged:
             merged[key] = value
     return merged
