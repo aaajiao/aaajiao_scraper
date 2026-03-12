@@ -74,6 +74,7 @@ enum ImporterFlowState: String {
 enum ImporterBusyAction {
     case importURL
     case syncSite
+    case prepareGitHubSync
     case syncGitHub
     case refreshBaseline
 }
@@ -188,6 +189,10 @@ final class AppModel: ObservableObject {
         currentBusyAction == .syncGitHub
     }
 
+    var isPreparingGitHubSync: Bool {
+        currentBusyAction == .prepareGitHubSync
+    }
+
     var isRefreshingBaseline: Bool {
         currentBusyAction == .refreshBaseline
     }
@@ -238,9 +243,21 @@ final class AppModel: ObservableObject {
         return "Ready"
     }
 
-    var canSyncCurrentRun: Bool {
+    var canRequestGitHubSync: Bool {
+        hasAcceptedRecords && !isBusy
+    }
+
+    var canConfirmGitHubSync: Bool {
         guard let preview = currentApplyPreview else { return false }
-        return hasAcceptedRecords && preview.will_push
+        return hasAcceptedRecords && preview.will_push && !isBusy
+    }
+
+    var gitHubSyncActionTitle: String {
+        "Sync GitHub…"
+    }
+
+    var gitHubSyncActionSymbol: String {
+        "arrow.up.circle.fill"
     }
 
     var canAcceptSelectedRecord: Bool {
@@ -282,6 +299,8 @@ final class AppModel: ObservableObject {
             return "Importing URL..."
         case .syncSite:
             return "Syncing site..."
+        case .prepareGitHubSync:
+            return "Preparing GitHub sync preview..."
         case .syncGitHub:
             return "Syncing accepted results..."
         case .refreshBaseline:
@@ -578,7 +597,35 @@ final class AppModel: ObservableObject {
 
     func requestApply() {
         guard hasAcceptedRecords else { return }
-        isShowingApplyConfirmation = true
+        Task {
+            do {
+                guard let batchID = currentBatchID else { return }
+                if currentApplyPreview == nil {
+                    currentBusyAction = .prepareGitHubSync
+                    setStatus("Preparing GitHub sync preview...", tone: .info)
+                    currentApplyPreview = try helper.getApplyPreview(
+                        batchID: batchID,
+                        openAIKey: savedOpenAIKey,
+                        openAIModel: savedOpenAIModelSelection.effectiveModel,
+                        openAIModelSource: savedOpenAIModelSelection.source
+                    )
+                    currentBusyAction = nil
+                }
+
+                guard let preview = currentApplyPreview else { return }
+                if preview.will_push {
+                    isShowingApplyConfirmation = true
+                } else {
+                    let message = preview.error_message.isEmpty
+                        ? "Accepted results are not ready to sync to GitHub yet."
+                        : preview.error_message
+                    setStatus(message, tone: .warning)
+                }
+            } catch {
+                currentBusyAction = nil
+                setStatus(display(error), tone: .error)
+            }
+        }
     }
 
     func confirmApply() {

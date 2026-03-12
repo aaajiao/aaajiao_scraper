@@ -30,6 +30,7 @@ struct ContentView: View {
                     Label("Import URL…", systemImage: "plus.circle")
                 }
                 .help("Import a single artwork URL")
+                .appArrowCursor()
 
                 Button {
                     model.startSync()
@@ -37,6 +38,7 @@ struct ContentView: View {
                     Label("Sync Entire Site", systemImage: "arrow.trianglehead.2.clockwise")
                 }
                 .disabled(!model.canRunProtectedActions || model.isBusy)
+                .appArrowCursor()
 
                 Button {
                     model.refreshFromUI()
@@ -44,6 +46,7 @@ struct ContentView: View {
                     Label("Reload Results", systemImage: "arrow.clockwise")
                 }
                 .disabled(model.isBusy)
+                .appArrowCursor()
 
                 Button {
                     model.refreshWorkspaceBaseline()
@@ -51,13 +54,9 @@ struct ContentView: View {
                     Label("Refresh Baseline", systemImage: "arrow.down.circle")
                 }
                 .disabled(!model.canRefreshBaseline)
+                .appArrowCursor()
 
-                Button {
-                    model.requestApply()
-                } label: {
-                    Label("Apply Accepted", systemImage: "arrow.up.circle.fill")
-                }
-                .disabled(!model.canSyncCurrentRun || model.isBusy)
+                ToolbarGitHubSyncButton()
 
                 Menu {
                     Button("Discard Current Run", role: .destructive) {
@@ -71,6 +70,7 @@ struct ContentView: View {
                 } label: {
                     Label("More", systemImage: "ellipsis.circle")
                 }
+                .appArrowCursor()
             }
         }
         .sheet(isPresented: $model.isShowingImportSheet) {
@@ -79,12 +79,12 @@ struct ContentView: View {
         }
         .alert("Sync accepted results to GitHub?", isPresented: $model.isShowingApplyConfirmation) {
             Button("Cancel", role: .cancel) {}
-            Button("Sync", role: .destructive) {
+            Button("Sync GitHub") {
                 model.confirmApply()
             }
         } message: {
             if let preview = model.currentApplyPreview {
-                Text("This will sync \(preview.accepted_count) accepted result(s) to GitHub.")
+                Text("This will sync \(preview.accepted_count) accepted result(s) to GitHub and update \(preview.target_files.count) file(s).")
             } else {
                 Text("This will sync accepted results to GitHub.")
             }
@@ -153,17 +153,20 @@ private struct SidebarView: View {
                             model.requestImportSheet()
                         }
                         .buttonStyle(.borderedProminent)
+                        .appArrowCursor()
 
                         Button("Sync Entire Site") {
                             model.startSync()
                         }
                         .disabled(!model.canRunProtectedActions || model.isBusy)
+                        .appArrowCursor()
                     }
 
                     if !model.hasSavedOpenAIKey {
                         Button("Open Settings") {
                             presentSettingsWindow(openWindow)
                         }
+                        .appArrowCursor()
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -388,16 +391,19 @@ private struct WelcomeDetailState: View {
                     model.requestImportSheet()
                 }
                 .buttonStyle(.borderedProminent)
+                .appArrowCursor()
 
                 Button("Sync Entire Site") {
                     model.startSync()
                 }
                 .disabled(!model.canRunProtectedActions || model.isBusy)
+                .appArrowCursor()
 
                 if !model.hasSavedOpenAIKey {
                     Button("Open Settings") {
                         presentSettingsWindow(openWindow)
                     }
+                    .appArrowCursor()
                 }
             }
         }
@@ -491,6 +497,7 @@ private struct SelectionActionBar: View {
                 model.openSelectedRecordSourcePage()
             }
             .disabled(model.selectedRecordSourceURL == nil)
+            .appArrowCursor()
 
             Button("Copy URL") {
                 guard let record = model.selectedRecord else { return }
@@ -498,22 +505,21 @@ private struct SelectionActionBar: View {
                 NSPasteboard.general.setString(record.url, forType: .string)
             }
             .disabled(!model.hasSelectedRecord)
+            .appArrowCursor()
 
             Button("Delete", role: .destructive) {
                 model.requestDeleteSelectedRecord()
             }
             .disabled(!model.canDeleteSelectedRecord)
+            .appArrowCursor()
 
             Button("Accept") {
                 model.acceptSelectedRecord()
             }
             .disabled(!model.canAcceptSelectedRecord)
+            .appArrowCursor()
 
-            Button("Apply Accepted") {
-                model.requestApply()
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!model.canSyncCurrentRun || model.isBusy)
+            ActionBarGitHubSyncButton()
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
@@ -521,8 +527,8 @@ private struct SelectionActionBar: View {
     }
 
     private var primarySummary: String {
-        if let preview = model.currentApplyPreview, model.hasAcceptedRecords {
-            return "\(preview.accepted_count) accepted ready to apply"
+        if let detail = model.currentBatchDetail, detail.accepted_count > 0 {
+            return "\(detail.accepted_count) accepted ready to sync"
         }
         if let detail = model.currentBatchDetail {
             return "\(detail.pending_count) pending • \(detail.failed_count) failed"
@@ -536,6 +542,12 @@ private struct SelectionActionBar: View {
         }
         if let preview = model.currentApplyPreview, !preview.target_files.isEmpty {
             return preview.target_files.joined(separator: " • ")
+        }
+        if model.isPreparingGitHubSync {
+            return "Preparing GitHub sync preview."
+        }
+        if model.hasAcceptedRecords {
+            return "Accepted results stay local until you sync them to GitHub."
         }
         return "Use the toolbar to import a URL, sync the site, or refresh results."
     }
@@ -564,6 +576,7 @@ private struct ContextBannerView: View {
                 Button("Open Settings") {
                     presentSettingsWindow(openWindow)
                 }
+                .appArrowCursor()
             }
         }
         .padding(.horizontal, 18)
@@ -672,6 +685,7 @@ private struct ImportURLSheet: View {
                     model.cancelImportSheet()
                 }
                 .disabled(model.isImportingURL)
+                .appArrowCursor()
 
                 Spacer()
 
@@ -680,6 +694,7 @@ private struct ImportURLSheet: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!model.canSubmitManualURL)
+                .appArrowCursor()
             }
         }
         .padding(24)
@@ -705,6 +720,58 @@ private struct SummaryTile: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+private struct ToolbarGitHubSyncButton: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        Group {
+            if model.hasAcceptedRecords {
+                Button {
+                    model.requestApply()
+                } label: {
+                    Label(model.gitHubSyncActionTitle, systemImage: model.gitHubSyncActionSymbol)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!model.canRequestGitHubSync)
+                .appArrowCursor()
+            } else {
+                Button {
+                    model.requestApply()
+                } label: {
+                    Label(model.gitHubSyncActionTitle, systemImage: model.gitHubSyncActionSymbol)
+                }
+                .buttonStyle(.bordered)
+                .disabled(true)
+                .appArrowCursor()
+            }
+        }
+    }
+}
+
+private struct ActionBarGitHubSyncButton: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        Group {
+            if model.hasAcceptedRecords {
+                Button(model.gitHubSyncActionTitle) {
+                    model.requestApply()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!model.canRequestGitHubSync)
+                .appArrowCursor()
+            } else {
+                Button(model.gitHubSyncActionTitle) {
+                    model.requestApply()
+                }
+                .buttonStyle(.bordered)
+                .disabled(true)
+                .appArrowCursor()
+            }
+        }
     }
 }
 
@@ -791,6 +858,7 @@ struct SettingsView: View {
                     model.clearSavedKey()
                 }
                 .disabled(!model.hasSavedOpenAIKey && model.trimmedDraftOpenAIKey.isEmpty)
+                .appArrowCursor()
 
                 Spacer()
 
@@ -798,6 +866,7 @@ struct SettingsView: View {
                     model.revertSettings()
                 }
                 .disabled(!model.isSettingsDirty)
+                .appArrowCursor()
 
                 Button(model.isSettingsDirty ? "Save" : "Done") {
                     if model.saveSettings() {
@@ -806,6 +875,7 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!model.canSaveSettings)
+                .appArrowCursor()
             }
             .padding(20)
         }
@@ -905,10 +975,10 @@ struct AppCommands: Commands {
             .keyboardShortcut("r", modifiers: [.command, .option])
             .disabled(!model.canRefreshBaseline)
 
-            Button("Apply Accepted") {
+            Button(model.gitHubSyncActionTitle) {
                 model.requestApply()
             }
-            .disabled(!model.canSyncCurrentRun || model.isBusy)
+            .disabled(!model.canRequestGitHubSync)
         }
 
         CommandMenu("Review") {
@@ -1021,4 +1091,22 @@ private func baselineDetail(_ settings: AppSettings) -> String {
         return "\(branch) baseline."
     }
     return "No baseline metadata."
+}
+
+private struct ArrowCursorModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content.onHover { isHovering in
+            if isHovering {
+                NSCursor.arrow.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+    }
+}
+
+private extension View {
+    func appArrowCursor() -> some View {
+        modifier(ArrowCursorModifier())
+    }
 }
