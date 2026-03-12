@@ -1,11 +1,11 @@
 import importlib.util
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 from requests import Response
-
 
 HELPER_PATH = Path(__file__).resolve().parents[1] / "macos" / "Helper" / "aaajiao_importer.py"
 
@@ -822,3 +822,84 @@ def test_apply_accepted_records_uses_managed_publish_repo_when_source_repo_is_di
         "refs/heads/main:aaajiao_works.json",
     )
     assert "Published Work" in published_json
+
+
+def test_workspace_manifest_keeps_stable_structure_contract(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    workspace_root = tmp_path / "workspace"
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+
+    status = helper.ensure_workspace()
+    manifest = helper._load_json(helper.workspace_manifest_path())
+
+    assert status == "initialized"
+    assert manifest["manifest_version"] == helper.MANIFEST_VERSION
+    assert manifest["app_name"] == helper.APP_NAME
+    assert manifest["workspace_root"] == str(workspace_root)
+    assert manifest["workspace_status"] == "ready"
+    assert manifest["tracked_files"] == [helper.REPO_WORKS, helper.REPO_PORTFOLIO]
+    assert manifest["baseline_status"] == helper.BASELINE_STATUS_SEED_FALLBACK
+    assert manifest["baseline_source_url"] == helper.BASELINE_REMOTE_URL
+    assert manifest["baseline_branch"] == helper.BASELINE_REMOTE_BRANCH
+    for field in helper.BASELINE_MANIFEST_FIELDS:
+        assert field in manifest
+
+
+def test_seed_snapshot_root_prefers_direct_path_over_vendor_fallback(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    bundle_root = tmp_path / "bundle"
+    vendor_snapshot = bundle_root / "Vendor" / "python_snapshot"
+    vendor_snapshot.mkdir(parents=True)
+    monkeypatch.setenv("AAAJIAO_IMPORTER_BUNDLE_ROOT", str(bundle_root))
+
+    assert helper.seed_snapshot_root() == vendor_snapshot
+
+    direct_snapshot = bundle_root / "python_snapshot"
+    direct_snapshot.mkdir()
+    assert helper.seed_snapshot_root() == direct_snapshot
+
+
+def test_parse_args_accepts_alias_commands_and_flags(monkeypatch):
+    helper = _load_helper_module()
+
+    monkeypatch.setattr(sys, "argv", ["aaajiao_importer.py", "overview"])
+    overview_args = helper.parse_args()
+    assert overview_args.command == "overview"
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["aaajiao_importer.py", "apply-accepted", "--batch-id", "7", "--dry-run"],
+    )
+    apply_args = helper.parse_args()
+    assert apply_args.command == "apply-accepted"
+    assert apply_args.batch_id == 7
+    assert apply_args.dry_run is True
+
+
+def test_copy_seed_payload_respects_overwrite_switch(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    workspace_root = tmp_path / "workspace"
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+
+    helper.ensure_workspace()
+    works_path = workspace_root / helper.REPO_WORKS
+    portfolio_path = workspace_root / helper.REPO_PORTFOLIO
+    seed_works = (helper.seed_root() / helper.REPO_WORKS).read_text(encoding="utf-8")
+    seed_portfolio = (helper.seed_root() / helper.REPO_PORTFOLIO).read_text(encoding="utf-8")
+
+    works_path.write_text(
+        json.dumps([{"title": "Local Workspace Only", "url": "https://eventstructure.com/local-only"}], indent=2) + "\n",
+        encoding="utf-8",
+    )
+    portfolio_path.write_text("# Local Workspace\n", encoding="utf-8")
+
+    helper._copy_seed_payload(overwrite=False)
+    assert "Local Workspace Only" in works_path.read_text(encoding="utf-8")
+    assert portfolio_path.read_text(encoding="utf-8") == "# Local Workspace\n"
+
+    helper._copy_seed_payload(overwrite=True)
+    assert works_path.read_text(encoding="utf-8") == seed_works
+    assert portfolio_path.read_text(encoding="utf-8") == seed_portfolio
