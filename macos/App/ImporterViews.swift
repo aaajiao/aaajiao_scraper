@@ -1,6 +1,8 @@
 import AppKit
 import SwiftUI
 
+private let selectionActionBarContentInset: CGFloat = 88
+
 struct ContentView: View {
     @EnvironmentObject private var model: AppModel
 
@@ -368,6 +370,8 @@ private struct RecordDetailView: View {
                 }
             }
             .padding(20)
+            // Reserve space for the bottom action bar so the last section can scroll fully into view.
+            .padding(.bottom, selectionActionBarContentInset)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .navigationTitle(record.displayTitle)
