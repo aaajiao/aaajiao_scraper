@@ -1,20 +1,20 @@
 # aaajiao Scraper Repository
 
-这个仓库现在是一个 umbrella repo，包含两个平行的产品面：
+This repository is now an umbrella repo with two parallel product surfaces:
 
 1. `portfolio_scraper/`
-   Python 抓取器、Streamlit GUI、批处理脚本、示例、Python 测试
+   Python scraper, Streamlit GUI, batch scripts, examples, and Python tests
 2. `macos/`
-   本地 macOS importer，带 workspace、review queue、baseline refresh 和显式 git apply
+   Local macOS importer with a workspace, review queue, baseline refresh, and explicit git apply flow
 
-根目录只保留仓库级说明、共享数据产物和兼容入口：
+The repository root only keeps repo-level docs, shared data artifacts, and compatibility entrypoints:
 
 - `aaajiao_works.json`
 - `aaajiao_portfolio.md`
 - `start_gui.command`
 - `pyproject.toml`
 
-## 目录结构
+## Directory Structure
 
 ```text
 aaajiao_scraper/
@@ -35,9 +35,9 @@ aaajiao_scraper/
 └── pyproject.toml
 ```
 
-## 快速入口
+## Quick Start
 
-Python 产品线：
+Python product surface:
 
 ```bash
 ./start_gui.command
@@ -45,7 +45,7 @@ python3 -m pytest portfolio_scraper/tests/ -v
 python portfolio_scraper/scripts/batch_update_works.py --limit 10 --dry-run
 ```
 
-macOS 产品线：
+macOS product surface:
 
 ```bash
 ./macos/Build/prepare_seed.sh
@@ -53,15 +53,15 @@ macOS 产品线：
 python3 -m pytest tests/test_macos_helper.py -v
 ```
 
-## 文档导航
+## Documentation
 
-- Python 抓取器与 GUI：`portfolio_scraper/README.md`
-- macOS importer：`macos/README.md`
-- agent 仓库说明：`AGENTS.md`
+- Python scraper and GUI: `portfolio_scraper/README.md`
+- macOS importer: `macos/README.md`
+- Agent repository guidance: `AGENTS.md`
 
-## 共享产物
+## Shared Artifacts
 
-`aaajiao_works.json` 和 `aaajiao_portfolio.md` 继续保留在仓库根目录。
+`aaajiao_works.json` and `aaajiao_portfolio.md` remain at the repository root.
 
-- Python 抓取器默认写回这两个文件
-- macOS importer 的 seed、baseline refresh 和 apply 也继续以这两个根级文件为目标
+- The Python scraper writes back to these two files by default
+- The macOS importer also continues to treat these root-level files as the targets for seed data, baseline refresh, and apply operations
