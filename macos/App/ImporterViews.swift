@@ -213,13 +213,8 @@ private struct SidebarOverviewPanel: View {
                     title: "OpenAI",
                     value: model.hasSavedOpenAIKey ? model.effectiveOpenAIModel : "Missing key",
                     systemImage: model.hasSavedOpenAIKey ? "checkmark.circle.fill" : "key.slash",
-                    tint: model.hasSavedOpenAIKey ? .green : .orange
-                )
-                StatusSummaryRow(
-                    title: "Workspace",
-                    value: workspaceLabel(model.settings.workspace_status),
-                    systemImage: "internaldrive",
-                    tint: model.settings.workspace_status == "seed_version_mismatch" ? .orange : .secondary
+                    tint: model.hasSavedOpenAIKey ? .green : .orange,
+                    valueTint: model.hasSavedOpenAIKey ? .green : .orange
                 )
                 if let commitURL = model.baselineCommitURL {
                     Link(destination: commitURL) {
@@ -227,27 +222,50 @@ private struct SidebarOverviewPanel: View {
                             title: "Baseline",
                             value: baselineLabel(model.settings.baseline_status),
                             systemImage: "arrow.down.circle",
-                            tint: baselineTint(model.settings)
+                            tint: baselineTint(model.settings),
+                            valueTint: .blue,
+                            trailingSystemImage: "arrow.up.right.square"
                         )
                     }
                     .buttonStyle(.plain)
+                    .help("Open baseline commit on GitHub")
                     .appArrowCursor()
                 } else {
                     StatusSummaryRow(
                         title: "Baseline",
                         value: baselineLabel(model.settings.baseline_status),
                         systemImage: "arrow.down.circle",
-                        tint: baselineTint(model.settings)
+                        tint: baselineTint(model.settings),
+                        valueTint: baselineTint(model.settings)
                     )
                 }
+                StatusSummaryRow(
+                    title: "Workspace",
+                    value: workspaceLabel(model.settings.workspace_status),
+                    systemImage: "internaldrive",
+                    tint: workspaceTint(model.settings.workspace_status),
+                    valueTint: workspaceTint(model.settings.workspace_status)
+                )
             }
 
             if !model.settings.workspace_path.isEmpty {
-                Text(model.settings.workspace_path)
+                Button {
+                    model.openWorkspaceFolderOrCopyPath()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "folder")
+                        Text(model.settings.workspace_path)
+                            .lineLimit(3)
+                        Spacer(minLength: 0)
+                        Image(systemName: "arrow.up.right.square")
+                            .font(.caption2)
+                    }
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-                    .textSelection(.enabled)
+                    .foregroundStyle(.blue)
+                }
+                .buttonStyle(.plain)
+                .help("Open in Finder. If opening fails, copy path.")
+                .appArrowCursor()
             }
         }
     }
@@ -899,6 +917,8 @@ private struct StatusSummaryRow: View {
     let value: String
     let systemImage: String
     let tint: Color
+    let valueTint: Color
+    var trailingSystemImage: String?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -911,7 +931,13 @@ private struct StatusSummaryRow: View {
             Spacer()
             Text(value)
                 .font(.caption)
+                .foregroundStyle(valueTint)
                 .lineLimit(1)
+            if let trailingSystemImage {
+                Image(systemName: trailingSystemImage)
+                    .font(.caption2)
+                    .foregroundStyle(valueTint)
+            }
         }
     }
 }
@@ -1166,6 +1192,19 @@ private func workspaceLabel(_ status: String?) -> String {
         return "Missing"
     default:
         return "Unknown"
+    }
+}
+
+private func workspaceTint(_ status: String?) -> Color {
+    switch status {
+    case "ready":
+        return .green
+    case "seed_version_mismatch":
+        return .orange
+    case "missing":
+        return .red
+    default:
+        return .secondary
     }
 }
 

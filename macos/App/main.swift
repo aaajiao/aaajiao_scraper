@@ -730,6 +730,27 @@ final class AppModel: ObservableObject {
         NSWorkspace.shared.open(url)
     }
 
+    func openWorkspaceFolderOrCopyPath() {
+        let trimmedPath = settings.workspace_path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty else {
+            setStatus("Workspace path is unavailable.", tone: .warning)
+            return
+        }
+
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: trimmedPath, isDirectory: &isDirectory)
+        if exists && isDirectory.boolValue {
+            let didOpen = NSWorkspace.shared.open(URL(fileURLWithPath: trimmedPath, isDirectory: true))
+            if didOpen {
+                setStatus("Opened workspace folder in Finder.", tone: .info)
+                return
+            }
+        }
+
+        copyToPasteboard(trimmedPath)
+        setStatus("Could not open folder. Workspace path copied to clipboard.", tone: .warning)
+    }
+
     private func loadBatch(batchID: Int, updateStatusMessage: Bool) async throws {
         let detail = try await helper.getBatchDetail(
             batchID: batchID,
@@ -797,6 +818,11 @@ final class AppModel: ObservableObject {
     private func setStatus(_ message: String, tone: StatusTone) {
         statusMessage = message
         statusTone = tone
+    }
+
+    private func copyToPasteboard(_ value: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
     }
 
     private func workspaceStatusMessage(for response: BootstrapResponse) -> String {
