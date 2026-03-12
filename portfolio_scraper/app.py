@@ -416,7 +416,7 @@ if works_for_images:
         st.markdown("""
         从缓存的作品中提取并下载图片。
         - 使用 HTML 解析（无 API 成本）
-        - 下载到 `output/images/`
+        - 下载到 `portfolio_scraper/output/images/`
         """)
 
         col_img1, col_img2 = st.columns(2)

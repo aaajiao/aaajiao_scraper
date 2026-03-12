@@ -15,8 +15,8 @@ PORTFOLIO_MARKDOWN_NAME = "aaajiao_portfolio.md"
 
 WORKS_JSON_PATH = REPO_ROOT / WORKS_JSON_NAME
 PORTFOLIO_MARKDOWN_PATH = REPO_ROOT / PORTFOLIO_MARKDOWN_NAME
-OUTPUT_DIR = REPO_ROOT / "output"
-REPORTS_DIR = REPO_ROOT / "reports"
+OUTPUT_DIR = PRODUCT_ROOT / "output"
+REPORTS_DIR = PRODUCT_ROOT / "reports"
 
 
 def resolve_repo_path(path: PathLike) -> Path:

@@ -64,7 +64,7 @@ Path handling was normalized during the umbrella-repo refactor:
 
 - shared artifacts resolve to the repository root through `portfolio_scraper/scraper/paths.py`
 - scripts under `portfolio_scraper/scripts/` should not assume the current working directory is the repo root
-- `output/` and `reports/` also resolve to the repository root
+- `portfolio_scraper/output/` and `portfolio_scraper/reports/` stay inside the Python product surface
 
 ## macOS Importer Notes
 

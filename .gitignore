@@ -79,11 +79,13 @@ aaajiao_portfolio_with_web_images.md
 *.html
 *.csv
 
-# Output directory (images and generated files)
-output/
+# Python product generated output
+/portfolio_scraper/output/*
+!/portfolio_scraper/output/README.md
+/portfolio_scraper/reports/*
+!/portfolio_scraper/reports/README.md
 
 # Generated reports and working docs
-reports/
 docs/
 
 # Temporary files

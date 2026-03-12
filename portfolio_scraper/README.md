@@ -81,5 +81,5 @@ mypy portfolio_scraper/scraper/
 Python 产品线不再依赖“当前工作目录刚好是仓库根目录”。
 
 - 共享 JSON / Markdown 产物通过 `scraper.paths` 定位到仓库根
-- `output/` 和 `reports/` 也统一写回仓库根
+- `portfolio_scraper/output/` 和 `portfolio_scraper/reports/` 属于 Python 产品线自身产物
 - 从任意目录运行 `portfolio_scraper/scripts/*.py` 时，默认相对仓库根解析共享产物路径
