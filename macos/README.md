@@ -37,6 +37,14 @@ AI validation is split into two stages:
 1. OpenAI returns a strict structured record schema for `artwork / exhibition / unknown`.
 2. The local helper re-validates slug/title consistency, type-as-title mistakes, contamination signals, and required-field completeness before a record can reach `ready_for_review`.
 
+The app exposes `gpt-4.1` and `gpt-5.4-mini` as built-in model presets, with `gpt-4.1`
+remaining the default. A custom model name can still be entered in Settings. Existing local
+preferences saved with the retired `gpt-5.1` preset are migrated to `gpt-5.4-mini` when loaded.
+
+The app version is read from the bundle `Info.plist` and shown in both Settings and the menu
+bar menu, so release builds should bump `CFBundleShortVersionString` and `CFBundleVersion`
+before packaging.
+
 ## Command surface
 
 - `bootstrapWorkspace`
