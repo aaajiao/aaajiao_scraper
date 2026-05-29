@@ -984,6 +984,12 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("About") {
+                    LabeledContent("Version") {
+                        Text(AppVersionInfo.current.valueText)
+                    }
+                }
+
                 Section {
                     Text("The OpenAI key is stored only in macOS Keychain. The selected model is stored in local app preferences.")
                         .font(.callout)
@@ -1024,7 +1030,7 @@ struct SettingsView: View {
             }
             .padding(20)
         }
-        .frame(width: 500, height: 360)
+        .frame(width: 500, height: 400)
     }
 }
 
@@ -1072,6 +1078,11 @@ struct MenuBarMenuView: View {
             } label: {
                 Label("Settings…", systemImage: "gearshape")
             }
+
+            Text(AppVersionInfo.current.menuText)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .padding(.top, 2)
 
             Button {
                 model.quitApplication()

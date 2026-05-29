@@ -1,5 +1,43 @@
 import Foundation
 
+struct AppVersionInfo: Equatable {
+    let shortVersion: String
+    let build: String
+
+    var valueText: String {
+        switch (shortVersion.isEmpty, build.isEmpty) {
+        case (false, false):
+            return "\(shortVersion) (\(build))"
+        case (false, true):
+            return shortVersion
+        case (true, false):
+            return "Build \(build)"
+        case (true, true):
+            return "Unavailable"
+        }
+    }
+
+    var menuText: String {
+        "Version \(valueText)"
+    }
+
+    static var current: AppVersionInfo {
+        from(infoDictionary: Bundle.main.infoDictionary)
+    }
+
+    static func from(infoDictionary: [String: Any]?) -> AppVersionInfo {
+        AppVersionInfo(
+            shortVersion: normalizedVersionValue(infoDictionary?["CFBundleShortVersionString"]),
+            build: normalizedVersionValue(infoDictionary?["CFBundleVersion"])
+        )
+    }
+
+    private static func normalizedVersionValue(_ value: Any?) -> String {
+        guard let value = value as? String else { return "" }
+        return value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 func openAIModelSourceLabel(_ source: String) -> String {
     switch source {
     case "custom":
