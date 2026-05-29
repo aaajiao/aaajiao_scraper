@@ -23,6 +23,17 @@ Expected result:
 
 ## 3. Build the app bundle
 
+Run app-side unit tests before packaging:
+
+```bash
+./macos/Build/run_app_tests.sh
+```
+
+Expected result:
+
+- Model preset selection and migration checks pass
+- App DTO decoding and pure app utility checks pass
+
 ```bash
 ./macos/Build/build_local_app.sh
 ```

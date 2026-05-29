@@ -2,7 +2,7 @@ import Foundation
 
 enum OpenAIModelPreset: String, CaseIterable, Identifiable {
     case gpt41 = "gpt-4.1"
-    case gpt51 = "gpt-5.1"
+    case gpt54Mini = "gpt-5.4-mini"
     case custom = "custom"
 
     static let defaultPreset: Self = .gpt41
@@ -13,8 +13,8 @@ enum OpenAIModelPreset: String, CaseIterable, Identifiable {
         switch self {
         case .gpt41:
             return "gpt-4.1"
-        case .gpt51:
-            return "gpt-5.1"
+        case .gpt54Mini:
+            return "gpt-5.4-mini"
         case .custom:
             return "Custom"
         }
@@ -22,7 +22,7 @@ enum OpenAIModelPreset: String, CaseIterable, Identifiable {
 
     var modelName: String {
         switch self {
-        case .gpt41, .gpt51:
+        case .gpt41, .gpt54Mini:
             return rawValue
         case .custom:
             return ""
@@ -33,7 +33,7 @@ enum OpenAIModelPreset: String, CaseIterable, Identifiable {
         switch self {
         case .custom:
             return "custom"
-        case .gpt41, .gpt51:
+        case .gpt41, .gpt54Mini:
             return "preset"
         }
     }
@@ -47,7 +47,7 @@ struct OpenAIModelSelection: Equatable {
         switch preset {
         case .custom:
             return customModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        case .gpt41, .gpt51:
+        case .gpt41, .gpt54Mini:
             return preset.modelName
         }
     }
@@ -62,13 +62,17 @@ struct OpenAIModelSelection: Equatable {
 }
 
 enum OpenAIModelSettingsStore {
-    private static let defaults = UserDefaults.standard
     private static let presetKey = "openai_model_preset"
     private static let customModelKey = "openai_model_custom"
 
-    static func load() -> OpenAIModelSelection {
+    static func load(defaults: UserDefaults = .standard) -> OpenAIModelSelection {
         let rawPreset = defaults.string(forKey: presetKey) ?? OpenAIModelPreset.defaultPreset.rawValue
-        let preset = OpenAIModelPreset(rawValue: rawPreset) ?? .defaultPreset
+        let preset: OpenAIModelPreset
+        if rawPreset == "gpt-5.1" {
+            preset = .gpt54Mini
+        } else {
+            preset = OpenAIModelPreset(rawValue: rawPreset) ?? .defaultPreset
+        }
         let customModel = defaults.string(forKey: customModelKey) ?? ""
         let selection = OpenAIModelSelection(preset: preset, customModel: customModel)
         if selection.isValid {
@@ -77,7 +81,7 @@ enum OpenAIModelSettingsStore {
         return OpenAIModelSelection(preset: .defaultPreset, customModel: "")
     }
 
-    static func save(_ selection: OpenAIModelSelection) {
+    static func save(_ selection: OpenAIModelSelection, defaults: UserDefaults = .standard) {
         defaults.set(selection.preset.rawValue, forKey: presetKey)
         defaults.set(selection.customModel, forKey: customModelKey)
     }

@@ -56,6 +56,7 @@ AI validation is split into two stages:
 ./macos/Build/refresh_wheelhouse.sh
 ./macos/Build/verify_wheelhouse.sh
 ./macos/Build/prepare_seed.sh
+./macos/Build/run_app_tests.sh
 ./macos/Build/build_local_app.sh
 ./macos/Build/smoke_test_app.sh
 ./macos/Build/run_acceptance_checks.sh
