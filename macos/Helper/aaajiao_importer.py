@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import fcntl
 import hashlib
 import importlib
 import json
@@ -39,6 +40,9 @@ WORKSPACE_MANIFEST_NAME = "workspace_manifest.json"
 MANIFEST_VERSION = 1
 AI_VALIDATION_NAME = "aaajiao_artwork_validation"
 AI_VALIDATION_TIMEOUT = 120
+GIT_LOCAL_TIMEOUT_SECONDS = 30
+GIT_NETWORK_TIMEOUT_SECONDS = 120
+PUBLISH_LOCK_NAME = "publish.lock"
 KNOWN_ARTWORK_TYPES = {
     "installation",
     "video",
@@ -406,7 +410,8 @@ def _reset_baseline_repo(root: Path) -> None:
     root.parent.mkdir(parents=True, exist_ok=True)
 
 
-def _baseline_git_error(exc: subprocess.CalledProcessError) -> str:
+def _git_error_message(exc: subprocess.CalledProcessError) -> str:
+    """Render a CalledProcessError as readable text, since str(exc) drops stderr/stdout."""
     stderr = _normalize_string(exc.stderr)
     stdout = _normalize_string(exc.stdout)
     if stderr:
@@ -430,9 +435,10 @@ def _clone_remote_baseline_repo() -> Tuple[Path, str]:
                 baseline_remote_url(),
                 root.name,
             ],
+            timeout=GIT_NETWORK_TIMEOUT_SECONDS,
         )
     except subprocess.CalledProcessError as exc:
-        raise RuntimeError(f"Failed to clone GitHub baseline: {_baseline_git_error(exc)}") from exc
+        raise RuntimeError(f"Failed to clone GitHub baseline: {_git_error_message(exc)}") from exc
     return root, _git_head(root)
 
 
@@ -457,6 +463,19 @@ def _sync_remote_baseline_into_workspace() -> Dict[str, str]:
     }
 
 
+def _seed_target_needs_restore(name: str, target: Path) -> bool:
+    # Only the works JSON has an integrity contract worth checking here; a corrupt
+    # (but present) file would otherwise slip past the plain exists() check and crash
+    # every later json.load. The portfolio markdown has no such structural invariant.
+    if name != REPO_WORKS:
+        return False
+    try:
+        _validate_works_file(target)
+    except RuntimeError:
+        return True
+    return False
+
+
 def _copy_seed_payload(*, overwrite: bool = False) -> None:
     snapshot_path = snapshot_root()
     cache_path = workspace_root() / ".cache"
@@ -470,25 +489,39 @@ def _copy_seed_payload(*, overwrite: bool = False) -> None:
     if overwrite or not (snapshot_path / "scraper").exists():
         shutil.copytree(seed_snapshot_root() / "scraper", snapshot_path / "scraper", dirs_exist_ok=True)
     if overwrite or not cache_path.exists():
-        shutil.copytree(seed_root() / "cache", cache_path, dirs_exist_ok=True)
+        seed_cache = seed_root() / "cache"
+        if seed_cache.exists():
+            shutil.copytree(seed_cache, cache_path, dirs_exist_ok=True)
+        else:
+            # The seed cache is optional (a fresh clone or CI may not carry one);
+            # create an empty cache dir instead of crashing every helper command.
+            cache_path.mkdir(parents=True, exist_ok=True)
     for name in TARGET_FILES:
         target = workspace_root() / name
-        if overwrite or not target.exists():
+        # Restore when the file is missing *or* an existing works JSON is corrupt, so
+        # ensure_workspace() self-heals a damaged copy instead of deferring the failure
+        # to the next json.load with no recovery path.
+        if overwrite or not target.exists() or _seed_target_needs_restore(name, target):
             shutil.copy2(seed_root() / name, target)
 
 
 def _workspace_has_local_activity() -> bool:
-    with sqlite3.connect(db_path()) as conn:
+    # sqlite3.connect() as a context manager only commits/rolls back the transaction; it
+    # never closes the connection, so wrap it in closing() to avoid leaking the handle.
+    with contextlib.closing(sqlite3.connect(db_path())) as conn:
         batches = conn.execute("SELECT COUNT(*) FROM batches").fetchone()[0]
         records = conn.execute("SELECT COUNT(*) FROM records").fetchone()[0]
     return bool(batches or records)
 
 
 def _workspace_has_active_review_state() -> bool:
-    with sqlite3.connect(db_path()) as conn:
+    # A draft batch is the transient pre-reviewing state; if creation aborted before it
+    # reached reviewing it is a ghost, not pending review work, and must not block a
+    # baseline refresh. Genuine pending review work is still caught by the record check.
+    with contextlib.closing(sqlite3.connect(db_path())) as conn:
         active_batches = conn.execute(
-            "SELECT COUNT(*) FROM batches WHERE status NOT IN (?, ?)",
-            TERMINAL_BATCH_STATUSES,
+            "SELECT COUNT(*) FROM batches WHERE status NOT IN (?, ?, ?)",
+            (BATCH_COMPLETED, BATCH_FAILED, BATCH_DRAFT),
         ).fetchone()[0]
         pending_records = conn.execute(
             "SELECT COUNT(*) FROM records WHERE status IN (?, ?, ?)",
@@ -740,13 +773,47 @@ def prune_terminal_batches() -> int:
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     try:
+        # A failed apply keeps its accepted records around so the user can retry
+        # the sync; leave those batches alone until the retry succeeds (or the
+        # user deletes the batch) instead of silently erasing the retry window.
+        # Completed batches are safe to prune regardless: apply already merged
+        # their accepted records into the shared artifacts.
         batch_ids = [
             row["id"]
             for row in conn.execute(
-                "SELECT id FROM batches WHERE status IN (?, ?)",
-                (BATCH_COMPLETED, BATCH_FAILED),
+                """
+                SELECT batches.id AS id
+                FROM batches
+                WHERE batches.status = ?
+                   OR (
+                       batches.status = ?
+                       AND NOT EXISTS (
+                           SELECT 1 FROM records
+                           WHERE records.batch_id = batches.id
+                             AND records.status = ?
+                       )
+                   )
+                """,
+                (BATCH_COMPLETED, BATCH_FAILED, RECORD_ACCEPTED),
             )
         ]
+        # A draft batch that never carried a record is a ghost left behind when batch
+        # creation aborted before reaching the reviewing state (e.g. process killed
+        # mid-setup); prune it so it cannot masquerade as pending work indefinitely.
+        batch_ids.extend(
+            row["id"]
+            for row in conn.execute(
+                """
+                SELECT batches.id AS id
+                FROM batches
+                LEFT JOIN records ON records.batch_id = batches.id
+                WHERE batches.status = ?
+                GROUP BY batches.id
+                HAVING COUNT(records.id) = 0
+                """,
+                (BATCH_DRAFT,),
+            )
+        )
         if not batch_ids:
             return 0
         deleted_records = conn.execute(
@@ -835,15 +902,24 @@ def _run_git(
     *,
     env: Optional[Dict[str, str]] = None,
     capture_output: bool = True,
+    timeout: Optional[float] = GIT_LOCAL_TIMEOUT_SECONDS,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", *args],
-        cwd=root,
-        env=env,
-        capture_output=capture_output,
-        text=True,
-        check=True,
-    )
+    # GIT_TERMINAL_PROMPT=0 stops git from blocking on an interactive credential
+    # prompt; timeout guards against a hung/stalled network op (clone, push).
+    merged_env = dict(env if env is not None else os.environ)
+    merged_env["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        return subprocess.run(
+            ["git", *args],
+            cwd=root,
+            env=merged_env,
+            capture_output=capture_output,
+            text=True,
+            check=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"git {' '.join(args)} timed out after {timeout}s") from exc
 
 
 def _git_output(root: Path, args: List[str], *, env: Optional[Dict[str, str]] = None) -> str:
@@ -862,15 +938,35 @@ def _git_head(root: Path) -> str:
 
 
 def _repo_publish_config(root: Path) -> Dict[str, str]:
-    branch = _git_output(root, ["symbolic-ref", "--quiet", "--short", "HEAD"])
+    # `git symbolic-ref` exits non-zero (not empty output) on detached HEAD, and
+    # `git rev-parse @{u}` exits non-zero (not empty output) with no upstream, so
+    # both failure modes must be caught explicitly rather than checked as falsy output.
+    try:
+        branch = _git_output(root, ["symbolic-ref", "--quiet", "--short", "HEAD"])
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError("Repository is in detached HEAD state") from exc
     if not branch:
         raise RuntimeError("Repository is in detached HEAD state")
 
-    upstream = _git_output(root, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+    try:
+        upstream = _git_output(root, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"Current branch '{branch}' has no upstream configured") from exc
     if "/" not in upstream:
-        raise RuntimeError("Current branch has no upstream configured")
+        raise RuntimeError(f"Current branch '{branch}' has no upstream configured")
     remote_name, remote_branch = upstream.split("/", 1)
-    remote_url = _git_output(root, ["remote", "get-url", remote_name])
+
+    expected_branch = baseline_remote_branch()
+    if branch != expected_branch or remote_branch != expected_branch:
+        raise RuntimeError(
+            f"Current branch '{branch}' (tracking '{upstream}') does not match the "
+            f"baseline branch '{expected_branch}'; switch to '{expected_branch}' before syncing"
+        )
+
+    try:
+        remote_url = _git_output(root, ["remote", "get-url", remote_name])
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"Remote '{remote_name}' has no configured URL") from exc
     if not remote_url:
         raise RuntimeError(f"Remote '{remote_name}' has no configured URL")
     user_name = _git_output_or_empty(root, ["config", "--get", "user.name"])
@@ -884,6 +980,31 @@ def _repo_publish_config(root: Path) -> Dict[str, str]:
         "user_name": user_name,
         "user_email": user_email,
     }
+
+
+def _publish_lock_path() -> Path:
+    return workspace_root() / PUBLISH_LOCK_NAME
+
+
+@contextlib.contextmanager
+def _publish_repo_lock():
+    """Serialize access to publish_repo_root() across concurrent apply calls.
+
+    _ensure_publish_repo() destroys and re-clones a single shared directory, so two
+    overlapping applyAcceptedRecords invocations would race on the same path (one
+    process's rmtree/clone landing mid-way through another's git commands).
+    """
+    lock_path = _publish_lock_path()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "w", encoding="utf-8") as lock_file:
+        try:
+            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise RuntimeError("Another sync to the repository is already in progress") from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 
 def _reset_publish_repo(root: Path) -> None:
@@ -904,6 +1025,7 @@ def _ensure_publish_repo(git_state: Dict[str, str]) -> Path:
             git_state["remote_url"],
             root.name,
         ],
+        timeout=GIT_NETWORK_TIMEOUT_SECONDS,
     )
     user_name = git_state.get("user_name") or "Aaajiao Importer"
     user_email = git_state.get("user_email") or "importer@localhost"
@@ -918,13 +1040,17 @@ def _copy_workspace_targets_to_publish_repo(root: Path) -> None:
 
 
 def _has_staged_changes(root: Path) -> bool:
-    result = subprocess.run(
-        ["git", "diff", "--cached", "--quiet"],
-        cwd=root,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--cached", "--quiet"],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=GIT_LOCAL_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"git diff --cached timed out after {GIT_LOCAL_TIMEOUT_SECONDS}s") from exc
     return result.returncode == 1
 
 
@@ -938,17 +1064,22 @@ def _create_commit_from_publish_repo(root: Path, batch_id: int) -> str:
 
 def _sync_workspace_to_repo(batch_id: int) -> str:
     git_state = _repo_publish_config(repo_root())
-    root = _ensure_publish_repo(git_state)
-    _copy_workspace_targets_to_publish_repo(root)
-    commit_sha = _create_commit_from_publish_repo(root, batch_id)
-    _run_git(
-        root,
-        [
-            "push",
-            "origin",
-            f"{commit_sha}:refs/heads/{git_state['remote_branch']}",
-        ],
-    )
+    try:
+        with _publish_repo_lock():
+            root = _ensure_publish_repo(git_state)
+            _copy_workspace_targets_to_publish_repo(root)
+            commit_sha = _create_commit_from_publish_repo(root, batch_id)
+            _run_git(
+                root,
+                [
+                    "push",
+                    "origin",
+                    f"{commit_sha}:refs/heads/{git_state['remote_branch']}",
+                ],
+                timeout=GIT_NETWORK_TIMEOUT_SECONDS,
+            )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"Failed to publish workspace changes to GitHub: {_git_error_message(exc)}") from exc
     return commit_sha
 
 
@@ -1001,57 +1132,69 @@ def _insert_record(
     is_update: bool,
     proposed: Optional[Dict[str, Any]],
     error: Optional[str],
+    conn: Optional[sqlite3.Connection] = None,
 ) -> None:
-    with connect_db() as conn:
-        now = now_iso()
-        conn.execute(
-            """
-            INSERT INTO records(
-                batch_id,
-                url,
-                slug,
-                status,
-                page_type,
-                confidence,
-                is_update,
-                proposed_record_json,
-                error_message,
-                created_at,
-                updated_at
-            )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                batch_id,
-                url,
-                _slug(url),
-                status,
-                page_type,
-                confidence,
-                1 if is_update else 0,
-                json.dumps(proposed, ensure_ascii=False) if proposed else None,
-                error,
-                now,
-                now,
-            ),
+    now = now_iso()
+    params = (
+        batch_id,
+        url,
+        _slug(url),
+        status,
+        page_type,
+        confidence,
+        1 if is_update else 0,
+        json.dumps(proposed, ensure_ascii=False) if proposed else None,
+        error,
+        now,
+        now,
+    )
+    statement = """
+        INSERT INTO records(
+            batch_id,
+            url,
+            slug,
+            status,
+            page_type,
+            confidence,
+            is_update,
+            proposed_record_json,
+            error_message,
+            created_at,
+            updated_at
         )
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+    # Accept an already-open connection so callers looping over many URLs (e.g. an
+    # incremental sync batch) can reuse one connection instead of paying for a fresh
+    # connect_db() (and the ensure_workspace() self-heal it triggers) per record.
+    if conn is not None:
+        conn.execute(statement, params)
+        return
+    with connect_db() as owned_conn:
+        owned_conn.execute(statement, params)
 
 
-def _record_rows(statuses: Optional[List[str]] = None, batch_id: Optional[int] = None) -> List[sqlite3.Row]:
-    with connect_db() as conn:
-        query = "SELECT * FROM records"
-        where: List[str] = []
-        values: List[Any] = []
-        if statuses:
-            where.append(f"status IN ({','.join('?' for _ in statuses)})")
-            values.extend(statuses)
-        if batch_id is not None:
-            where.append("batch_id = ?")
-            values.append(batch_id)
-        if where:
-            query += " WHERE " + " AND ".join(where)
-        query += " ORDER BY id DESC"
+def _record_rows(
+    statuses: Optional[List[str]] = None,
+    batch_id: Optional[int] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> List[sqlite3.Row]:
+    query = "SELECT * FROM records"
+    where: List[str] = []
+    values: List[Any] = []
+    if statuses:
+        where.append(f"status IN ({','.join('?' for _ in statuses)})")
+        values.extend(statuses)
+    if batch_id is not None:
+        where.append("batch_id = ?")
+        values.append(batch_id)
+    if where:
+        query += " WHERE " + " AND ".join(where)
+    query += " ORDER BY id DESC"
+    if conn is not None:
         return list(conn.execute(query, values))
+    with connect_db() as owned_conn:
+        return list(owned_conn.execute(query, values))
 
 
 def _existing_urls() -> set[str]:
@@ -1275,8 +1418,19 @@ def _call_openai_validation(
 
 
 def _normalize_compare_text(value: str) -> str:
-    collapsed = re.sub(r"[^a-z0-9]+", " ", value.lower())
-    return " ".join(part for part in collapsed.split() if part)
+    # Keep any Unicode letter/digit, not just ASCII [a-z0-9], so CJK titles (which have no
+    # ASCII form) still normalize to non-empty text instead of being stripped to nothing.
+    parts: List[str] = []
+    current: List[str] = []
+    for char in value.lower():
+        if char.isalnum():
+            current.append(char)
+        elif current:
+            parts.append("".join(current))
+            current = []
+    if current:
+        parts.append("".join(current))
+    return " ".join(parts)
 
 
 def _slug_matches_title(url: str, title: str) -> bool:
@@ -1424,6 +1578,19 @@ def _import_url(url: str, modules: Dict[str, Any]) -> Dict[str, Any]:
     with workspace_cwd():
         scraper = scraper_cls(use_cache=True)
         base_data = scraper.extract_metadata_bs4(url)
+        # extract_work_details_v2() independently re-runs extract_metadata_bs4(url) as its
+        # own "Layer 1" step on a cache miss, which would issue a second HTTP GET for the
+        # exact same url on this same scraper instance. Patch the instance method so that
+        # repeat call reuses the result already fetched above instead of hitting the network
+        # again; any other url (there shouldn't be one) still falls through to a real fetch.
+        original_extract_metadata_bs4 = scraper.extract_metadata_bs4
+
+        def _reuse_base_data(fetch_url: str) -> Optional[Dict[str, Any]]:
+            if fetch_url == url:
+                return base_data
+            return original_extract_metadata_bs4(fetch_url)
+
+        scraper.extract_metadata_bs4 = _reuse_base_data
         hybrid_data = scraper.extract_work_details_v2(url)
     if not base_data and not hybrid_data:
         raise RuntimeError("No extraction data returned")
@@ -1715,83 +1882,127 @@ def refresh_workspace_baseline() -> Dict[str, Any]:
     return {"settings": _settings_payload(), "status": status}
 
 
+def _report_progress(completed: int, total: int, url: str) -> None:
+    """Emit a machine-readable progress line on stderr for HelperClient's
+    stderr stream parser. Format is intentionally minimal (single line, no
+    JSON) so it's cheap to parse incrementally: `PROGRESS <completed>/<total> <url>`.
+    Never raises: a broken stderr pipe should not abort the sync itself.
+    """
+    try:
+        print(f"PROGRESS {completed}/{total} {url}", file=sys.stderr, flush=True)
+    except OSError:
+        pass
+
+
 def start_incremental_sync() -> Dict[str, Any]:
     ensure_workspace()
     batch_id = _create_batch("incremental")
-    modules = _load_snapshot_modules()
-    existing = _existing_urls()
-    with connect_db() as conn:
-        _touch_batch(conn, batch_id, status=BATCH_REVIEWING, last_error="")
+    # Everything from here until the batch is fully processed must be guarded: a failure
+    # while loading modules, reading existing works, or fetching the sitemap would
+    # otherwise leave the batch stuck in the non-terminal draft/reviewing state forever,
+    # permanently blocking baseline refresh. Mark it failed (a terminal, prunable state)
+    # instead. Per-URL import failures are still handled inline and do not abort the batch.
+    try:
+        modules = _load_snapshot_modules()
+        existing = _existing_urls()
+        with connect_db() as conn:
+            _touch_batch(conn, batch_id, status=BATCH_REVIEWING, last_error="")
 
-    scraper_cls = modules["AaajiaoScraper"]
-    with workspace_cwd():
-        scraper = scraper_cls(use_cache=True)
-        urls = scraper.get_all_work_links(incremental=True)
+        scraper_cls = modules["AaajiaoScraper"]
+        with workspace_cwd():
+            scraper = scraper_cls(use_cache=True)
+            urls = scraper.get_all_work_links(incremental=True)
 
-    for url in urls:
-        try:
-            result = _import_url(url, modules)
-            status = RECORD_READY_FOR_REVIEW if result["should_apply"] else RECORD_NEEDS_REVIEW
-            _insert_record(
-                batch_id=batch_id,
-                url=url,
-                status=status,
-                page_type=result["page_type"],
-                confidence=result["confidence"],
-                is_update=url in existing,
-                proposed=result["proposed"],
-                error=result["rejection_reason"] or None,
-            )
-        except Exception as exc:
-            _insert_record(
-                batch_id=batch_id,
-                url=url,
-                status=RECORD_FAILED,
-                page_type="unknown",
-                confidence=0.0,
-                is_update=url in existing,
-                proposed=None,
-                error=str(exc),
-            )
-    with connect_db() as conn:
-        _refresh_batch_status(conn, batch_id)
+        # Reuse one connection across the whole insert loop instead of letting each
+        # _insert_record() open (and self-heal via ensure_workspace()) its own; that cost
+        # was previously paid once per URL. Commit after each record so a crash mid-batch
+        # still keeps the records already processed, matching the prior per-record durability.
+        total = len(urls)
+        with connect_db() as conn:
+            for index, url in enumerate(urls, start=1):
+                try:
+                    result = _import_url(url, modules)
+                    status = RECORD_READY_FOR_REVIEW if result["should_apply"] else RECORD_NEEDS_REVIEW
+                    _insert_record(
+                        batch_id=batch_id,
+                        url=url,
+                        status=status,
+                        page_type=result["page_type"],
+                        confidence=result["confidence"],
+                        is_update=url in existing,
+                        proposed=result["proposed"],
+                        error=result["rejection_reason"] or None,
+                        conn=conn,
+                    )
+                except Exception as exc:
+                    _insert_record(
+                        batch_id=batch_id,
+                        url=url,
+                        status=RECORD_FAILED,
+                        page_type="unknown",
+                        confidence=0.0,
+                        is_update=url in existing,
+                        proposed=None,
+                        error=str(exc),
+                        conn=conn,
+                    )
+                conn.commit()
+                _report_progress(index, total, url)
+            _refresh_batch_status(conn, batch_id)
+    except Exception as exc:
+        with connect_db() as conn:
+            _touch_batch(conn, batch_id, status=BATCH_FAILED, last_error=_fatal_error_message(exc))
+        raise
     return {"batch_id": batch_id, "urls_processed": len(urls)}
 
 
 def submit_manual_url(url: str) -> Dict[str, Any]:
     ensure_workspace()
     batch_id = _create_batch("manual")
-    modules = _load_snapshot_modules()
-    existing = _existing_urls()
-    with connect_db() as conn:
-        _touch_batch(conn, batch_id, status=BATCH_REVIEWING, last_error="")
-
+    # Guard the setup phase (module load, existing-works read) so an abort before the
+    # batch reaches reviewing marks it failed rather than leaving a ghost draft that
+    # blocks baseline refresh forever. The inner try still records a single failed URL.
     try:
-        result = _import_url(url, modules)
-        status = RECORD_READY_FOR_REVIEW if result["should_apply"] else RECORD_NEEDS_REVIEW
-        _insert_record(
-            batch_id=batch_id,
-            url=url,
-            status=status,
-            page_type=result["page_type"],
-            confidence=result["confidence"],
-            is_update=url in existing,
-            proposed=result["proposed"],
-            error=result["rejection_reason"] or None,
-        )
+        modules = _load_snapshot_modules()
+        existing = _existing_urls()
+        # Reuse one connection across touch/insert/refresh instead of letting each open
+        # (and self-heal via ensure_workspace()) its own for a single URL.
+        with connect_db() as conn:
+            _touch_batch(conn, batch_id, status=BATCH_REVIEWING, last_error="")
+            conn.commit()
+
+            try:
+                result = _import_url(url, modules)
+                status = RECORD_READY_FOR_REVIEW if result["should_apply"] else RECORD_NEEDS_REVIEW
+                _insert_record(
+                    batch_id=batch_id,
+                    url=url,
+                    status=status,
+                    page_type=result["page_type"],
+                    confidence=result["confidence"],
+                    is_update=url in existing,
+                    proposed=result["proposed"],
+                    error=result["rejection_reason"] or None,
+                    conn=conn,
+                )
+            except Exception as exc:
+                _insert_record(
+                    batch_id=batch_id,
+                    url=url,
+                    status=RECORD_FAILED,
+                    page_type="unknown",
+                    confidence=0.0,
+                    is_update=url in existing,
+                    proposed=None,
+                    error=str(exc),
+                    conn=conn,
+                )
+            conn.commit()
+            _refresh_batch_status(conn, batch_id)
     except Exception as exc:
-        _insert_record(
-            batch_id=batch_id,
-            url=url,
-            status=RECORD_FAILED,
-            page_type="unknown",
-            confidence=0.0,
-            is_update=url in existing,
-            proposed=None,
-            error=str(exc),
-        )
-    with connect_db() as conn:
-        _refresh_batch_status(conn, batch_id)
+        with connect_db() as conn:
+            _touch_batch(conn, batch_id, status=BATCH_FAILED, last_error=_fatal_error_message(exc))
+        raise
     return {"batch_id": batch_id, "url": url}
 
 
@@ -1837,7 +2048,14 @@ def get_batch_detail(batch_id: int) -> Dict[str, Any]:
         return _batch_detail(conn, batch_id)
 
 
-def get_apply_preview(batch_id: int) -> Dict[str, Any]:
+def _compute_apply_preview(batch_id: int) -> Tuple[Dict[str, Any], Optional[List[Dict[str, Any]]]]:
+    """Build the apply preview and, as a side effect, the merged works list it required.
+
+    Returns the merged list alongside the preview so a subsequent real apply (see
+    apply_accepted_records) can write it out directly instead of recomputing the same
+    dedupe/contamination-clean merge a second time. merged is None only when there were
+    no accepted records to merge (accepted_count == 0).
+    """
     accepted_rows = _record_rows(statuses=[RECORD_ACCEPTED], batch_id=batch_id)
     preview = {
         "batch_id": batch_id,
@@ -1850,8 +2068,8 @@ def get_apply_preview(batch_id: int) -> Dict[str, Any]:
     }
     if not accepted_rows:
         preview["error_message"] = "No accepted records in batch"
-        return preview
-    _, new_count, updated_count = _merge_accepted_records(batch_id)
+        return preview, None
+    merged, new_count, updated_count = _merge_accepted_records(batch_id)
     preview["new_count"] = new_count
     preview["updated_count"] = updated_count
     try:
@@ -1859,13 +2077,45 @@ def get_apply_preview(batch_id: int) -> Dict[str, Any]:
         preview["will_push"] = True
     except Exception as exc:
         preview["error_message"] = str(exc)
+    return preview, merged
+
+
+def get_apply_preview(batch_id: int) -> Dict[str, Any]:
+    preview, _ = _compute_apply_preview(batch_id)
     return preview
+
+
+def _restore_unreviewed_incremental_urls(batch_id: int) -> None:
+    """Keep unreviewed URLs rediscoverable before a partially-applied batch is cleaned up.
+
+    apply only requires at least one accepted record, so a batch can still hold
+    needs_review/ready_for_review records the user never resolved. cleanup_batch would
+    delete them outright, and for incremental batches their URLs stay in the sitemap
+    cache (recorded during discovery), so they would never resurface — silent data loss.
+    Drop those URLs from the cache so the next incremental sync re-proposes them. Accepted
+    records are excluded (already persisted) and rejected ones were pruned at reject time.
+    """
+    with connect_db() as conn:
+        row = conn.execute("SELECT mode FROM batches WHERE id = ?", (batch_id,)).fetchone()
+        if row is None or _normalize_string(row["mode"]) != "incremental":
+            return
+        unreviewed_urls = [
+            _normalize_string(record_row["url"])
+            for record_row in conn.execute(
+                "SELECT url FROM records WHERE batch_id = ? AND status IN (?, ?)",
+                (batch_id, RECORD_READY_FOR_REVIEW, RECORD_NEEDS_REVIEW),
+            )
+        ]
+    if unreviewed_urls:
+        _remove_urls_from_incremental_baseline(unreviewed_urls)
 
 
 def apply_accepted_records(batch_id: int, dry_run: bool = False) -> Dict[str, Any]:
     ensure_workspace()
-    preview = get_apply_preview(batch_id)
-    if preview["accepted_count"] == 0:
+    # Reuse the merge _compute_apply_preview() already had to do to answer new/updated
+    # counts, instead of calling _merge_accepted_records() a second time for the same batch.
+    preview, merged = _compute_apply_preview(batch_id)
+    if preview["accepted_count"] == 0 or merged is None:
         raise RuntimeError(preview["error_message"] or "No accepted records in batch")
     if not dry_run and not preview["will_push"]:
         raise RuntimeError(preview["error_message"] or "Repository preflight failed")
@@ -1874,7 +2124,6 @@ def apply_accepted_records(batch_id: int, dry_run: bool = False) -> Dict[str, An
         _touch_batch(conn, batch_id, status=BATCH_WRITING_WORKSPACE, last_error="")
 
     try:
-        merged, _, _ = _merge_accepted_records(batch_id)
         _write_workspace_works(merged)
         _generate_workspace_markdown(merged)
         _validate_workspace_outputs()
@@ -1915,6 +2164,9 @@ def apply_accepted_records(batch_id: int, dry_run: bool = False) -> Dict[str, An
             sha=sha,
             last_error="",
         )
+    # Free any unreviewed URLs from the incremental cache before the whole batch is
+    # deleted, so a partial apply does not silently drop records the user never resolved.
+    _restore_unreviewed_incremental_urls(batch_id)
     cleanup_batch(batch_id)
     return {"batch_id": batch_id, "applied_commit_sha": sha, "preview": preview, "dry_run": False}
 
@@ -1937,15 +2189,17 @@ def delete_batch(batch_id: int) -> Dict[str, Any]:
 
 
 def list_pending_records() -> Dict[str, Any]:
-    ensure_workspace()
-    prune_terminal_batches()
+    # connect_db() already runs the full ensure_workspace() self-heal on open; calling it
+    # again beforehand (and letting _record_rows() open a third connection of its own) ran
+    # that same manifest read/rewrite + schema check up to 3x for one listing. One shared
+    # connection covers prune + both reads.
     with connect_db() as conn:
+        prune_terminal_batches()
         batches = _batch_summaries(conn)
-
-    pending_records = [
-        _record_to_dto(row)
-        for row in _record_rows(statuses=list(PENDING_RECORD_STATUSES))
-    ]
+        pending_records = [
+            _record_to_dto(row)
+            for row in _record_rows(statuses=list(PENDING_RECORD_STATUSES), conn=conn)
+        ]
     return {
         "settings": _settings_payload(),
         "batches": batches,
@@ -1991,6 +2245,24 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _fatal_error_message(exc: BaseException) -> str:
+    """Render a single-line error for the CLI boundary: no traceback, no local paths.
+
+    HelperClient.swift surfaces stderr verbatim as the user-facing error message, so a
+    raw traceback (with this machine's absolute file paths and line numbers) would leak
+    straight into the app UI.
+    """
+    if isinstance(exc, subprocess.CalledProcessError):
+        message = _git_error_message(exc)
+    else:
+        message = str(exc) or exc.__class__.__name__
+    message = " ".join(message.split())
+    home = str(Path.home())
+    if home:
+        message = message.replace(home, "~")
+    return message
+
+
 def main() -> None:
     args = parse_args()
     if args.command in {"bootstrapWorkspace", "bootstrap"}:
@@ -2030,4 +2302,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:  # top-level CLI boundary: never leak a raw traceback to Swift
+        print(f"Error: {_fatal_error_message(exc)}", file=sys.stderr)
+        sys.exit(1)

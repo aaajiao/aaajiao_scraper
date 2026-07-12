@@ -17,9 +17,15 @@ if [[ ! -x "${HELPER_BIN}" ]]; then
   exit 1
 fi
 
-if [[ -z "${OPENAI_API_KEY:-}" ]]; then
-  echo "OPENAI_API_KEY is required for live AI validation." >&2
-  exit 1
+# OPENAI_API_KEY is optional: without it, submitManualURL still performs a real fetch of
+# TARGET_URL and exercises the helper's AI-unavailable fallback, which should land the
+# record in needs_review -- one of the two paths RELEASE_CHECKLIST.md's "Optional live
+# validation" step expects. Set the key to also exercise the real OpenAI validation call.
+OPENAI_API_KEY="${OPENAI_API_KEY:-}"
+if [[ -z "${OPENAI_API_KEY}" ]]; then
+  echo "OPENAI_API_KEY not set: checking the no-key fallback (expect needs_review)."
+else
+  echo "OPENAI_API_KEY set: checking the live AI validation path."
 fi
 
 OPENAI_MODEL="${OPENAI_MODEL:-gpt-4.1}"
@@ -48,6 +54,7 @@ OPENAI_MODEL="${OPENAI_MODEL}" \
 "${HELPER_BIN}" listPendingRecords > "${OVERVIEW_JSON}"
 
 export SUBMIT_JSON OVERVIEW_JSON TARGET_URL OPENAI_MODEL
+export HAS_OPENAI_KEY="$([[ -n "${OPENAI_API_KEY}" ]] && echo 1 || echo 0)"
 /usr/bin/python3 - <<'PY'
 import json
 import os
@@ -57,14 +64,22 @@ submit = json.loads(Path(os.environ["SUBMIT_JSON"]).read_text(encoding="utf-8"))
 overview = json.loads(Path(os.environ["OVERVIEW_JSON"]).read_text(encoding="utf-8"))
 target_url = os.environ["TARGET_URL"]
 openai_model = os.environ["OPENAI_MODEL"]
+has_key = os.environ["HAS_OPENAI_KEY"] == "1"
 
 assert submit["url"] == target_url, submit
-assert overview["settings"]["openai_model"] == openai_model, overview
 pending = overview["pending_records"]
 assert pending, overview
 record = pending[0]
-if record["error_message"]:
-    assert "400 Client Error" not in record["error_message"], record
+
+if has_key:
+    assert overview["settings"]["openai_model"] == openai_model, overview
+    if record["error_message"]:
+        assert "400 Client Error" not in record["error_message"], record
+else:
+    assert overview["settings"]["has_openai_key"] is False, overview
+    assert record["status"] == "needs_review", record
+    assert record["error_message"] and "OPENAI_API_KEY" in record["error_message"], record
+
 print(json.dumps({
     "url": record["url"],
     "status": record["status"],
@@ -73,5 +88,6 @@ print(json.dumps({
     "title": record["title"],
     "error_message": record["error_message"],
     "openai_model": overview["settings"]["openai_model"],
+    "has_openai_key": has_key,
 }, ensure_ascii=False, indent=2))
 PY

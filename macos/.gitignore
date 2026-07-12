@@ -5,6 +5,10 @@ Vendor/python_runtime/
 Seed/cache/
 Seed/aaajiao_works.json
 Seed/aaajiao_portfolio.md
+# Rewritten by prepare_seed.sh on every run (timestamp, HEAD commit, dirty-state) like
+# the other Seed/ artifacts above; tracking it produced a stale, version-skewed file no
+# release step ever re-committed. Treat it as a build output, not a source file.
+Seed/seed_manifest.json
 App/*.app
 DerivedData/
 .build/

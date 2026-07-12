@@ -703,6 +703,41 @@ def test_prune_terminal_batches_removes_completed_and_failed_only(tmp_path, monk
         assert conn.execute("SELECT COUNT(*) FROM records WHERE batch_id = ?", (active_batch,)).fetchone()[0] == 1
 
 
+def test_prune_keeps_failed_batch_with_accepted_records_for_retry(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+
+    retryable_batch = helper._create_batch("incremental")
+
+    with helper.connect_db() as conn:
+        helper._touch_batch(conn, retryable_batch, status=helper.BATCH_FAILED)
+
+    helper._insert_record(
+        batch_id=retryable_batch,
+        url="https://eventstructure.com/retry-work",
+        status=helper.RECORD_ACCEPTED,
+        page_type="artwork",
+        confidence=0.9,
+        is_update=False,
+        proposed={"title": "Retry Work", "url": "https://eventstructure.com/retry-work"},
+        error=None,
+    )
+
+    pruned = helper.prune_terminal_batches()
+
+    assert pruned == 0
+    with helper.connect_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM batches WHERE id = ?", (retryable_batch,)).fetchone()[0] == 1
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM records WHERE batch_id = ? AND status = ?",
+                (retryable_batch, helper.RECORD_ACCEPTED),
+            ).fetchone()[0]
+            == 1
+        )
+
+
 def test_reject_record_restores_incremental_url_to_sitemap_cache(tmp_path, monkeypatch):
     helper = _load_helper_module()
     monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(tmp_path / "workspace"))
@@ -903,3 +938,350 @@ def test_copy_seed_payload_respects_overwrite_switch(tmp_path, monkeypatch):
     helper._copy_seed_payload(overwrite=True)
     assert works_path.read_text(encoding="utf-8") == seed_works
     assert portfolio_path.read_text(encoding="utf-8") == seed_portfolio
+
+
+def test_ensure_workspace_restores_corrupt_works_file(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    workspace_root = tmp_path / "workspace"
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+
+    helper.ensure_workspace()
+    works_path = workspace_root / helper.REPO_WORKS
+    works_path.write_text("{not valid json", encoding="utf-8")
+
+    # A corrupt-but-present works file must be repaired, not left to crash later reads.
+    helper.ensure_workspace()
+
+    restored = json.loads(works_path.read_text(encoding="utf-8"))
+    assert isinstance(restored, list)
+    assert isinstance(helper._existing_urls(), set)
+
+
+def test_copy_seed_payload_tolerates_missing_seed_cache(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    workspace_root = tmp_path / "workspace"
+    bundle_root = tmp_path / "bundle"
+    seed_dir = bundle_root / "Seed"
+    seed_dir.mkdir(parents=True)
+    # Provide required seed target files and snapshot, but deliberately omit Seed/cache.
+    repo_root = Path(__file__).resolve().parents[1]
+    (seed_dir / helper.REPO_WORKS).write_text(
+        (repo_root / "macos" / "Seed" / helper.REPO_WORKS).read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (seed_dir / helper.REPO_PORTFOLIO).write_text("# Seed\n", encoding="utf-8")
+    snapshot_scraper = bundle_root / "Vendor" / "python_snapshot" / "scraper"
+    snapshot_scraper.mkdir(parents=True)
+    (snapshot_scraper / "__init__.py").write_text("", encoding="utf-8")
+
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AAAJIAO_IMPORTER_BUNDLE_ROOT", str(bundle_root))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(repo_root))
+
+    # Must not raise FileNotFoundError; an empty cache dir is created instead.
+    helper._copy_seed_payload()
+
+    assert (workspace_root / ".cache").is_dir()
+
+
+def test_submit_manual_url_marks_batch_failed_when_setup_aborts(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    workspace_root = tmp_path / "workspace"
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+
+    helper.ensure_workspace()
+
+    def boom():
+        raise RuntimeError("snapshot modules unavailable")
+
+    monkeypatch.setattr(helper, "_load_snapshot_modules", boom)
+
+    with pytest.raises(RuntimeError):
+        helper.submit_manual_url("https://eventstructure.com/some-work")
+
+    with helper.connect_db() as conn:
+        statuses = [row["status"] for row in conn.execute("SELECT status FROM batches")]
+    # The aborted batch is terminal (failed), not a ghost draft.
+    assert statuses == [helper.BATCH_FAILED]
+    # A failed setup must not masquerade as pending review work blocking baseline refresh.
+    assert helper._workspace_has_active_review_state() is False
+
+
+def test_prune_removes_ghost_draft_batches(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+
+    ghost_draft = helper._create_batch("manual")  # left in draft with no records
+    reviewing_batch = helper._create_batch("incremental")
+    with helper.connect_db() as conn:
+        helper._touch_batch(conn, reviewing_batch, status=helper.BATCH_REVIEWING)
+    helper._insert_record(
+        batch_id=reviewing_batch,
+        url="https://eventstructure.com/active-work",
+        status=helper.RECORD_READY_FOR_REVIEW,
+        page_type="artwork",
+        confidence=0.9,
+        is_update=False,
+        proposed={"title": "Active Work", "url": "https://eventstructure.com/active-work"},
+        error=None,
+    )
+
+    pruned = helper.prune_terminal_batches()
+
+    assert pruned == 1
+    with helper.connect_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM batches WHERE id = ?", (ghost_draft,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM batches WHERE id = ?", (reviewing_batch,)).fetchone()[0] == 1
+
+
+def test_refresh_workspace_baseline_ignores_ghost_draft_batch(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    workspace_root = tmp_path / "workspace"
+    remote_repo, working_repo, _ = _prepare_baseline_remote(tmp_path, title="Ghost Draft Baseline")
+
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+    monkeypatch.setenv("AAAJIAO_IMPORTER_BASELINE_REMOTE_URL", str(remote_repo))
+    monkeypatch.setenv("AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH", "main")
+
+    helper.bootstrap_workspace()
+    # A draft batch with zero records is a ghost left behind when batch creation aborted
+    # before reaching "reviewing" (e.g. the process was killed mid-setup); it must not be
+    # mistaken for pending review work that blocks a baseline refresh.
+    ghost_draft = helper._create_batch("manual")
+
+    latest_commit = _commit_baseline_files(working_repo, title="Ghost Draft Refresh", markdown="# Ghost Draft\n")
+    _run_git(working_repo, "push", "origin", "main")
+
+    response = helper.refresh_workspace_baseline()
+
+    works = json.loads((workspace_root / "aaajiao_works.json").read_text(encoding="utf-8"))
+    manifest = helper._load_json(helper.workspace_manifest_path())
+    assert response["status"] == "baseline_synced"
+    assert works[0]["title"] == "Ghost Draft Refresh"
+    assert manifest["baseline_commit"] == latest_commit
+    assert manifest["baseline_status"] == helper.BASELINE_STATUS_SYNCED
+    with helper.connect_db() as conn:
+        # The ghost draft is merely ignored, not implicitly pruned, by refresh itself.
+        assert conn.execute("SELECT COUNT(*) FROM batches WHERE id = ?", (ghost_draft,)).fetchone()[0] == 1
+
+
+def test_apply_accepted_records_restores_unreviewed_incremental_urls(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
+
+    helper.ensure_workspace()
+    sitemap_path = helper.workspace_root() / ".cache" / "sitemap_lastmod.json"
+    accepted_url = "https://eventstructure.com/accepted-work"
+    pending_url = "https://eventstructure.com/needs-review-work"
+    sitemap_path.write_text(
+        json.dumps({accepted_url: "2026-03-12", pending_url: "2026-03-12"}),
+        encoding="utf-8",
+    )
+
+    batch_id = helper._create_batch("incremental")
+    helper._insert_record(
+        batch_id=batch_id,
+        url=accepted_url,
+        status=helper.RECORD_ACCEPTED,
+        page_type="artwork",
+        confidence=0.99,
+        is_update=False,
+        proposed={"title": "Accepted Work", "url": accepted_url, "images": []},
+        error=None,
+    )
+    helper._insert_record(
+        batch_id=batch_id,
+        url=pending_url,
+        status=helper.RECORD_NEEDS_REVIEW,
+        page_type="artwork",
+        confidence=0.2,
+        is_update=False,
+        proposed={"title": "Needs Review Work", "url": pending_url, "images": []},
+        error="low confidence",
+    )
+
+    monkeypatch.setattr(
+        helper,
+        "_repo_publish_config",
+        lambda root: {
+            "branch": "main",
+            "upstream": "origin/main",
+            "remote_name": "origin",
+            "remote_branch": "main",
+            "remote_url": "git@example.com:test/repo.git",
+            "user_name": "Tester",
+            "user_email": "tester@example.com",
+        },
+    )
+    monkeypatch.setattr(
+        helper,
+        "_merge_accepted_records",
+        lambda _: ([{"title": "Accepted Work", "url": accepted_url, "images": []}], 1, 0),
+    )
+    monkeypatch.setattr(helper, "_write_workspace_works", lambda works: None)
+    monkeypatch.setattr(helper, "_generate_workspace_markdown", lambda works: None)
+    monkeypatch.setattr(helper, "_validate_workspace_outputs", lambda: None)
+    monkeypatch.setattr(helper, "_sync_workspace_to_repo", lambda _: "abc123")
+
+    helper.apply_accepted_records(batch_id)
+
+    cache = json.loads(sitemap_path.read_text(encoding="utf-8"))
+    # The unresolved record's URL is freed so the next sync can rediscover it...
+    assert pending_url not in cache
+    # ...while the applied record stays cached (already persisted to the baseline).
+    assert accepted_url in cache
+    with helper.connect_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM records WHERE batch_id = ?", (batch_id,)).fetchone()[0] == 0
+
+
+def test_apply_accepted_records_rejects_branch_mismatch(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+
+    remote_repo = tmp_path / "remote.git"
+    working_repo = tmp_path / "source"
+    subprocess.run(["git", "init", "--bare", str(remote_repo)], check=True, capture_output=True, text=True)
+    working_repo.mkdir()
+    _run_git(working_repo, "init", "-b", "main")
+    _run_git(working_repo, "config", "user.name", "Tester")
+    _run_git(working_repo, "config", "user.email", "tester@example.com")
+    (working_repo / "aaajiao_works.json").write_text("[]\n", encoding="utf-8")
+    (working_repo / "aaajiao_portfolio.md").write_text("# Portfolio\n", encoding="utf-8")
+    _run_git(working_repo, "add", "aaajiao_works.json", "aaajiao_portfolio.md")
+    _run_git(working_repo, "commit", "-m", "initial")
+    _run_git(working_repo, "remote", "add", "origin", str(remote_repo))
+    _run_git(working_repo, "push", "-u", "origin", "main")
+    # Simulate a developer working off the baseline branch, with its own upstream, rather
+    # than a detached HEAD or a missing upstream (already covered by _repo_publish_config's
+    # own contract; this is the "current branch is real but wrong" case).
+    _run_git(working_repo, "checkout", "-b", "feature/other-work")
+    _run_git(working_repo, "push", "-u", "origin", "feature/other-work")
+
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(working_repo))
+
+    batch_id = helper._create_batch("manual")
+    helper._insert_record(
+        batch_id=batch_id,
+        url="https://eventstructure.com/test-work",
+        status=helper.RECORD_ACCEPTED,
+        page_type="artwork",
+        confidence=0.99,
+        is_update=False,
+        proposed={"title": "Test Work", "url": "https://eventstructure.com/test-work", "images": []},
+        error=None,
+    )
+
+    preview = helper.get_apply_preview(batch_id)
+    assert preview["will_push"] is False
+    assert "does not match the baseline branch" in preview["error_message"]
+
+    with pytest.raises(RuntimeError, match="does not match the baseline branch"):
+        helper.apply_accepted_records(batch_id)
+
+    # Rejected before any workspace/git mutation: no push, no half-applied batch state,
+    # and the accepted record is still there to retry once the user switches branches.
+    assert _run_git(working_repo, "rev-parse", "HEAD") == _run_git(working_repo, "rev-parse", "refs/heads/feature/other-work")
+    with helper.connect_db() as conn:
+        row = conn.execute("SELECT status FROM batches WHERE id = ?", (batch_id,)).fetchone()
+        record_count = conn.execute("SELECT COUNT(*) FROM records WHERE batch_id = ?", (batch_id,)).fetchone()[0]
+    assert row["status"] not in {helper.BATCH_FAILED, helper.BATCH_COMPLETED}
+    assert record_count == 1
+
+
+def test_apply_accepted_records_marks_batch_failed_with_real_stderr_on_push_rejection_and_allows_retry(
+    tmp_path, monkeypatch
+):
+    helper = _load_helper_module()
+
+    remote_repo = tmp_path / "remote.git"
+    working_repo = tmp_path / "source"
+    subprocess.run(["git", "init", "--bare", str(remote_repo)], check=True, capture_output=True, text=True)
+    working_repo.mkdir()
+    _run_git(working_repo, "init", "-b", "main")
+    _run_git(working_repo, "config", "user.name", "Tester")
+    _run_git(working_repo, "config", "user.email", "tester@example.com")
+    (working_repo / "aaajiao_works.json").write_text("[]\n", encoding="utf-8")
+    (working_repo / "aaajiao_portfolio.md").write_text("# Portfolio\n", encoding="utf-8")
+    _run_git(working_repo, "add", "aaajiao_works.json", "aaajiao_portfolio.md")
+    _run_git(working_repo, "commit", "-m", "initial")
+    _run_git(working_repo, "remote", "add", "origin", str(remote_repo))
+    _run_git(working_repo, "push", "-u", "origin", "main")
+
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(working_repo))
+
+    batch_id = helper._create_batch("manual")
+    helper._insert_record(
+        batch_id=batch_id,
+        url="https://eventstructure.com/test-work",
+        status=helper.RECORD_ACCEPTED,
+        page_type="artwork",
+        confidence=0.99,
+        is_update=False,
+        proposed={"title": "Test Work", "url": "https://eventstructure.com/test-work", "images": []},
+        error=None,
+    )
+
+    monkeypatch.setattr(
+        helper,
+        "_merge_accepted_records",
+        lambda _: ([{"title": "Published Work", "url": "https://eventstructure.com/test-work", "images": []}], 1, 0),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_generate_workspace_markdown",
+        lambda works: (helper.workspace_root() / "aaajiao_portfolio.md").write_text("# Published\n", encoding="utf-8"),
+    )
+
+    original_create_commit = helper._create_commit_from_publish_repo
+
+    def create_commit_and_race_remote(root, applied_batch_id):
+        sha = original_create_commit(root, applied_batch_id)
+        # Simulate a second apply (or a manual push) landing on the remote branch after
+        # publish_repo was cloned but before this push executes, so our push is rejected
+        # as a non-fast-forward -- the most common real-world push failure.
+        foreign_clone = tmp_path / "foreign_push"
+        _run_git(tmp_path, "clone", "--branch", "main", "--single-branch", str(remote_repo), str(foreign_clone))
+        _run_git(foreign_clone, "config", "user.name", "Concurrent Apply")
+        _run_git(foreign_clone, "config", "user.email", "concurrent@example.com")
+        (foreign_clone / "unrelated.txt").write_text("advance\n", encoding="utf-8")
+        _run_git(foreign_clone, "add", "unrelated.txt")
+        _run_git(foreign_clone, "commit", "-m", "concurrent apply landed first")
+        _run_git(foreign_clone, "push", "origin", "HEAD:main")
+        return sha
+
+    monkeypatch.setattr(helper, "_create_commit_from_publish_repo", create_commit_and_race_remote)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        helper.apply_accepted_records(batch_id)
+
+    error_message = str(exc_info.value)
+    assert "Failed to publish workspace changes to GitHub" in error_message
+    # The real git stderr must reach the user, not a bare "exit status 1".
+    assert "rejected" in error_message.lower() or "fetch first" in error_message.lower()
+
+    with helper.connect_db() as conn:
+        row = conn.execute("SELECT status, last_error FROM batches WHERE id = ?", (batch_id,)).fetchone()
+        record_count = conn.execute("SELECT COUNT(*) FROM records WHERE batch_id = ?", (batch_id,)).fetchone()[0]
+
+    assert row["status"] == helper.BATCH_FAILED
+    # last_error carries the same real stderr, not a generic CalledProcessError string.
+    assert row["last_error"] == error_message
+    # A rejected push must not silently drop the accepted record -- it must survive for retry.
+    assert record_count == 1
+
+    # Retry: once the transient conflict is gone (publish_repo re-clones fresh each call),
+    # the same batch can be applied again without any manual repair.
+    monkeypatch.setattr(helper, "_create_commit_from_publish_repo", original_create_commit)
+    retry_response = helper.apply_accepted_records(batch_id)
+
+    assert retry_response["batch_id"] == batch_id
+    assert retry_response["applied_commit_sha"]
+    with helper.connect_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM batches WHERE id = ?", (batch_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM records WHERE batch_id = ?", (batch_id,)).fetchone()[0] == 0

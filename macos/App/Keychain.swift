@@ -2,6 +2,15 @@ import Foundation
 import Security
 
 enum KeychainStore {
+    /// Result of a load attempt, distinguishing "never saved" from a genuine
+    /// Keychain access failure (e.g. locked keychain, auth failure) so callers
+    /// can surface the right message instead of treating both as "no key".
+    enum LoadResult {
+        case found(String)
+        case notFound
+        case failure(OSStatus)
+    }
+
     private static let service = "com.aaajiao.importer"
     private static let account = "openai_api_key"
     private static var query: [String: Any] {
@@ -23,17 +32,24 @@ enum KeychainStore {
         }
     }
 
-    static func load() -> String {
+    static func load() -> LoadResult {
         var query = query
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
 
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data, let value = String(data: data, encoding: .utf8) else {
-            return ""
+        switch status {
+        case errSecSuccess:
+            guard let data = result as? Data, let value = String(data: data, encoding: .utf8) else {
+                return .failure(status)
+            }
+            return .found(value)
+        case errSecItemNotFound:
+            return .notFound
+        default:
+            return .failure(status)
         }
-        return value
     }
 
     static func delete() throws {

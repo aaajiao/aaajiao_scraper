@@ -29,21 +29,26 @@ func closeSettingsWindow() {
     NSApp.keyWindow?.performClose(nil)
 }
 
-enum ImporterFlowState: String {
-    case idle
-    case imported
-    case reviewing
-    case readyToSync
-    case syncing
-}
-
 enum ImporterBusyAction {
+    case bootstrap
     case importURL
     case syncSite
     case reloadResults
+    case acceptRecord
+    case deleteRecord
+    case discardRun
+    case resetWorkspace
     case prepareGitHubSync
     case syncGitHub
     case refreshBaseline
+}
+
+/// Incremental progress for `startSync()`, reported by the helper while it
+/// works through a batch of URLs. nil until the first progress line arrives
+/// (or for the whole run, on a helper build that doesn't emit any).
+struct SyncProgress: Equatable {
+    let completed: Int
+    let total: Int
 }
 
 enum StatusTone: Equatable {
@@ -61,8 +66,8 @@ final class AppModel: ObservableObject {
     @Published var currentBatchDetail: BatchDetailResponse?
     @Published var selectedRecordID: Int?
     @Published var currentApplyPreview: ApplyPreview?
-    @Published var currentFlowState: ImporterFlowState = .idle
     @Published var currentBusyAction: ImporterBusyAction?
+    @Published var syncProgress: SyncProgress?
     @Published var isShowingApplyConfirmation = false
     @Published var isShowingResetConfirmation = false
     @Published var isShowingImportSheet = false
@@ -79,16 +84,39 @@ final class AppModel: ObservableObject {
     private let helper = HelperClient()
     private var hasBootstrapped = false
 
+    // Keychain reads are relatively expensive and the derived properties below
+    // are re-evaluated on every view update, so the last load is cached; call
+    // reloadKeychainCache() wherever the stored key may have changed or a
+    // user-initiated action should re-check availability (e.g. after the user
+    // unlocked their keychain).
+    @Published private var cachedKeychainLoad = KeychainStore.load()
+
     init() {
-        let savedKey = KeychainStore.load()
         let modelSelection = OpenAIModelSettingsStore.load()
-        settingsDraftOpenAIKey = savedKey
+        settingsDraftOpenAIKey = savedOpenAIKey
         settingsDraftOpenAIModelPreset = modelSelection.preset
         settingsDraftCustomOpenAIModel = modelSelection.customModel
     }
 
+    private func reloadKeychainCache() {
+        cachedKeychainLoad = KeychainStore.load()
+    }
+
     var savedOpenAIKey: String {
-        KeychainStore.load()
+        if case .found(let value) = cachedKeychainLoad {
+            return value
+        }
+        return ""
+    }
+
+    /// True when the last Keychain lookup failed with something other than
+    /// "no item saved" (e.g. locked keychain, auth failure) — distinct from
+    /// simply never having saved a key.
+    var hasKeychainAccessFailure: Bool {
+        if case .failure = cachedKeychainLoad {
+            return true
+        }
+        return false
     }
 
     var savedOpenAIModelSelection: OpenAIModelSelection {
@@ -133,7 +161,7 @@ final class AppModel: ObservableObject {
     }
 
     var canRunProtectedActions: Bool {
-        hasSavedOpenAIKey
+        hasSavedOpenAIKey && !hasKeychainAccessFailure
     }
 
     var canSubmitManualURL: Bool {
@@ -141,7 +169,7 @@ final class AppModel: ObservableObject {
     }
 
     var isBusy: Bool {
-        currentFlowState == .syncing
+        currentBusyAction != nil
     }
 
     var isImportingURL: Bool {
@@ -177,10 +205,11 @@ final class AppModel: ObservableObject {
     }
 
     var selectedRecord: ProposedRecord? {
-        if let selectedRecordID {
-            return visibleCurrentRecords.first { $0.id == selectedRecordID }
-        }
-        return visibleCurrentRecords.first
+        // No selection means no selection: the default "select the first row"
+        // behavior is applied once at data-load time in syncSelection(with:),
+        // not implicitly on every read here.
+        guard let selectedRecordID else { return nil }
+        return visibleCurrentRecords.first { $0.id == selectedRecordID }
     }
 
     var hasAcceptedRecords: Bool {
@@ -270,12 +299,23 @@ final class AppModel: ObservableObject {
 
     var busyStatusMessage: String? {
         switch currentBusyAction {
+        case .bootstrap:
+            return "Preparing workspace..."
         case .importURL:
             return "Importing URL..."
         case .syncSite:
-            return "Syncing site..."
+            guard let syncProgress else { return "Syncing site..." }
+            return "Syncing site... (\(syncProgress.completed)/\(syncProgress.total))"
         case .reloadResults:
             return "Reloading results..."
+        case .acceptRecord:
+            return "Accepting result..."
+        case .deleteRecord:
+            return "Removing result..."
+        case .discardRun:
+            return "Discarding results..."
+        case .resetWorkspace:
+            return "Resetting workspace..."
         case .prepareGitHubSync:
             return "Preparing GitHub sync preview..."
         case .syncGitHub:
@@ -288,7 +328,7 @@ final class AppModel: ObservableObject {
     }
 
     var shouldShowStatusBanner: Bool {
-        hasSavedOpenAIKey == false || busyStatusMessage != nil || statusTone != .neutral || hasBaselineWarning
+        hasSavedOpenAIKey == false || hasKeychainAccessFailure || busyStatusMessage != nil || statusTone != .neutral || hasBaselineWarning
     }
 
     var hasBaselineWarning: Bool {
@@ -301,6 +341,21 @@ final class AppModel: ObservableObject {
         return false
     }
 
+    /// Single gate for every helper-backed action. Returns false (and does
+    /// nothing) when another action is already in flight, so only one helper
+    /// subprocess touches the workspace at a time. Callers that pass the gate
+    /// must balance it with endExclusive(), typically via `defer` inside the
+    /// Task that runs the async work.
+    private func beginExclusive(_ action: ImporterBusyAction) -> Bool {
+        guard !isBusy else { return false }
+        currentBusyAction = action
+        return true
+    }
+
+    private func endExclusive() {
+        currentBusyAction = nil
+    }
+
     func bootstrapIfNeeded() {
         guard !hasBootstrapped else { return }
         hasBootstrapped = true
@@ -308,37 +363,49 @@ final class AppModel: ObservableObject {
     }
 
     func bootstrapAndRefresh() {
+        guard beginExclusive(.bootstrap) else { return }
         Task {
+            defer { endExclusive() }
+            let response: BootstrapResponse
             do {
-                let response = try await helper.bootstrapWorkspace(
+                response = try await helper.bootstrapWorkspace(
                     openAIKey: savedOpenAIKey,
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
                     openAIModelSource: savedOpenAIModelSelection.source
                 )
                 settings = response.settings
                 syncDraftWithSavedSettingsIfNeeded()
+            } catch {
+                setStatus(display(error), tone: .error)
+                return
+            }
+            // Read-only refresh is separate: a failure to load the review
+            // results must not be reported as the workspace bootstrap failing.
+            do {
                 try await refresh(allowFallbackBatch: true)
                 setStatus(workspaceStatusMessage(for: response), tone: workspaceStatusTone(for: response.status))
             } catch {
-                setStatus(display(error), tone: .error)
+                setStatus("Workspace ready, but loading review results failed: \(display(error))", tone: .warning)
             }
         }
     }
 
     func refreshFromUI() {
-        currentBusyAction = .reloadResults
+        guard beginExclusive(.reloadResults) else { return }
         Task {
+            defer { endExclusive() }
             do {
                 try await refresh(allowFallbackBatch: currentBatchID == nil)
             } catch {
-                if currentBusyAction == .reloadResults {
-                    currentBusyAction = nil
-                }
                 setStatus(display(error), tone: .error)
             }
         }
     }
 
+    /// Reloads settings and the active/latest batch. A failure to load a batch
+    /// is propagated to the caller (after clearing the now-unloadable run) so
+    /// the current review results are never dropped silently — the caller is
+    /// responsible for surfacing the error.
     func refresh(allowFallbackBatch: Bool) async throws {
         let response = try await helper.listPendingRecords(
             openAIKey: savedOpenAIKey,
@@ -351,53 +418,68 @@ final class AppModel: ObservableObject {
         if let currentBatchID {
             do {
                 try await loadBatch(batchID: currentBatchID, updateStatusMessage: false)
-                return
             } catch {
                 clearCurrentRun()
+                throw error
             }
+            return
         }
 
         if allowFallbackBatch, let latestBatch = response.batches.first {
             do {
                 try await loadBatch(batchID: latestBatch.id, updateStatusMessage: false)
-                setStatus("Loaded the latest review results", tone: .info)
-                return
             } catch {
                 clearCurrentRun()
+                throw error
             }
+            setStatus("Loaded the latest review results", tone: .info)
+            return
         }
 
-        if !hasSavedOpenAIKey {
-            currentFlowState = .idle
-            currentBusyAction = nil
+        if hasKeychainAccessFailure {
+            setStatus("Could not read the OpenAI key from Keychain. Unlock your keychain and try again.", tone: .error)
+        } else if !hasSavedOpenAIKey {
             setStatus("OpenAI key missing. Save a key to enable imports.", tone: .warning)
         } else {
-            currentFlowState = .idle
-            currentBusyAction = nil
             setStatus("Ready for a new import", tone: .neutral)
         }
     }
 
     func startSync() {
+        reloadKeychainCache()
         guard canRunProtectedActions else {
-            setStatus("OpenAI key missing. Save a key to continue.", tone: .warning)
+            if hasKeychainAccessFailure {
+                setStatus("Could not read the OpenAI key from Keychain. Unlock your keychain and try again.", tone: .error)
+            } else {
+                setStatus("OpenAI key missing. Save a key to continue.", tone: .warning)
+            }
             return
         }
-        currentFlowState = .syncing
-        currentBusyAction = .syncSite
+        guard beginExclusive(.syncSite) else { return }
+        syncProgress = nil
         setStatus("Syncing site...", tone: .info)
         Task {
+            defer {
+                endExclusive()
+                syncProgress = nil
+            }
             do {
                 let result = try await helper.startIncrementalSync(
                     openAIKey: savedOpenAIKey,
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
-                    openAIModelSource: savedOpenAIModelSelection.source
+                    openAIModelSource: savedOpenAIModelSelection.source,
+                    onProgress: { [weak self] progress in
+                        Task { @MainActor in
+                            // Ignore stray progress lines that arrive after this
+                            // sync has already finished/been superseded.
+                            guard let self, self.currentBusyAction == .syncSite else { return }
+                            self.syncProgress = SyncProgress(completed: progress.completed, total: progress.total)
+                        }
+                    }
                 )
                 try await loadBatch(batchID: result.batch_id, updateStatusMessage: false)
                 setStatus("Synced \(result.urls_processed) URLs", tone: .success)
             } catch {
-                currentFlowState = .idle
-                currentBusyAction = nil
                 setStatus(display(error), tone: .error)
             }
         }
@@ -416,12 +498,13 @@ final class AppModel: ObservableObject {
     }
 
     func confirmWorkspaceReset() {
-        currentFlowState = .syncing
-        currentBusyAction = .refreshBaseline
+        guard beginExclusive(.resetWorkspace) else { return }
         setStatus("Resetting workspace and refreshing the GitHub baseline...", tone: .info)
         Task {
+            defer { endExclusive() }
+            let response: BootstrapResponse
             do {
-                let response = try await helper.resetWorkspace(
+                response = try await helper.resetWorkspace(
                     openAIKey: savedOpenAIKey,
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
                     openAIModelSource: savedOpenAIModelSelection.source
@@ -429,12 +512,15 @@ final class AppModel: ObservableObject {
                 settings = response.settings
                 clearCurrentRun()
                 isShowingResetConfirmation = false
+            } catch {
+                setStatus(display(error), tone: .error)
+                return
+            }
+            do {
                 try await refresh(allowFallbackBatch: false)
                 setStatus(workspaceStatusMessage(for: response), tone: workspaceStatusTone(for: response.status))
             } catch {
-                currentFlowState = .idle
-                currentBusyAction = nil
-                setStatus(display(error), tone: .error)
+                setStatus("\(workspaceStatusMessage(for: response)) Reloading results failed — use Reload Results.", tone: .warning)
             }
         }
     }
@@ -444,38 +530,47 @@ final class AppModel: ObservableObject {
             setStatus("Finish or discard the current review results before refreshing the baseline.", tone: .warning)
             return
         }
-        currentFlowState = .syncing
-        currentBusyAction = .refreshBaseline
+        guard beginExclusive(.refreshBaseline) else { return }
         setStatus("Refreshing the GitHub baseline...", tone: .info)
         Task {
+            defer { endExclusive() }
+            let response: BootstrapResponse
             do {
-                let response = try await helper.refreshWorkspaceBaseline(
+                response = try await helper.refreshWorkspaceBaseline(
                     openAIKey: savedOpenAIKey,
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
                     openAIModelSource: savedOpenAIModelSelection.source
                 )
                 settings = response.settings
+            } catch {
+                setStatus(display(error), tone: .error)
+                return
+            }
+            do {
                 try await refresh(allowFallbackBatch: false)
                 setStatus(workspaceStatusMessage(for: response), tone: workspaceStatusTone(for: response.status))
             } catch {
-                currentFlowState = hasAcceptedRecords ? .readyToSync : (hasCurrentRun ? .reviewing : .idle)
-                currentBusyAction = nil
-                setStatus(display(error), tone: .error)
+                setStatus("\(workspaceStatusMessage(for: response)) Reloading results failed — use Reload Results.", tone: .warning)
             }
         }
     }
 
     func submitURL() {
+        reloadKeychainCache()
         guard canRunProtectedActions else {
-            setStatus("OpenAI key missing. Save a key to continue.", tone: .warning)
+            if hasKeychainAccessFailure {
+                setStatus("Could not read the OpenAI key from Keychain. Unlock your keychain and try again.", tone: .error)
+            } else {
+                setStatus("OpenAI key missing. Save a key to continue.", tone: .warning)
+            }
             return
         }
         let trimmed = manualURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        currentFlowState = .syncing
-        currentBusyAction = .importURL
+        guard beginExclusive(.importURL) else { return }
         setStatus("Importing URL...", tone: .info)
         Task {
+            defer { endExclusive() }
             do {
                 let result = try await helper.submitManualURL(
                     trimmed,
@@ -488,8 +583,6 @@ final class AppModel: ObservableObject {
                 try await loadBatch(batchID: result.batch_id, updateStatusMessage: false)
                 setStatus("Imported \(result.url)", tone: .success)
             } catch {
-                currentFlowState = .idle
-                currentBusyAction = nil
                 setStatus(display(error), tone: .error)
             }
         }
@@ -497,7 +590,9 @@ final class AppModel: ObservableObject {
 
     func acceptSelectedRecord() {
         guard let record = selectedRecord else { return }
+        guard beginExclusive(.acceptRecord) else { return }
         Task {
+            defer { endExclusive() }
             do {
                 _ = try await helper.acceptRecord(
                     id: record.id,
@@ -522,10 +617,12 @@ final class AppModel: ObservableObject {
 
     func confirmDeleteSelectedRecord() {
         guard let record = selectedRecord else { return }
+        guard let batchID = currentBatchID else { return }
         isShowingDeleteConfirmation = false
+        guard beginExclusive(.deleteRecord) else { return }
         Task {
+            defer { endExclusive() }
             do {
-                guard let batchID = currentBatchID else { return }
                 if visibleCurrentRecords.count <= 1 {
                     _ = try await helper.deleteBatch(
                         batchID: batchID,
@@ -561,7 +658,9 @@ final class AppModel: ObservableObject {
     func confirmDiscardCurrentRun() {
         guard let batchID = currentBatchID else { return }
         isShowingDiscardConfirmation = false
+        guard beginExclusive(.discardRun) else { return }
         Task {
+            defer { endExclusive() }
             do {
                 _ = try await helper.deleteBatch(
                     batchID: batchID,
@@ -580,45 +679,51 @@ final class AppModel: ObservableObject {
 
     func requestApply() {
         guard hasAcceptedRecords else { return }
+        // A cached preview can be presented immediately without a helper call.
+        if let preview = currentApplyPreview {
+            presentApplyPreview(preview)
+            return
+        }
+        guard let batchID = currentBatchID else { return }
+        guard beginExclusive(.prepareGitHubSync) else { return }
+        setStatus("Preparing GitHub sync preview...", tone: .info)
         Task {
+            defer { endExclusive() }
             do {
-                guard let batchID = currentBatchID else { return }
-                if currentApplyPreview == nil {
-                    currentBusyAction = .prepareGitHubSync
-                    setStatus("Preparing GitHub sync preview...", tone: .info)
-                    currentApplyPreview = try await helper.getApplyPreview(
-                        batchID: batchID,
-                        openAIKey: savedOpenAIKey,
-                        openAIModel: savedOpenAIModelSelection.effectiveModel,
-                        openAIModelSource: savedOpenAIModelSelection.source
-                    )
-                    currentBusyAction = nil
-                }
-
-                guard let preview = currentApplyPreview else { return }
-                if preview.will_push {
-                    isShowingApplyConfirmation = true
-                } else {
-                    let message = preview.error_message.isEmpty
-                        ? "Accepted results are not ready to sync to GitHub yet."
-                        : preview.error_message
-                    setStatus(message, tone: .warning)
-                }
+                let preview = try await helper.getApplyPreview(
+                    batchID: batchID,
+                    openAIKey: savedOpenAIKey,
+                    openAIModel: savedOpenAIModelSelection.effectiveModel,
+                    openAIModelSource: savedOpenAIModelSelection.source
+                )
+                currentApplyPreview = preview
+                presentApplyPreview(preview)
             } catch {
-                currentBusyAction = nil
                 setStatus(display(error), tone: .error)
             }
         }
     }
 
+    private func presentApplyPreview(_ preview: ApplyPreview) {
+        if preview.will_push {
+            isShowingApplyConfirmation = true
+        } else {
+            let message = preview.error_message.isEmpty
+                ? "Accepted results are not ready to sync to GitHub yet."
+                : preview.error_message
+            setStatus(message, tone: .warning)
+        }
+    }
+
     func confirmApply() {
         guard let batchID = currentBatchID else { return }
-        currentFlowState = .syncing
-        currentBusyAction = .syncGitHub
+        guard beginExclusive(.syncGitHub) else { return }
         setStatus("Syncing accepted results to GitHub...", tone: .info)
         Task {
+            defer { endExclusive() }
+            let result: ApplyResponse
             do {
-                let result = try await helper.applyAcceptedRecords(
+                result = try await helper.applyAcceptedRecords(
                     batchID: batchID,
                     openAIKey: savedOpenAIKey,
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
@@ -626,12 +731,18 @@ final class AppModel: ObservableObject {
                 )
                 isShowingApplyConfirmation = false
                 clearCurrentRun()
+            } catch {
+                setStatus(display(error), tone: .error)
+                return
+            }
+            // The push already happened and is irreversible. Report success up
+            // front so a failing read-only refresh can only downgrade it to a
+            // warning, never present it as the sync itself having failed.
+            do {
                 try await refresh(allowFallbackBatch: false)
                 setStatus("Synced to GitHub at \(result.applied_commit_sha)", tone: .success)
             } catch {
-                currentFlowState = hasAcceptedRecords ? .readyToSync : .reviewing
-                currentBusyAction = nil
-                setStatus(display(error), tone: .error)
+                setStatus("Synced to GitHub at \(result.applied_commit_sha), but reloading results failed — use Reload Results.", tone: .warning)
             }
         }
     }
@@ -655,6 +766,7 @@ final class AppModel: ObservableObject {
                 try KeychainStore.save(newValue)
             }
             OpenAIModelSettingsStore.save(modelSelection)
+            reloadKeychainCache()
             settingsDraftOpenAIKey = newValue
             settingsDraftOpenAIModelPreset = modelSelection.preset
             settingsDraftCustomOpenAIModel = modelSelection.customModel
@@ -679,6 +791,7 @@ final class AppModel: ObservableObject {
     func clearSavedKey() {
         do {
             try KeychainStore.delete()
+            reloadKeychainCache()
             settingsDraftOpenAIKey = ""
             settingsStatusMessage = "OpenAI key cleared from macOS Keychain."
             refreshFromUI()
@@ -727,30 +840,23 @@ final class AppModel: ObservableObject {
         currentBatchID = batchID
         currentBatchDetail = detail
         syncSelection(with: detail.records.filter { $0.status != "rejected" })
-        if detail.accepted_count > 0 {
-            currentApplyPreview = try await helper.getApplyPreview(
-                batchID: batchID,
-                openAIKey: savedOpenAIKey,
-                openAIModel: savedOpenAIModelSelection.effectiveModel,
-                openAIModelSource: savedOpenAIModelSelection.source
-            )
-        } else {
-            currentApplyPreview = nil
-        }
-        currentFlowState = flowState(for: detail)
-        currentBusyAction = nil
+        // The apply preview is a full-merge computation; fetch it lazily when
+        // the user actually requests a GitHub sync (requestApply), not eagerly
+        // after every data reload. Any preview from a prior load is now stale.
+        currentApplyPreview = nil
         if updateStatusMessage {
             setStatus("Loaded current results", tone: .info)
         }
     }
 
     private func clearCurrentRun() {
+        // Intentionally does not touch currentBusyAction: callers invoke this
+        // mid-operation (e.g. before a follow-up refresh) and the busy gate
+        // must stay held until the whole action finishes via endExclusive().
         currentBatchID = nil
         currentBatchDetail = nil
         selectedRecordID = nil
         currentApplyPreview = nil
-        currentFlowState = .idle
-        currentBusyAction = nil
     }
 
     private func syncSelection(with records: [ProposedRecord]) {
@@ -758,16 +864,6 @@ final class AppModel: ObservableObject {
             return
         }
         selectedRecordID = records.first?.id
-    }
-
-    private func flowState(for detail: BatchDetailResponse) -> ImporterFlowState {
-        if detail.accepted_count > 0 {
-            return .readyToSync
-        }
-        if detail.total_records > 0 {
-            return .reviewing
-        }
-        return .idle
     }
 
     private func syncDraftWithSavedSettingsIfNeeded() {

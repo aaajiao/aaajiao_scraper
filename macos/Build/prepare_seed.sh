@@ -23,7 +23,15 @@ echo "Preparing seed payload..."
 rm -rf "${PYTHON_SNAPSHOT_DIR}" "${SEED_DIR}/cache"
 mkdir -p "${PYTHON_SNAPSHOT_DIR}" "${SEED_DIR}"
 cp -R "${REPO_ROOT}/portfolio_scraper/scraper" "${PYTHON_SNAPSHOT_DIR}/"
-cp -R "${REPO_ROOT}/.cache" "${SEED_DIR}/cache"
+if [[ -d "${REPO_ROOT}/.cache" ]]; then
+  cp -R "${REPO_ROOT}/.cache" "${SEED_DIR}/cache"
+else
+  # .cache/ is gitignored (portfolio_scraper's scraper cache), so a fresh clone or a
+  # CI checkout won't have one yet. Seed an empty cache instead of failing the build;
+  # aaajiao_importer.py's ensure_workspace() already tolerates a missing seed cache.
+  echo "No ${REPO_ROOT}/.cache found; seeding an empty cache directory instead." >&2
+  mkdir -p "${SEED_DIR}/cache"
+fi
 cp "${REPO_ROOT}/aaajiao_works.json" "${SEED_DIR}/aaajiao_works.json"
 cp "${REPO_ROOT}/aaajiao_portfolio.md" "${SEED_DIR}/aaajiao_portfolio.md"
 

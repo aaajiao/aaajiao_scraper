@@ -202,7 +202,9 @@ private struct SidebarOverviewPanel: View {
             if let detail = model.currentBatchDetail {
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                     SummaryTile(title: "Mode", value: detail.batch.mode == "manual" ? "Single URL" : "Site Sync")
-                    SummaryTile(title: "Total", value: "\(detail.total_records)")
+                    // Count the visible review queue (rejected/deleted rows are
+                    // filtered out) so Total matches the list and Accepted+Pending.
+                    SummaryTile(title: "Total", value: "\(model.visibleCurrentRecords.count)")
                     SummaryTile(title: "Accepted", value: "\(detail.accepted_count)")
                     SummaryTile(title: "Pending", value: "\(detail.pending_count)")
                 }
@@ -704,6 +706,9 @@ private struct ImportURLSheet: View {
                 .textFieldStyle(.roundedBorder)
                 .focused($isFieldFocused)
                 .onSubmit {
+                    // Same guard as the Import button so pressing Return cannot
+                    // bypass the busy/protected-action checks.
+                    guard model.canSubmitManualURL else { return }
                     model.submitURL()
                 }
 
