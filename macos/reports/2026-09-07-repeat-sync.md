@@ -22,7 +22,7 @@
 
 ## 3 条 materials 候选原文
 
-这些值目前只在本轮待审核候选中；已发布的对应 `materials` 均为空。
+这些值仅出现在本轮候选中；已发布的对应 `materials` 均为空。本轮候选已在后续恢复时备份并移出审核队列。
 
 1. Danmaku：`THE NEGATIVE-SPACE WARD / 余白御寮`
 2. aaajiao.md：`• curl — 交互式 API 浏览器，实时查看 JSON、Markdown 和二进制响应。`
@@ -32,7 +32,7 @@
 
 ## 原因与代码路径
 
-以下路径和行号参照修复前的本地提交 `1d96ffaf`，可用 `git show` 对照；该代码提交尚未推送，因此不生成远端代码链接。
+以下路径和行号参照修复前提交 `1d96ffaf`，可用 `git show` 对照。
 
 1. **随包缓存来自仓库旧缓存。** `macos/Build/prepare_seed.sh` 把根目录 `.cache` 复制到 `macos/Seed/cache`；`seed_version` 又包含代码提交号，所以 App 代码更新也会改变 seed 版本。缓存打包代码（`macos/Build/prepare_seed.sh:22`，修复前）、版本计算（`macos/Build/prepare_seed.sh:134`，修复前）。
 2. **升级错误地重置了用户同步记录。** `ensure_workspace()` 在 seed 版本不同且审核队列为空时调用 `_copy_seed_payload(overwrite=True)`；后者先删除工作区 `.cache`，再复制随包缓存。上轮全部发布后队列清空，正好满足此升级条件。升级触发条件（`macos/Helper/aaajiao_importer.py:644`，修复前）、覆盖实现（`macos/Helper/aaajiao_importer.py:538`，修复前）。
@@ -49,4 +49,12 @@
 - 三处旧 sitemap 缓存也逐字节相同，SHA-256 为 `33e49a43ccb11a736e6dff3286f10c76c68c8add979ebd051d380f1ef909b849`。本轮日期来自第 7 轮保留的 `discovered_sitemap_json`，并非本报告重新抓取的站点结果。
 - 本次调查第一次直接请求 sitemap 返回 HTTP 503；随后使用与 App 相同的请求头成功取得 HTTP 200，7 项的当前 lastmod 均与本轮保存值一致。没有两次访问对应的历史 HTML 快照，因此不能断言网页全文从未改动，也不能追溯三条材料候选的首次出现时间。
 - “4 项无变化、3 项材料候选误分类”的结论仅基于本轮保留的基线、候选及有效合并规则；“重复入队由 seed 升级覆盖缓存触发”的判断由旧版本代码路径和三份相同旧缓存共同支持，并无逐步记录覆盖动作的历史运行日志。
-- 报告生成只读取保留数据与 Git 内容，未读取 API key，未修改真实 App 工作区，没有重新提取、接受或发布作品；实时复核只读取公开 sitemap。
+- 上述对比阶段只读取保留数据与 Git 内容，未读取 API key，未修改真实 App 工作区，没有重新提取、接受或发布作品；实时复核只读取公开 sitemap。后续恢复操作单列如下。
+
+## 修复与真实工作区复核
+
+- 0.3.3（build 7，代码提交 `f79d22e`，包含修复 `6ab6c82`）升级时只更新 scraper 程序快照，保留已发布文件、同步检查点和发布回执。增量抽取的有效字段完全相同时不再入队；仍有变化、失败或未通过验证的结果继续保留审核要求。
+- 第 7 轮的数据库、候选对比、缓存和已发布文件已备份至工作区 `recovery/duplicate-sync-7-20260907T131857Z/`。仅移除该轮 7 条重复候选，恢复其已核对的 7 条日期；审核队列为 0。
+- 使用最终打包 helper 执行 `bootstrapWorkspace`，从旧 seed 版本升级成功，状态为 `baseline_synced`。同步缓存保留 186 条，JSON/Markdown 的 SHA-256 均与上述发布版本一致，169 项作品没有改变。
+- 2026-09-07 13:35 UTC，用升级后的 scraper 快照和 App 请求头读取公开 sitemap：HTTP 200，解析出 186 个有效链接，增量候选 **0**。验证截获缓存写入，并核对前后 SHA 相同；没有启动 AI 提取或重新发布作品。
+- 92 项 helper 回归测试、96 项 Swift 测试、最终应用 smoke test、隔离工作区验收及 Git 发布事务检查均通过。
