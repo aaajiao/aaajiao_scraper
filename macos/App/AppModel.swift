@@ -499,7 +499,7 @@ final class AppModel: ObservableObject {
         if let error = settings.baseline_error, !error.isEmpty {
             return true
         }
-        if settings.baseline_status == "seed_fallback" || settings.baseline_status == "sync_skipped_pending_review" {
+        if ["seed_fallback", "cached_fallback", "sync_skipped_pending_review"].contains(settings.baseline_status ?? "") {
             return true
         }
         return false
@@ -562,7 +562,7 @@ final class AppModel: ObservableObject {
                 try await refresh(allowFallbackBatch: true)
                 setStatus(workspaceStatusMessage(for: response), tone: workspaceStatusTone(for: response.status))
             } catch {
-                setStatus("Workspace ready, but loading review results failed: \(display(error))", tone: .warning)
+                setStatus("\(workspaceStatusMessage(for: response)) Loading review results failed: \(display(error))", tone: .warning)
             }
         }
     }
@@ -613,6 +613,9 @@ final class AppModel: ObservableObject {
                 clearCurrentRun()
                 throw error
             }
+            if settings.baseline_status == "cached_fallback" {
+                setStatus(cachedBaselineStatusMessage, tone: .warning)
+            }
             return
         }
 
@@ -623,7 +626,11 @@ final class AppModel: ObservableObject {
                 clearCurrentRun()
                 throw error
             }
-            setStatus("Loaded the latest review results", tone: .info)
+            if settings.baseline_status == "cached_fallback" {
+                setStatus("\(cachedBaselineStatusMessage) Your saved review results are available.", tone: .warning)
+            } else {
+                setStatus("Loaded the latest review results", tone: .info)
+            }
             return
         }
 
@@ -631,6 +638,8 @@ final class AppModel: ObservableObject {
             setStatus("Could not read the OpenAI key from Keychain. Unlock your keychain and try again.", tone: .error)
         } else if !hasSavedOpenAIKey {
             setStatus("OpenAI key missing. Save a key to enable imports.", tone: .warning)
+        } else if settings.baseline_status == "cached_fallback" {
+            setStatus(cachedBaselineStatusMessage, tone: .warning)
         } else {
             setStatus("Ready for a new import", tone: .neutral)
         }
@@ -947,7 +956,7 @@ final class AppModel: ObservableObject {
         }
         if detail.total_records == 0 {
             if isSiteSync { completedEmptySiteCheckBatchID = detail.batch.id }
-            setStatus("No new URLs were found in this site check. Use Import URL to revisit a specific artwork.", tone: .info)
+            setStatus("No artwork changes to review. Use Import URL to inspect a specific artwork.", tone: .info)
         } else if detail.failed_count == detail.total_records {
             let failure = detail.records.first(where: { $0.status == "failed" })?.error_message
             let reason = failure.flatMap { $0.isEmpty ? nil : $0 } ?? "The URLs could not be imported."
@@ -1499,6 +1508,10 @@ final class AppModel: ObservableObject {
         NSPasteboard.general.setString(value, forType: .string)
     }
 
+    private var cachedBaselineStatusMessage: String {
+        "GitHub is currently unavailable. Using the published data saved on this Mac."
+    }
+
     private func workspaceStatusMessage(for response: BootstrapResponse) -> String {
         switch response.status {
         case "initialized_synced":
@@ -1509,6 +1522,8 @@ final class AppModel: ObservableObject {
             return "Workspace baseline refreshed from GitHub."
         case "baseline_seed_fallback":
             return "GitHub baseline refresh failed. Using bundled seed files."
+        case "baseline_cached_fallback":
+            return cachedBaselineStatusMessage
         case "baseline_sync_skipped_pending_review":
             return "Skipped baseline refresh to protect current review results."
         case "reset_synced":
@@ -1522,7 +1537,7 @@ final class AppModel: ObservableObject {
 
     private func workspaceStatusTone(for status: String) -> StatusTone {
         switch status {
-        case "initialized_seed_fallback", "baseline_seed_fallback", "baseline_sync_skipped_pending_review", "reset_seed_fallback":
+        case "initialized_seed_fallback", "baseline_seed_fallback", "baseline_cached_fallback", "baseline_sync_skipped_pending_review", "reset_seed_fallback":
             return .warning
         case "initialized_synced", "baseline_synced", "reset_synced":
             return .success

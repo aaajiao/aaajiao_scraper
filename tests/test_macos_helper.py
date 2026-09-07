@@ -2047,3 +2047,226 @@ def test_validate_openai_key_cli_returns_status_without_echoing_key(monkeypatch,
     output = capsys.readouterr().out
     assert json.loads(output)["status"] == "valid"
     assert "synthetic-review-key" not in output
+
+
+def _install_older_seed_fixture(helper, tmp_path, monkeypatch):
+    seed = tmp_path / "older-bundled-seed"
+    (seed / "cache").mkdir(parents=True)
+    (seed / helper.REPO_WORKS).write_text(
+        json.dumps([{"title": "Older Seed Work", "url": "https://eventstructure.com/older-seed-work"}]),
+        encoding="utf-8",
+    )
+    (seed / helper.REPO_PORTFOLIO).write_text("# Older bundled portfolio\n", encoding="utf-8")
+    (seed / "cache" / "sitemap_lastmod.json").write_text("{}\n", encoding="utf-8")
+    manifest = dict(helper._load_seed_manifest(), seed_version="upgrade-checkpoint-v1")
+    monkeypatch.setattr(helper, "seed_root", lambda: seed)
+    monkeypatch.setattr(helper, "_load_seed_manifest", lambda: manifest)
+    helper.ensure_workspace()
+    return manifest, seed
+
+
+def test_publish_then_seed_upgrade_keeps_checkpoints_and_real_later_updates(tmp_path, monkeypatch):
+    helper, _remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    manifest, _seed = _install_older_seed_fixture(helper, tmp_path, monkeypatch)
+    urls = ["https://eventstructure.com/published-one", "https://eventstructure.com/published-two"]
+    sitemap = dict.fromkeys(urls, "2026-09-07")
+    monkeypatch.setattr(helper, "_load_snapshot_modules", lambda: _fake_incremental_modules(helper, sitemap))
+    imported = []
+    monkeypatch.setattr(helper, "_import_url", lambda url, modules: (imported.append(url), _import_result(url))[1])
+    batch_id = helper.start_incremental_sync()["batch_id"]
+    for row in helper._record_rows(batch_id=batch_id):
+        helper.accept_record(row["id"])
+    helper.apply_accepted_records(batch_id)
+    with helper.connect_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM batches").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM records").fetchone()[0] == 0
+    before = {name: (helper.workspace_root() / name).read_bytes() for name in helper.TARGET_FILES}
+    checkpoint_before = helper._workspace_sitemap_cache_path().read_bytes()
+    cache_extra = helper.workspace_root() / ".cache" / "retained-extraction.pkl"
+    cache_extra.write_bytes(b"keep cached extraction")
+    receipt = helper._publication_root(999) / "receipt.json"
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text('{"status":"prepared","commit_sha":"preserve-unconfirmed-receipt"}', encoding="utf-8")
+    obsolete_module = helper.snapshot_root() / "scraper" / "obsolete_snapshot_module.py"
+    obsolete_module.write_text("old snapshot code\n", encoding="utf-8")
+
+    manifest["seed_version"] = "upgrade-checkpoint-v2"
+    assert helper.ensure_workspace() == "ready"
+
+    assert not obsolete_module.exists()
+    assert (helper.snapshot_root() / "scraper" / "__init__.py").read_bytes() == (helper.seed_snapshot_root() / "scraper" / "__init__.py").read_bytes()
+    assert {name: (helper.workspace_root() / name).read_bytes() for name in helper.TARGET_FILES} == before
+    assert helper._workspace_sitemap_cache_path().read_bytes() == checkpoint_before
+    assert cache_extra.read_bytes() == b"keep cached extraction"
+    assert "preserve-unconfirmed-receipt" in receipt.read_text()
+    imported.clear()
+    assert helper.start_incremental_sync()["urls_processed"] == 0
+    assert imported == []
+
+    sitemap[urls[0]] = "2026-09-08"
+
+    def changed_import(url, modules):
+        imported.append(url)
+        result = _import_result(url)
+        result["proposed"]["description_en"] = "A real artwork description change after publication."
+        return result
+
+    monkeypatch.setattr(helper, "_import_url", changed_import)
+    changed = helper.start_incremental_sync()
+    assert changed["urls_processed"] == 1
+    assert imported == [urls[0]]
+    assert helper._record_rows(batch_id=changed["batch_id"])[0]["is_update"] == 1
+
+
+def test_offline_seed_upgrade_preserves_published_baseline_but_explicit_reset_clears_it(tmp_path, monkeypatch):
+    helper, _remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    manifest, seed = _install_older_seed_fixture(helper, tmp_path, monkeypatch)
+    batch_id = helper._create_batch("manual")
+    _review_fixture(helper, batch_id)
+    published_sha = helper.apply_accepted_records(batch_id)["applied_commit_sha"]
+    published_files = {name: (helper.workspace_root() / name).read_bytes() for name in helper.TARGET_FILES}
+    baseline_time = helper._workspace_manifest_or_empty()["baseline_updated_at"]
+    checkpoint = {"https://eventstructure.com/imported-work": "2026-09-07"}
+    helper._write_json_atomic(helper._workspace_sitemap_cache_path(), checkpoint)
+    receipt = helper._publication_root(999) / "receipt.json"
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text('{"status":"prepared"}', encoding="utf-8")
+    manifest["seed_version"] = "upgrade-offline-v2"
+    monkeypatch.setattr(helper, "_clone_remote_baseline_repo", lambda: (_ for _ in ()).throw(RuntimeError("Offline fixture")))
+
+    response = helper.bootstrap_workspace()
+
+    assert response["status"] == "baseline_cached_fallback"
+    assert response["settings"]["baseline_status"] == helper.BASELINE_STATUS_CACHED_FALLBACK
+    assert response["settings"]["baseline_commit"] == published_sha
+    assert response["settings"]["baseline_updated_at"] == baseline_time
+    assert response["settings"]["baseline_error"] == "Offline fixture"
+    assert {name: (helper.workspace_root() / name).read_bytes() for name in helper.TARGET_FILES} == published_files
+    assert helper._load_workspace_sitemap_cache() == checkpoint
+    assert receipt.exists()
+
+    pending_batch = helper._create_batch("manual")
+    _review_fixture(helper, pending_batch)
+    reset = helper.reset_workspace()
+    assert reset["status"] == "reset_seed_fallback"
+    assert reset["settings"]["baseline_commit"] == ""
+    assert {name: (helper.workspace_root() / name).read_bytes() for name in helper.TARGET_FILES} == {
+        name: (seed / name).read_bytes() for name in helper.TARGET_FILES
+    }
+    assert helper._load_workspace_sitemap_cache() == {}
+    assert not receipt.exists()
+    with helper.connect_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM records").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM batches").fetchone()[0] == 0
+
+
+def _matching_import_result(baseline):
+    result = _import_result(baseline["url"])
+    result["proposed"] = dict(baseline, source="new-extractor-label")
+    return result
+
+
+def test_incremental_unchanged_effective_fields_are_checkpointed_without_review(tmp_path, monkeypatch):
+    helper, _remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    baseline = helper._load_workspace_works()[0]
+    url = baseline["url"]
+    before = {name: (helper.workspace_root() / name).read_bytes() for name in helper.TARGET_FILES}
+    sitemap = {url: "2026-09-07"}
+    monkeypatch.setattr(helper, "_load_snapshot_modules", lambda: _fake_incremental_modules(helper, sitemap))
+    result = _matching_import_result(baseline)
+    # Empty extraction values preserve richer baseline fields in the actual merge.
+    result["proposed"]["materials"] = ""
+    monkeypatch.setattr(helper, "_import_url", lambda url, modules: result)
+
+    response = helper.start_incremental_sync()
+
+    assert response["urls_processed"] == response["unchanged_count"] == 1
+    detail = helper.get_batch_detail(response["batch_id"])
+    assert detail["records"] == []
+    assert detail["batch"]["status"] == helper.BATCH_COMPLETED
+    assert detail["batch"]["total_records"] == 0
+    assert helper._load_workspace_sitemap_cache()[url] == "2026-09-07"
+    assert {name: (helper.workspace_root() / name).read_bytes() for name in helper.TARGET_FILES} == before
+    assert helper.start_incremental_sync()["urls_processed"] == 0
+
+
+def test_incremental_mixed_results_checkpoint_only_successful_noops(tmp_path, monkeypatch):
+    helper, _remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    original = helper._load_workspace_works()[0]
+    names = ["unchanged", "changed", "unapproved", "failed"]
+    baselines = {name: dict(original, title=name, url=f"https://eventstructure.com/{name}") for name in names}
+    helper._write_workspace_works(list(baselines.values()))
+    sitemap = {work["url"]: "2026-09-07" for work in baselines.values()}
+    monkeypatch.setattr(helper, "_load_snapshot_modules", lambda: _fake_incremental_modules(helper, sitemap))
+
+    def import_result(url, modules):
+        name = url.rsplit("/", 1)[-1]
+        if name == "failed":
+            raise RuntimeError("Could not fetch artwork")
+        result = _matching_import_result(baselines[name])
+        if name == "changed":
+            result["proposed"]["materials"] = "paper"
+        if name == "unapproved":
+            result["should_apply"] = False
+            result["rejection_reason"] = "Requires manual review"
+        return result
+
+    monkeypatch.setattr(helper, "_import_url", import_result)
+
+    response = helper.start_incremental_sync()
+
+    assert response["urls_processed"] == 4
+    assert response["unchanged_count"] == 1
+    detail = helper.get_batch_detail(response["batch_id"])
+    assert detail["batch"]["total_records"] == 3
+    assert {record["url"].rsplit("/", 1)[-1]: record["status"] for record in detail["records"]} == {
+        "changed": helper.RECORD_READY_FOR_REVIEW, "unapproved": helper.RECORD_NEEDS_REVIEW, "failed": helper.RECORD_FAILED,
+    }
+    cache = helper._load_workspace_sitemap_cache()
+    assert cache[baselines["unchanged"]["url"]] == "2026-09-07"
+    assert all(baselines[name]["url"] not in cache for name in ["changed", "unapproved", "failed"])
+
+
+@pytest.mark.parametrize("operation", ["manual", "retry"])
+def test_explicit_imports_keep_unchanged_artwork_available_for_review(tmp_path, monkeypatch, operation):
+    helper, _remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    baseline = helper._load_workspace_works()[0]
+    monkeypatch.setattr(helper, "_load_snapshot_modules", lambda: {})
+    monkeypatch.setattr(helper, "_import_url", lambda url, modules: _matching_import_result(baseline))
+    if operation == "manual":
+        response = helper.submit_manual_url(baseline["url"])
+        record = helper.get_batch_detail(response["batch_id"])["records"][0]
+    else:
+        batch_id = helper._create_batch("manual")
+        record_id = _review_fixture(helper, batch_id, url=baseline["url"], status=helper.RECORD_FAILED)
+        helper.retry_record(record_id)
+        record = helper.get_batch_detail(batch_id)["records"][0]
+        assert record["id"] == record_id
+    assert record["status"] == helper.RECORD_READY_FOR_REVIEW
+    assert record["url"] == baseline["url"]
+
+
+def test_fatal_validation_is_never_suppressed_as_an_unchanged_artwork(tmp_path, monkeypatch):
+    helper, _remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    baseline = helper._load_workspace_works()[0]
+    sitemap = {baseline["url"]: "2026-09-07", "https://eventstructure.com/not-started": "2026-09-07"}
+    monkeypatch.setattr(helper, "_load_snapshot_modules", lambda: _fake_incremental_modules(helper, sitemap))
+    seen = []
+
+    def fatal_result(url, modules):
+        seen.append(url)
+        result = _matching_import_result(baseline)
+        result["ai_error_state"] = helper.OPENAI_AUTHENTICATION_FAILED
+        return result
+
+    monkeypatch.setattr(helper, "_import_url", fatal_result)
+
+    with pytest.raises(helper.OpenAIServiceError, match="OPENAI_AUTHENTICATION_FAILED"):
+        helper.start_incremental_sync()
+
+    assert seen == [baseline["url"]]
+    rows = helper._record_rows()
+    assert len(rows) == 1
+    assert rows[0]["status"] == helper.RECORD_FAILED
+    assert helper.get_batch_detail(rows[0]["batch_id"])["batch"]["total_records"] == 1
+    assert baseline["url"] not in helper._load_workspace_sitemap_cache()

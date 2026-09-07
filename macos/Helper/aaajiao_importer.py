@@ -15,6 +15,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -102,6 +103,7 @@ TERMINAL_BATCH_STATUSES = (BATCH_COMPLETED, BATCH_FAILED)
 BASELINE_STATUS_MISSING = "missing"
 BASELINE_STATUS_SYNCED = "synced"
 BASELINE_STATUS_SEED_FALLBACK = "seed_fallback"
+BASELINE_STATUS_CACHED_FALLBACK = "cached_fallback"
 BASELINE_STATUS_SYNC_SKIPPED_PENDING_REVIEW = "sync_skipped_pending_review"
 BASELINE_MANIFEST_FIELDS = (
     "baseline_status",
@@ -564,6 +566,32 @@ def _copy_seed_payload(*, overwrite: bool = False) -> None:
             shutil.copy2(seed_root() / name, target)
 
 
+def _refresh_scraper_snapshot() -> None:
+    """Upgrade bundled code without resetting published data or sync checkpoints."""
+    target = snapshot_root() / "scraper"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".snapshot-refresh-", dir=workspace_root()) as temporary:
+        replacement = Path(temporary) / "scraper"
+        previous = Path(temporary) / "previous"
+        shutil.copytree(seed_snapshot_root() / "scraper", replacement)
+        if target.exists():
+            target.replace(previous)
+        try:
+            replacement.replace(target)
+        except BaseException:
+            if previous.exists():
+                previous.replace(target)
+            raise
+
+
+def _workspace_targets_are_valid() -> bool:
+    try:
+        _validate_works_file(workspace_root() / REPO_WORKS)
+        return bool((workspace_root() / REPO_PORTFOLIO).read_text(encoding="utf-8").strip())
+    except (OSError, RuntimeError):
+        return False
+
+
 def _workspace_has_local_activity() -> bool:
     # sqlite3.connect() as a context manager only commits/rolls back the transaction; it
     # never closes the connection, so wrap it in closing() to avoid leaking the handle.
@@ -650,7 +678,7 @@ def ensure_workspace() -> str:
         workspace_seed_version = bundle_seed_version
     workspace_status = "ready" if workspace_seed_version == bundle_seed_version else "seed_version_mismatch"
     if workspace_status == "seed_version_mismatch" and not _workspace_has_local_activity():
-        _copy_seed_payload(overwrite=True)
+        _refresh_scraper_snapshot()
         workspace_seed_version = bundle_seed_version
         workspace_status = "ready"
     _write_workspace_manifest(
@@ -733,15 +761,24 @@ def _synchronize_workspace_baseline(
                 update_bootstrap_time=update_bootstrap_time,
             )
             raise RuntimeError(error_message) from exc
-        _restore_workspace_targets_from_seed()
-        result = {
-            "baseline_status": BASELINE_STATUS_SEED_FALLBACK,
-            "baseline_source_url": baseline_remote_url(),
-            "baseline_branch": baseline_remote_branch(),
-            "baseline_commit": "",
-            "baseline_updated_at": now_iso(),
-            "baseline_error": error_message,
-        }
+        if _workspace_targets_are_valid() and workspace_manifest.get("baseline_commit"):
+            result = _baseline_manifest_state(workspace_manifest, {
+                "baseline_status": BASELINE_STATUS_CACHED_FALLBACK,
+                "baseline_error": error_message,
+            })
+        else:
+            # Initialization/reset already seed missing files. A failed network
+            # refresh must not replace valid workspace outputs during an upgrade.
+            if not _workspace_targets_are_valid():
+                _restore_workspace_targets_from_seed()
+            result = {
+                "baseline_status": BASELINE_STATUS_SEED_FALLBACK,
+                "baseline_source_url": baseline_remote_url(),
+                "baseline_branch": baseline_remote_branch(),
+                "baseline_commit": "",
+                "baseline_updated_at": now_iso(),
+                "baseline_error": error_message,
+            }
     _write_workspace_manifest(
         seed_manifest,
         workspace_status=workspace_status,
@@ -2166,6 +2203,8 @@ def bootstrap_workspace() -> Dict[str, Any]:
         status = "baseline_synced"
     elif baseline_result["baseline_status"] == BASELINE_STATUS_SYNC_SKIPPED_PENDING_REVIEW:
         status = "baseline_sync_skipped_pending_review"
+    elif baseline_result["baseline_status"] == BASELINE_STATUS_CACHED_FALLBACK:
+        status = "baseline_cached_fallback"
     else:
         status = "baseline_seed_fallback"
     return {"settings": _settings_payload(), "status": status}
@@ -2215,6 +2254,24 @@ def _report_progress(completed: int, total: int, url: str) -> None:
         pass
 
 
+def _is_unchanged_incremental_result(result: Dict[str, Any], baseline: Optional[Dict[str, Any]]) -> bool:
+    if result.get("should_apply") is not True or _fatal_openai_error(result) or baseline is None:
+        return False
+    proposed = result.get("proposed")
+    if not isinstance(proposed, dict) or proposed.get("url") != baseline.get("url"):
+        return False
+    merged = _merge_existing_work_with_proposed(baseline, proposed)
+    return _review_fields(merged) == _review_fields(baseline)
+
+
+def _checkpoint_unchanged_incremental_url(url: str, discovered_sitemap: Dict[str, str]) -> None:
+    if url not in discovered_sitemap:
+        return  # The homepage fallback has no trustworthy sitemap timestamp.
+    cache = _load_workspace_sitemap_cache()
+    cache[url] = discovered_sitemap[url]
+    _write_json_atomic(_workspace_sitemap_cache_path(), cache)
+
+
 def start_incremental_sync() -> Dict[str, Any]:
     ensure_workspace()
     _preflight_openai_access()
@@ -2253,13 +2310,15 @@ def start_incremental_sync() -> Dict[str, Any]:
         if not urls:
             with connect_db() as conn:
                 _touch_batch(conn, batch_id, status=BATCH_COMPLETED, total_records=0)
-            return {"batch_id": batch_id, "urls_processed": 0}
+            return {"batch_id": batch_id, "urls_processed": 0, "unchanged_count": 0}
 
         # Reuse one connection across the whole insert loop instead of letting each
         # _insert_record() open (and self-heal via ensure_workspace()) its own; that cost
         # was previously paid once per URL. Commit after each record so a crash mid-batch
         # still keeps the records already processed, matching the prior per-record durability.
         total = len(urls)
+        inserted_count = 0
+        unchanged_count = 0
         _report_progress(0, total, urls[0])
         with connect_db() as conn:
             for index, url in enumerate(urls, start=1):
@@ -2267,6 +2326,14 @@ def start_incremental_sync() -> Dict[str, Any]:
                 try:
                     result = _import_url(url, modules)
                     fatal_error = _fatal_openai_error(result)
+                    if _is_unchanged_incremental_result(result, baseline_by_url.get(url)):
+                        # These exact effective artwork fields are already in the
+                        # baseline. Confirm only this successfully checked URL;
+                        # genuine changes still require review and publication.
+                        _checkpoint_unchanged_incremental_url(url, discovered_sitemap)
+                        unchanged_count += 1
+                        _report_progress(index, total, url)
+                        continue
                     status = RECORD_FAILED if fatal_error else (RECORD_READY_FOR_REVIEW if result["should_apply"] else RECORD_NEEDS_REVIEW)
                     _insert_record(
                         batch_id=batch_id,
@@ -2294,20 +2361,24 @@ def start_incremental_sync() -> Dict[str, Any]:
                         conn=conn,
                         baseline_record_json=json.dumps(baseline_by_url.get(url), ensure_ascii=False),
                     )
+                inserted_count += 1
                 _touch_batch(
                     conn, batch_id, status=BATCH_FAILED if fatal_error else BATCH_REVIEWING,
-                    total_records=index, last_error=str(fatal_error) if fatal_error else "",
+                    total_records=inserted_count, last_error=str(fatal_error) if fatal_error else "",
                 )
                 conn.commit()
                 _report_progress(index, total, url)
                 if fatal_error:
                     raise fatal_error
-            _refresh_batch_status(conn, batch_id)
+            if inserted_count:
+                _refresh_batch_status(conn, batch_id)
+            else:
+                _touch_batch(conn, batch_id, status=BATCH_COMPLETED, total_records=0)
     except Exception as exc:
         with connect_db() as conn:
             _touch_batch(conn, batch_id, status=BATCH_FAILED, last_error=_fatal_error_message(exc))
         raise
-    return {"batch_id": batch_id, "urls_processed": len(urls)}
+    return {"batch_id": batch_id, "urls_processed": len(urls), "unchanged_count": unchanged_count}
 
 
 def submit_manual_url(url: str) -> Dict[str, Any]:

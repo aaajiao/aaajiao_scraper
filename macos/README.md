@@ -49,6 +49,19 @@ same queue. Incremental discovery checkpoints URLs only after publication, so ca
 cannot hide URLs that had not yet been processed; unresolved queue entries are not duplicated
 by subsequent syncs.
 
+App upgrades refresh the bundled scraper code without replacing valid workspace data,
+incremental sitemap checkpoints, or publication receipts. Those are durable user state;
+only an explicit Reset starts a fresh workspace. If GitHub cannot be reached, an existing
+valid published baseline is kept and reported as `cached_fallback`, with its commit and
+timestamp intact, rather than being replaced with an older bundled snapshot.
+
+Incremental checks also compare the effective merged artwork fields against the published
+baseline. A validated result that would change no artwork fields is not queued again; its
+observed sitemap version is acknowledged directly. A changed sitemap timestamp still causes
+inspection, and real field changes, failed imports, and unvalidated results remain for
+review. Manual URL imports and retries remain explicit inspection paths, even when their
+artwork fields have not changed.
+
 ## Current flow
 
 1. Bootstrap a dedicated workspace from bundled seed data, then refresh the data baseline from GitHub.

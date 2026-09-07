@@ -88,6 +88,14 @@ Expected result:
   or leave an empty batch that blocks baseline refresh
 - A confirmed push followed by local cleanup failure reports its SHA and a warning,
   with recovery from the saved publish receipt
+- After publishing clears the queue, changing the bundle seed version preserves the
+  published files, sitemap checkpoints, and receipts; an identical sitemap returns zero
+  new results. A genuinely changed timestamp and changed artwork fields still enter review.
+- An offline upgrade keeps the last valid published dataset and commit, reports a cached
+  fallback warning, and never silently rolls back to older seed data.
+- Validated incremental results with no effective artwork changes do not re-enter review;
+  only their observed source version is checkpointed. Changed/unvalidated/failed results
+  are not checkpointed before a review decision; manual import and retry remain inspectable.
 - Field editing changes only review data and resets acceptance; shortened/cleared fields
   and removed images match both the Changes view and the published output
 

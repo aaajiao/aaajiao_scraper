@@ -3,6 +3,54 @@ import Foundation
 @MainActor
 func appModelTests() -> [AsyncAppTest] {
     [
+        ("offline bootstrap reports the preserved published baseline and keeps the warning on reload", {
+            let helper = ModelTestHelper(detail: modelBatch([]))
+            helper.responseSettings = cachedBaselineSettings(error: nil)
+            helper.bootstrapStatus = "baseline_cached_fallback"
+            let model = makeTestModel(helper)
+            model.bootstrapAndRefresh()
+            try await waitForModel { !model.isBusy }
+            try expectEqual(model.statusTone, .warning, "Using a local published copy is not a successful GitHub connection")
+            try expect(model.hasBaselineWarning, "The cached status must warn even when error detail is absent")
+            try expect(model.statusMessage.contains("published data saved on this Mac"), "Explain which data remains in use")
+            try expect(!model.statusMessage.contains("seed"), "A valid saved baseline must not be described as bundled data")
+            try expectEqual(model.settings.baseline_commit, "published-169-commit", "Keep the helper's confirmed published commit")
+            try expectEqual(model.settings.baseline_updated_at, "2026-09-07T11:52:06Z", "An unsuccessful network refresh cannot advance the known publication time")
+            model.refreshFromUI()
+            try await waitForModel { !model.isBusy }
+            try expectEqual(model.statusTone, .warning, "Reloading an empty queue must not switch to a generic Ready status")
+            try expect(model.statusMessage.contains("GitHub is currently unavailable"), "The connection limitation remains clear after reload")
+        }),
+        ("offline bootstrap keeps the existing review queue available", {
+            let helper = ModelTestHelper(detail: modelBatch(["needs_review", "accepted"]))
+            helper.responseSettings = cachedBaselineSettings()
+            helper.bootstrapStatus = "baseline_cached_fallback"
+            helper.listedBatches = [helper.detail.batch]
+            let model = makeTestModel(helper)
+            model.bootstrapAndRefresh()
+            try await waitForModel { !model.isBusy }
+            try expectEqual(model.visibleCurrentRecords.map(\.id), [1, 2], "Offline baseline status cannot drop pending or accepted records")
+            try expectEqual(model.selectedRecordID, 1, "The saved review remains immediately accessible")
+            try expect(model.canAcceptSelectedRecord, "A cached baseline does not block local review")
+            model.refreshFromUI()
+            try await waitForModel { !model.isBusy }
+            try expectEqual(model.statusTone, .warning, "Reloading an existing run preserves the offline warning")
+            try expectEqual(model.currentBatchID, 7, "Reloading keeps the same review batch")
+        }),
+        ("review reload failure does not mislabel an offline cached baseline as ready", {
+            let helper = ModelTestHelper(detail: modelBatch([]))
+            helper.responseSettings = cachedBaselineSettings()
+            helper.bootstrapStatus = "baseline_cached_fallback"
+            helper.listError = AppTestFailure(message: "Review database temporarily unavailable")
+            let model = makeTestModel(helper)
+            model.bootstrapAndRefresh()
+            try await waitForModel { !model.isBusy }
+            try expectEqual(model.statusTone, .warning, "Both limitations remain warnings about availability")
+            try expect(model.statusMessage.contains("published data saved on this Mac"), "Keep the valid baseline description when review loading fails")
+            try expect(model.statusMessage.contains("Loading review results failed"), "Report the independent queue-loading problem")
+            try expect(!model.statusMessage.contains("Workspace ready"), "A failed read must not imply everything is ready")
+            try expectEqual(model.settings.baseline_commit, "published-169-commit", "A read failure cannot replace the published provenance")
+        }),
         ("import entry remains available before an API key is configured", {
             let helper = ModelTestHelper(detail: modelBatch([]))
             let preferences = ModelTestPreferences()
@@ -417,7 +465,7 @@ func appModelTests() -> [AsyncAppTest] {
             model.startSync()
             try await waitForModel { !model.isBusy }
             try expectEqual(model.statusTone, .info, "An empty sync is informational")
-            try expect(model.statusMessage.contains("No new URLs"), "Explain why no review rows were added")
+            try expect(model.statusMessage.contains("No artwork changes to review"), "Explain the absence of reviewable changes without claiming discovery returned no URLs")
             try expect(model.hasCompletedEmptySiteCheck, "Expose a completed empty check independently of informational status tone")
             model.refreshFromUI()
             try await waitForModel { !model.isBusy }
@@ -425,6 +473,17 @@ func appModelTests() -> [AsyncAppTest] {
             model.checkOpenAIKey()
             try await waitForModel { !model.isBusy }
             try expect(model.hasCompletedEmptySiteCheck, "Checking settings does not erase the last site-check outcome")
+        }),
+        ("a processed unchanged URL produces a completed check without claiming no URLs were found", {
+            let helper = ModelTestHelper(detail: modelBatch([], mode: "incremental"))
+            helper.syncProcessedCount = 1
+            let model = makeTestModel(helper)
+            model.startSync()
+            try await waitForModel { !model.isBusy }
+            try expect(model.hasCompletedEmptySiteCheck, "A check that processed an unchanged page still completes with an empty review queue")
+            try expectEqual(model.currentBatchDetail?.total_records, 0, "Unchanged pages do not create review rows")
+            try expectEqual(model.statusTone, .info, "No reviewable change is informational")
+            try expectEqual(model.statusMessage, "No artwork changes to review. Use Import URL to inspect a specific artwork.", "Describe the review outcome, not the number of discovered URLs")
         }),
         ("a failed new preflight cannot reuse an older empty site-check outcome", {
             let helper = ModelTestHelper(detail: modelBatch([], mode: "incremental"))
@@ -758,9 +817,20 @@ private func modelPreview(willPush: Bool) -> ApplyPreview {
                  error_message: willPush ? "" : "Current branch does not match baseline branch")
 }
 
+private func cachedBaselineSettings(error: String? = "GitHub could not be reached") -> AppSettings {
+    AppSettings(workspace_path: "/offline-test/workspace", repo_path: "/offline-test/repo", has_openai_key: true,
+                openai_model: "gpt-4.1", openai_model_source: "preset", workspace_status: "ready",
+                workspace_seed_version: nil, bundle_seed_version: nil, baseline_status: "cached_fallback",
+                baseline_source_url: "https://github.com/aaajiao/aaajiao_scraper.git", baseline_branch: "main",
+                baseline_commit: "published-169-commit", baseline_updated_at: "2026-09-07T11:52:06Z", baseline_error: error)
+}
+
 @MainActor
 private final class ModelTestHelper: ImporterHelper {
+    var responseSettings = AppSettings.empty
+    var bootstrapStatus = "baseline_synced"
     var holdSync = false
+    var syncProcessedCount: Int?
     var syncContinuation: CheckedContinuation<StartSyncResponse, Error>?
     var syncProgressHandler: (@Sendable (HelperProgress) -> Void)?
     var detail: BatchDetailResponse
@@ -808,7 +878,7 @@ private final class ModelTestHelper: ImporterHelper {
     }
 
     func bootstrapWorkspace(openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> BootstrapResponse {
-        BootstrapResponse(settings: .empty, status: "baseline_synced")
+        BootstrapResponse(settings: responseSettings, status: bootstrapStatus)
     }
     func listPendingRecords(openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> PendingRecordsResponse {
         listCalls += 1
@@ -816,7 +886,7 @@ private final class ModelTestHelper: ImporterHelper {
         if holdList {
             return try await withCheckedThrowingContinuation { listContinuation = $0 }
         }
-        return PendingRecordsResponse(settings: .empty, batches: listedBatches, pending_records: [])
+        return PendingRecordsResponse(settings: responseSettings, batches: listedBatches, pending_records: [])
     }
     func resetWorkspace(openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> BootstrapResponse {
         throw AppTestFailure(message: "Unexpected workspace reset")
@@ -831,10 +901,10 @@ private final class ModelTestHelper: ImporterHelper {
         if holdSync {
             return try await withCheckedThrowingContinuation { syncContinuation = $0 }
         }
-        return StartSyncResponse(batch_id: detail.batch.id, urls_processed: detail.total_records)
+        return StartSyncResponse(batch_id: detail.batch.id, urls_processed: syncProcessedCount ?? detail.total_records)
     }
     func completeSync() {
-        syncContinuation?.resume(returning: StartSyncResponse(batch_id: detail.batch.id, urls_processed: detail.total_records))
+        syncContinuation?.resume(returning: StartSyncResponse(batch_id: detail.batch.id, urls_processed: syncProcessedCount ?? detail.total_records))
         syncContinuation = nil
         syncProgressHandler = nil
     }

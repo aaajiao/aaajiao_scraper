@@ -362,14 +362,14 @@ private struct ReviewEmptyView: View {
     private var title: String {
         if isImporting { return "Your results will appear here" }
         if hasHiddenRecords { return model.filteredCurrentRecords.isEmpty ? "No matching results" : "Choose an artwork to review" }
-        if hasNoUpdates { return "No new website updates found" }
+        if hasNoUpdates { return "No artwork changes to review" }
         if let publication = model.lastPublication { return publication.title }
         return "Bring your artwork archive up to date"
     }
     private var description: String {
         if isImporting { return "You can review each artwork after the import finishes." }
         if hasHiddenRecords { return model.reviewGuidance }
-        if hasNoUpdates { return "This check found no new or changed artwork pages to import. You can still import a specific URL." }
+        if hasNoUpdates { return "No new or changed artwork data needs review. You can still import a specific URL." }
         if let publication = model.lastPublication { return "\(publication.changesDescription). \(publication.nextStep)" }
         return "Import from eventstructure.com, review locally, and publish when you are ready."
     }
@@ -1052,11 +1052,13 @@ private func baselineLabel(_ status: String?) -> String {
     switch status {
     case "synced": return "GitHub baseline"
     case "seed_fallback": return "Bundled baseline"
+    case "cached_fallback": return "Saved published data"
     case "sync_skipped_pending_review": return "Review baseline protected"
     default: return "Baseline unavailable"
     }
 }
 private func baselineDetail(_ settings: AppSettings) -> String {
+    if settings.baseline_status == "cached_fallback" { return "GitHub is unavailable. Using the published data saved on this Mac." }
     if let error = settings.baseline_error, !error.isEmpty { return error }
     if settings.baseline_status == "sync_skipped_pending_review" { return "Finish or discard review results to refresh the baseline." }
     if settings.baseline_status == "seed_fallback" { return "Using bundled data. Refresh the baseline when GitHub is available." }
