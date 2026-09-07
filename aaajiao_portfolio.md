@@ -111,6 +111,17 @@ Field gives signals a spatial form; Worldview puts judgments into words. Weekly 
 Fissure: changes happen in the loop. Whether they improve judgment has to be answered by the records that follow.
 
 ---
+### [poly cam work](https://eventstructure.com/poly-cam-work) / poly cam work
+
+**Year**: 2026
+
+**Type**: Website
+
+**中文描述**: 《poly cam work》将三维扫描、点云与富媒体标注组织为空间化的档案。工作室和工厂的物质环境被转译为可导航的数字场景，影像、文字和研究材料则通过标注与具体位置发生关联。阅读不再只沿着一篇文字或一条时间线展开，而是在空间中的移动、靠近与切换中形成。作品关心的是，当劳动现场进入数字记录，哪些关系能够被呈现，哪些经验仍然无法被扫描和分类完整容纳。点云、表面和附着其上的资料提供了彼此不完全重合的描述，使劳动、物质生产和全球贸易之间的关联保持可追踪，也使记录与现实之间的距离保持可见。
+
+**Description**: poly cam work organises 3D scans, point clouds, and rich-media annotations into a spatial archive. The material environments of a studio and factory become navigable digital scenes, while video, text, and research materials are connected to particular locations through annotations. Reading develops through movement, proximity, and shifts within space, as well as through text or chronology. The work considers which relations become visible when a site of labour enters a digital record, and which experiences remain beyond the reach of scanning and classification. Point clouds, surfaces, and attached materials offer descriptions that do not fully coincide. They make connections between labour, material production, and global trade traceable while keeping the distance between a record and lived reality perceptible.
+
+---
 ## 2025
 
 ### [Absurd Reality Check](https://eventstructure.com/Absurd-Reality-Check) / 荒诞现实检测
