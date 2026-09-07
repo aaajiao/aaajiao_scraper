@@ -84,6 +84,7 @@ before packaging.
 - `rejectRecord`
 - `retryRecord`
 - `updateRecord`
+- `validateOpenAIKey`
 - `getApplyPreview`
 - `applyAcceptedRecords`
 
@@ -94,6 +95,22 @@ messages distinguish successful, review-required, and failed results, and each p
 request runs a fresh preflight so a repaired Git configuration can be retried immediately.
 Quitting during an import cancels it and waits for termination; quitting during publication
 waits for the confirmed result before closing the app.
+
+OpenAI access is checked before a new import creates a batch or fetches artwork pages.
+An invalid key stops the operation immediately and opens a clear recovery path through
+Settings. The Settings **Check API Key** button checks the draft key without saving it or
+creating a review run. A saved key is shown as saved, not as verified. The check uses the
+official [list-models endpoint](https://developers.openai.com/api/reference/python/resources/models/methods/list);
+success confirms account access, while model-specific permissions are checked by the actual
+validation request. Restricted keys without model-list permission are marked unverified and
+can still attempt validation. Connection/service failures stop automatic imports before
+scraping and are distinguished from invalid credentials.
+
+If authentication fails after the initial check, the current extraction is kept as a failed,
+retryable record and the remaining batch stops. Old review records containing authentication
+errors can also be retried in place. Credential errors shown in the app and error history
+omit API-key fragments. OpenAI requests reuse a session and use a five-second connection
+timeout separately from the 120-second validation response timeout.
 
 ## Review interface
 

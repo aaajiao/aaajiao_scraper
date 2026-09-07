@@ -41,6 +41,16 @@ WORKSPACE_MANIFEST_NAME = "workspace_manifest.json"
 MANIFEST_VERSION = 1
 AI_VALIDATION_NAME = "aaajiao_artwork_validation"
 AI_VALIDATION_TIMEOUT = 120
+AI_VALIDATION_CONNECT_TIMEOUT = 5
+OPENAI_AUTHENTICATION_FAILED = "openai_authentication_failed"
+OPENAI_PERMISSION_DENIED = "openai_permission_denied"
+OPENAI_PREFLIGHT_FAILED = "openai_preflight_failed"
+OPENAI_FATAL_ERRORS = {
+    OPENAI_AUTHENTICATION_FAILED: "OpenAI authentication failed. Check the API key in Settings, then try again.",
+    OPENAI_PERMISSION_DENIED: "OpenAI permission denied. Check project and model access in Settings, then retry the failed record.",
+    OPENAI_PREFLIGHT_FAILED: "OpenAI access could not be verified. Check the connection and try again before importing.",
+}
+_OPENAI_HTTP_SESSION: Optional[requests.Session] = None
 GIT_LOCAL_TIMEOUT_SECONDS = 30
 GIT_NETWORK_TIMEOUT_SECONDS = 120
 PUBLISH_LOCK_NAME = "publish.lock"
@@ -123,6 +133,47 @@ EDITABLE_FIELDS = (
     "description_en", "description_cn", "video_link", "images", "high_res_images",
 )
 IMAGE_FIELDS = {"images", "high_res_images"}
+
+
+class OpenAIServiceError(RuntimeError):
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(f"[{code.upper()}] {OPENAI_FATAL_ERRORS[code]}")
+
+
+def _error_code_from_text(message: Optional[str]) -> str:
+    lowered = (message or "").lower()
+    if any(marker in lowered for marker in (
+        "incorrect api key provided", "invalid_api_key", "invalid openai api key", OPENAI_AUTHENTICATION_FAILED,
+    )):
+        return OPENAI_AUTHENTICATION_FAILED
+    if OPENAI_PERMISSION_DENIED in lowered:
+        return OPENAI_PERMISSION_DENIED
+    if OPENAI_PREFLIGHT_FAILED in lowered:
+        return OPENAI_PREFLIGHT_FAILED
+    return ""
+
+
+def _safe_error_message(message: Optional[str]) -> str:
+    value = message or ""
+    code = _error_code_from_text(value)
+    if code:
+        # Discard the full authentication diagnostic: server messages may echo a
+        # partially masked credential, which is unsuitable for UI/history output.
+        return str(OpenAIServiceError(code))
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if api_key:
+        value = value.replace(api_key, "[redacted API key]")
+    return re.sub(r"\bsk-[A-Za-z0-9_*.-]{4,}", "[redacted API key]", value)
+
+
+def _safe_error_history(history: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    return [{"at": item.get("at", ""), "message": _safe_error_message(item.get("message"))} for item in history]
+
+
+def _fatal_openai_error(result: Dict[str, Any]) -> Optional[OpenAIServiceError]:
+    code = result.get("ai_error_state", "")
+    return OpenAIServiceError(code) if code in OPENAI_FATAL_ERRORS else None
 
 
 def _vacuum_db_if_needed() -> None:
@@ -750,6 +801,7 @@ def init_db() -> None:
     _ensure_column(conn, "records", "error_history_json", "TEXT NOT NULL DEFAULT '[]'")
     _ensure_column(conn, "records", "retry_count", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "records", "edited_fields_json", "TEXT NOT NULL DEFAULT '{}'")
+    _ensure_column(conn, "records", "error_code", "TEXT NOT NULL DEFAULT ''")
     conn.commit()
     conn.close()
 
@@ -1255,8 +1307,10 @@ def _insert_record(
     error: Optional[str],
     conn: Optional[sqlite3.Connection] = None,
     baseline_record_json: Optional[str] = None,
+    error_code: str = "",
 ) -> None:
     now = now_iso()
+    error = _safe_error_message(error) if error else None
     if baseline_record_json is None:
         baseline_record = next((work for work in _load_workspace_works() if work.get("url") == url), None)
         baseline_record_json = json.dumps(baseline_record, ensure_ascii=False)
@@ -1274,6 +1328,7 @@ def _insert_record(
         now,
         baseline_record_json,
         json.dumps([{"at": now, "message": error}] if error else [], ensure_ascii=False),
+        error_code,
     )
     statement = """
         INSERT INTO records(
@@ -1289,9 +1344,10 @@ def _insert_record(
             created_at,
             updated_at,
             baseline_record_json,
-            error_history_json
+            error_history_json,
+            error_code
         )
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
     # Accept an already-open connection so callers looping over many URLs (e.g. an
     # incremental sync batch) can reuse one connection instead of paying for a fresh
@@ -1417,6 +1473,60 @@ def _validation_response_format() -> Dict[str, Any]:
     }
 
 
+def _openai_session() -> requests.Session:
+    global _OPENAI_HTTP_SESSION
+    if _OPENAI_HTTP_SESSION is None:
+        # Default requests proxy/environment handling stays enabled. Reuse the
+        # connection checked during preflight for this command's validation calls.
+        _OPENAI_HTTP_SESSION = requests.Session()
+    return _OPENAI_HTTP_SESSION
+
+
+def validate_openai_key() -> Dict[str, str]:
+    """Check account access without generating tokens or claiming model access."""
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return {"status": "unverified", "reason": "missing_key", "message": "No OpenAI API key is configured."}
+    _report_stage("checking_access")
+    try:
+        response = _openai_session().get(
+            "https://api.openai.com/v1/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=(AI_VALIDATION_CONNECT_TIMEOUT, 10),
+        )
+    except RequestException:
+        return {
+            "status": "unverified", "reason": "connection_failed",
+            "message": "Could not connect to OpenAI to check API access. Check the connection and try again.",
+        }
+    code = _openai_response_error_code(response)
+    if code == OPENAI_AUTHENTICATION_FAILED:
+        raise OpenAIServiceError(code)
+    if response.status_code == 403:
+        return {
+            "status": "unverified", "reason": "restricted_key",
+            "message": "This key cannot list models. It may still allow validation; model access will be checked when importing.",
+        }
+    if 200 <= response.status_code < 300:
+        return {
+            "status": "valid",
+            "message": "OpenAI account access is valid. Access to the selected model is checked when importing.",
+        }
+    return {
+        "status": "unverified",
+        "reason": "service_unavailable" if response.status_code >= 500 else "request_failed",
+        "message": f"OpenAI access could not be checked (HTTP {response.status_code}). Try again before importing.",
+    }
+
+
+def _preflight_openai_access() -> None:
+    if not os.environ.get("OPENAI_API_KEY", "").strip():
+        return  # Keep the existing local-only/no-key CLI extraction contract.
+    result = validate_openai_key()
+    if result["status"] != "valid" and result.get("reason") != "restricted_key":
+        raise OpenAIServiceError(OPENAI_PREFLIGHT_FAILED)
+
+
 def _post_openai_validation(
     *,
     api_key: str,
@@ -1424,7 +1534,7 @@ def _post_openai_validation(
     payload: Dict[str, Any],
     response_format: Dict[str, Any],
 ) -> requests.Response:
-    return requests.post(
+    return _openai_session().post(
         "https://api.openai.com/v1/chat/completions",
         headers={
             "Authorization": f"Bearer {api_key}",
@@ -1438,11 +1548,31 @@ def _post_openai_validation(
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
             ],
         },
-        timeout=AI_VALIDATION_TIMEOUT,
+        timeout=(AI_VALIDATION_CONNECT_TIMEOUT, AI_VALIDATION_TIMEOUT),
     )
 
 
+def _openai_response_error_code(response: requests.Response) -> str:
+    if response.status_code == 401:
+        return OPENAI_AUTHENTICATION_FAILED
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if isinstance(error, dict) and (
+        error.get("code") == "invalid_api_key" or error.get("type") == "authentication_error"
+    ):
+        return OPENAI_AUTHENTICATION_FAILED
+    if response.status_code == 403:
+        return OPENAI_PERMISSION_DENIED
+    return ""
+
+
 def _openai_error_detail(response: requests.Response) -> str:
+    fatal_code = _openai_response_error_code(response)
+    if fatal_code:
+        return str(OpenAIServiceError(fatal_code))
     try:
         payload = response.json()
     except ValueError:
@@ -1461,9 +1591,9 @@ def _openai_error_detail(response: requests.Response) -> str:
             if error_param:
                 extras.append(f"param={error_param}")
             if extras:
-                return f"{detail} [{' '.join(extras)}]".strip()
-            return detail
-    return _normalize_string(response.text) or f"HTTP {response.status_code}"
+                return _safe_error_message(f"{detail} [{' '.join(extras)}]".strip())
+            return _safe_error_message(detail)
+    return _safe_error_message(_normalize_string(response.text)) or f"HTTP {response.status_code}"
 
 
 def _should_retry_with_json_object(response: requests.Response) -> bool:
@@ -1523,6 +1653,13 @@ def _call_openai_validation(
                 payload=payload,
                 response_format={"type": "json_object"},
             )
+        fatal_code = _openai_response_error_code(response)
+        if fatal_code:
+            return AIValidationCallResult(
+                payload=_blank_ai_validation(base_data, str(OpenAIServiceError(fatal_code))),
+                available=False,
+                error_state=fatal_code,
+            )
         if response.status_code >= 400:
             detail = _openai_error_detail(response)
             raise RequestException(f"AI validation failed [{model}]: {detail}")
@@ -1540,7 +1677,7 @@ def _call_openai_validation(
         )
     except (RequestException, KeyError, IndexError, TypeError, ValueError) as exc:
         return AIValidationCallResult(
-            payload=_blank_ai_validation(base_data, str(exc)),
+            payload=_blank_ai_validation(base_data, _safe_error_message(str(exc))),
             available=False,
             error_state="ai_request_failed",
         )
@@ -1706,6 +1843,7 @@ def _import_url(url: str, modules: Dict[str, Any]) -> Dict[str, Any]:
     scraper_cls = modules["AaajiaoScraper"]
     with workspace_cwd():
         scraper = scraper_cls(use_cache=True)
+        _report_stage("reading_page", url)
         base_data = scraper.extract_metadata_bs4(url)
         # extract_work_details_v2() independently re-runs extract_metadata_bs4(url) as its
         # own "Layer 1" step on a cache miss, which would issue a second HTTP GET for the
@@ -1755,6 +1893,7 @@ def _import_url(url: str, modules: Dict[str, Any]) -> Dict[str, Any]:
             "video_link": _normalize_string(content_source.get("video_link")),
         },
     }
+    _report_stage("validating_record", url)
     ai_result = _call_openai_validation(url, validation_base, content_block)
     validated = ai_result.payload
     merged = _merge_existing_work_with_proposed(content_source, validated.model_dump())
@@ -1863,12 +2002,13 @@ def _record_to_dto(row: sqlite3.Row) -> Dict[str, Any]:
             if isinstance(proposed.get("high_res_images", []), list)
             else []
         ),
-        "error_message": row["error_message"],
+        "error_message": _safe_error_message(row["error_message"]) if row["error_message"] else None,
+        "error_code": row["error_code"] or _error_code_from_text(row["error_message"]) or None,
         "baseline_available": row["baseline_record_json"] is not None,
         "baseline_record": baseline,
         "baseline_fields": _review_fields(baseline) if row["baseline_record_json"] is not None else None,
         "effective_fields": fields,
-        "error_history": json.loads(row["error_history_json"] or "[]"),
+        "error_history": _safe_error_history(json.loads(row["error_history_json"] or "[]")),
         "retry_count": row["retry_count"],
     }
 
@@ -1902,7 +2042,7 @@ def _batch_detail(conn: sqlite3.Connection, batch_id: int) -> Dict[str, Any]:
             "ready_records": sum(
                 1 for record in records if record["status"] == RECORD_READY_FOR_REVIEW
             ),
-            "last_error": row["last_error"] or "",
+            "last_error": _safe_error_message(row["last_error"]),
         },
         "records": records,
         "total_records": len(records),
@@ -1931,7 +2071,7 @@ def _batch_summaries(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
                     "SELECT COUNT(*) FROM records WHERE batch_id = ? AND status = ?",
                     (row["id"], RECORD_READY_FOR_REVIEW),
                 ).fetchone()[0],
-                "last_error": row["last_error"] or "",
+                "last_error": _safe_error_message(row["last_error"]),
             }
         )
     return batches
@@ -2058,6 +2198,11 @@ def refresh_workspace_baseline() -> Dict[str, Any]:
     return {"settings": _settings_payload(), "status": status}
 
 
+def _report_stage(stage: str, url: str = "") -> None:
+    with contextlib.suppress(OSError):
+        print(f"STAGE {stage} {url}".rstrip(), file=sys.stderr, flush=True)
+
+
 def _report_progress(completed: int, total: int, url: str) -> None:
     """Emit a machine-readable progress line on stderr for HelperClient's
     stderr stream parser. Format is intentionally minimal (single line, no
@@ -2072,6 +2217,7 @@ def _report_progress(completed: int, total: int, url: str) -> None:
 
 def start_incremental_sync() -> Dict[str, Any]:
     ensure_workspace()
+    _preflight_openai_access()
     batch_id = _create_batch("incremental")
     # Everything from here until the batch is fully processed must be guarded: a failure
     # while loading modules, reading existing works, or fetching the sitemap would
@@ -2084,6 +2230,7 @@ def start_incremental_sync() -> Dict[str, Any]:
         baseline_by_url = {work["url"]: work for work in _load_workspace_works()}
         scraper_cls = modules["AaajiaoScraper"]
         discovered_sitemap: Dict[str, str] = {}
+        _report_stage("discovering_urls")
         with workspace_cwd():
             scraper = scraper_cls(use_cache=True)
             # Discovery is not a durable import. Defer its cache checkpoint until
@@ -2113,11 +2260,14 @@ def start_incremental_sync() -> Dict[str, Any]:
         # was previously paid once per URL. Commit after each record so a crash mid-batch
         # still keeps the records already processed, matching the prior per-record durability.
         total = len(urls)
+        _report_progress(0, total, urls[0])
         with connect_db() as conn:
             for index, url in enumerate(urls, start=1):
+                fatal_error = None
                 try:
                     result = _import_url(url, modules)
-                    status = RECORD_READY_FOR_REVIEW if result["should_apply"] else RECORD_NEEDS_REVIEW
+                    fatal_error = _fatal_openai_error(result)
+                    status = RECORD_FAILED if fatal_error else (RECORD_READY_FOR_REVIEW if result["should_apply"] else RECORD_NEEDS_REVIEW)
                     _insert_record(
                         batch_id=batch_id,
                         url=url,
@@ -2126,7 +2276,8 @@ def start_incremental_sync() -> Dict[str, Any]:
                         confidence=result["confidence"],
                         is_update=url in existing,
                         proposed=result["proposed"],
-                        error=result["rejection_reason"] or None,
+                        error=str(fatal_error) if fatal_error else (result["rejection_reason"] or None),
+                        error_code=fatal_error.code if fatal_error else "",
                         conn=conn,
                         baseline_record_json=json.dumps(baseline_by_url.get(url), ensure_ascii=False),
                     )
@@ -2143,9 +2294,14 @@ def start_incremental_sync() -> Dict[str, Any]:
                         conn=conn,
                         baseline_record_json=json.dumps(baseline_by_url.get(url), ensure_ascii=False),
                     )
-                _touch_batch(conn, batch_id, status=BATCH_REVIEWING, last_error="")
+                _touch_batch(
+                    conn, batch_id, status=BATCH_FAILED if fatal_error else BATCH_REVIEWING,
+                    total_records=index, last_error=str(fatal_error) if fatal_error else "",
+                )
                 conn.commit()
                 _report_progress(index, total, url)
+                if fatal_error:
+                    raise fatal_error
             _refresh_batch_status(conn, batch_id)
     except Exception as exc:
         with connect_db() as conn:
@@ -2156,6 +2312,7 @@ def start_incremental_sync() -> Dict[str, Any]:
 
 def submit_manual_url(url: str) -> Dict[str, Any]:
     ensure_workspace()
+    _preflight_openai_access()
     batch_id = _create_batch("manual")
     # Guard the setup phase (module load, existing-works read) so an abort before the
     # batch reaches reviewing marks it failed rather than leaving a ghost draft that
@@ -2169,9 +2326,11 @@ def submit_manual_url(url: str) -> Dict[str, Any]:
         # Reuse one connection across touch/insert/refresh instead of letting each open
         # (and self-heal via ensure_workspace()) its own for a single URL.
         with connect_db() as conn:
+            fatal_error = None
             try:
                 result = _import_url(url, modules)
-                status = RECORD_READY_FOR_REVIEW if result["should_apply"] else RECORD_NEEDS_REVIEW
+                fatal_error = _fatal_openai_error(result)
+                status = RECORD_FAILED if fatal_error else (RECORD_READY_FOR_REVIEW if result["should_apply"] else RECORD_NEEDS_REVIEW)
                 _insert_record(
                     batch_id=batch_id,
                     url=url,
@@ -2180,7 +2339,8 @@ def submit_manual_url(url: str) -> Dict[str, Any]:
                     confidence=result["confidence"],
                     is_update=url in existing,
                     proposed=result["proposed"],
-                    error=result["rejection_reason"] or None,
+                    error=str(fatal_error) if fatal_error else (result["rejection_reason"] or None),
+                    error_code=fatal_error.code if fatal_error else "",
                     conn=conn,
                     baseline_record_json=baseline_json,
                 )
@@ -2197,8 +2357,13 @@ def submit_manual_url(url: str) -> Dict[str, Any]:
                     conn=conn,
                     baseline_record_json=baseline_json,
                 )
-            _touch_batch(conn, batch_id, status=BATCH_REVIEWING, last_error="")
+            _touch_batch(
+                conn, batch_id, status=BATCH_FAILED if fatal_error else BATCH_REVIEWING,
+                total_records=1, last_error=str(fatal_error) if fatal_error else "",
+            )
             conn.commit()
+            if fatal_error:
+                raise fatal_error
             _refresh_batch_status(conn, batch_id)
     except Exception as exc:
         with connect_db() as conn:
@@ -2221,7 +2386,7 @@ def _set_record_status_unlocked(record_id: int, status: str) -> Dict[str, Any]:
     with connect_db() as conn:
         row = conn.execute(
             """
-            SELECT records.batch_id, records.url, batches.mode
+            SELECT records.batch_id, records.url, records.status, batches.mode
             FROM records
             JOIN batches ON batches.id = records.batch_id
             WHERE records.id = ?
@@ -2233,6 +2398,8 @@ def _set_record_status_unlocked(record_id: int, status: str) -> Dict[str, Any]:
         if _publish_receipt_path(int(row["batch_id"])).exists():
             raise RuntimeError("This batch has a pending publication. Retry its sync before changing reviewed records")
         if status == RECORD_ACCEPTED:
+            if row["status"] == RECORD_FAILED:
+                raise RuntimeError("Retry the failed import before accepting its fields")
             proposed = conn.execute("SELECT proposed_record_json FROM records WHERE id = ?", (record_id,)).fetchone()[0]
             if not proposed:
                 raise RuntimeError("This record has no extracted artwork data. Retry the failed import first")
@@ -2329,16 +2496,19 @@ def retry_record(record_id: int) -> Dict[str, Any]:
             row = conn.execute("SELECT * FROM records WHERE id = ?", (record_id,)).fetchone()
             if row is None:
                 raise RuntimeError(f"Record {record_id} not found")
-            if row["status"] != RECORD_FAILED:
+            old_error_code = row["error_code"] or _error_code_from_text(row["error_message"])
+            legacy_auth_review = row["status"] == RECORD_NEEDS_REVIEW and old_error_code in OPENAI_FATAL_ERRORS
+            if row["status"] != RECORD_FAILED and not legacy_auth_review:
                 raise RuntimeError("Only failed imports can be retried")
             batch_id = int(row["batch_id"])
             if _publish_receipt_path(batch_id).exists():
                 raise RuntimeError("This batch has a pending publication. Retry its sync before retrying an import")
-            history = json.loads(row["error_history_json"] or "[]")
+            history = _safe_error_history(json.loads(row["error_history_json"] or "[]"))
             if row["error_message"] and not history:
-                history.append({"at": row["updated_at"], "message": row["error_message"]})
+                history.append({"at": row["updated_at"], "message": _safe_error_message(row["error_message"])})
             url = row["url"]
         try:
+            _preflight_openai_access()
             modules = _load_snapshot_modules()
             baseline = next((work for work in _load_workspace_works() if work.get("url") == url), None)
             result = _import_url(url, modules)
@@ -2347,29 +2517,40 @@ def retry_record(record_id: int) -> Dict[str, Any]:
             history.append({"at": now_iso(), "message": message})
             with connect_db() as conn:
                 conn.execute(
-                    "UPDATE records SET error_message = ?, error_history_json = ?, retry_count = retry_count + 1, "
+                    "UPDATE records SET status = ?, error_message = ?, error_code = ?, error_history_json = ?, retry_count = retry_count + 1, "
                     "updated_at = ? WHERE id = ?",
-                    (message, json.dumps(history, ensure_ascii=False), now_iso(), record_id),
+                    (
+                        RECORD_FAILED, message, getattr(exc, "code", ""),
+                        json.dumps(history, ensure_ascii=False), now_iso(), record_id,
+                    ),
                 )
-                _touch_batch(conn, batch_id, last_error=message)
+                _touch_batch(conn, batch_id, status=BATCH_FAILED, last_error=message)
+            if isinstance(exc, OpenAIServiceError):
+                raise
             raise RuntimeError(message) from exc
-        status = RECORD_READY_FOR_REVIEW if result["should_apply"] else RECORD_NEEDS_REVIEW
-        error = result["rejection_reason"] or None
+        fatal_error = _fatal_openai_error(result)
+        status = RECORD_FAILED if fatal_error else (RECORD_READY_FOR_REVIEW if result["should_apply"] else RECORD_NEEDS_REVIEW)
+        error = str(fatal_error) if fatal_error else (_safe_error_message(result["rejection_reason"]) or None)
         if error:
             history.append({"at": now_iso(), "message": error})
         with connect_db() as conn:
             conn.execute(
                 "UPDATE records SET status = ?, page_type = ?, confidence = ?, is_update = ?, "
-                "proposed_record_json = ?, baseline_record_json = ?, error_message = ?, error_history_json = ?, "
+                "proposed_record_json = ?, baseline_record_json = ?, error_message = ?, error_code = ?, error_history_json = ?, "
                 "retry_count = retry_count + 1, updated_at = ? WHERE id = ?",
                 (
                     status, result["page_type"], result["confidence"], int(baseline is not None),
                     json.dumps(result["proposed"], ensure_ascii=False), json.dumps(baseline, ensure_ascii=False),
-                    error, json.dumps(history, ensure_ascii=False), now_iso(), record_id,
+                    error, fatal_error.code if fatal_error else "", json.dumps(history, ensure_ascii=False), now_iso(), record_id,
                 ),
             )
-            _touch_batch(conn, batch_id, status=BATCH_REVIEWING, last_error="")
+            _touch_batch(
+                conn, batch_id, status=BATCH_FAILED if fatal_error else BATCH_REVIEWING,
+                last_error=str(fatal_error) if fatal_error else "",
+            )
             _refresh_batch_status(conn, batch_id)
+        if fatal_error:
+            raise fatal_error
         return {"id": record_id, "batch_id": batch_id, "status": status}
 
 
@@ -2584,6 +2765,7 @@ def parse_args() -> argparse.Namespace:
     sub.add_parser("refreshWorkspaceBaseline", aliases=["refresh-baseline"])
     sub.add_parser("listPendingRecords", aliases=["overview"])
     sub.add_parser("startIncrementalSync", aliases=["start-incremental-sync"])
+    sub.add_parser("validateOpenAIKey")
 
     submit = sub.add_parser("submitManualURL", aliases=["submit-url"])
     submit.add_argument("--url", required=True)
@@ -2631,7 +2813,7 @@ def _fatal_error_message(exc: BaseException) -> str:
         message = _git_error_message(exc)
     else:
         message = str(exc) or exc.__class__.__name__
-    message = " ".join(message.split())
+    message = " ".join(_safe_error_message(message).split())
     home = str(Path.home())
     if home:
         message = message.replace(home, "~")
@@ -2650,6 +2832,8 @@ def main() -> None:
         result = list_pending_records()
     elif args.command in {"startIncrementalSync", "start-incremental-sync"}:
         result = start_incremental_sync()
+    elif args.command == "validateOpenAIKey":
+        result = validate_openai_key()
     elif args.command in {"submitManualURL", "submit-url"}:
         result = submit_manual_url(args.url)
     elif args.command == "acceptRecord":

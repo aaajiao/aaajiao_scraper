@@ -3,6 +3,114 @@ import Foundation
 @MainActor
 func appModelTests() -> [AsyncAppTest] {
     [
+        ("authentication failure appears before recovery and survives an empty batch list", {
+            let helper = ModelTestHelper(detail: modelBatch([]))
+            helper.syncError = HelperClientError.authenticationFailed("OpenAI authentication failed. Check Settings.")
+            helper.holdList = true
+            let model = makeTestModel(helper)
+            model.startSync()
+            try await waitForModel { helper.listContinuation != nil }
+            try expectEqual(model.statusTone, .error, "The failure is visible before recovery finishes")
+            try expect(model.hasAuthenticationError, "The main banner exposes an explicit rejected-key state")
+            try expect(!model.hasVerifiedOpenAIKey, "A rejected saved key cannot appear verified")
+            try expectEqual(model.keyValidationTone, .error, "Settings also reports the rejection")
+            helper.completeList()
+            try await waitForModel { !model.isBusy }
+            try expect(model.openAIAccessErrorMessage.contains("Check Settings"), "An empty review queue cannot erase the authentication diagnosis")
+            try expectEqual(model.statusTone, .error, "Never replace preflight failure with import success")
+        }),
+        ("model permission failure does not mark the key as invalid", {
+            let helper = ModelTestHelper(detail: modelBatch([]))
+            helper.syncError = HelperClientError.permissionDenied("The selected model is not available to this project.")
+            let model = makeTestModel(helper)
+            model.startSync()
+            try await waitForModel { !model.isBusy }
+            try expect(!model.hasAuthenticationError, "HTTP 403/model permission is different from a rejected key")
+            try expect(model.openAIAccessErrorTitle.contains("permission"), "Explain the actual permission problem")
+            model.checkOpenAIKey()
+            try await waitForModel { !model.isBusy }
+            try expectEqual(model.keyValidationTone, .success, "GET models can verify account access")
+            try expect(model.openAIAccessErrorTitle.contains("permission"), "Account access cannot clear a known model permission failure")
+        }),
+        ("network preflight failure remains a connectivity problem", {
+            let helper = ModelTestHelper(detail: modelBatch([]))
+            helper.syncError = HelperClientError.preflightFailed("OpenAI could not be reached. Check the connection and retry.")
+            let model = makeTestModel(helper)
+            model.startSync()
+            try await waitForModel { !model.isBusy }
+            try expectEqual(model.statusTone, .error, "A blocked preflight is an error")
+            try expect(!model.hasAuthenticationError, "A network failure cannot establish that the API key is invalid")
+            try expect(model.openAIAccessErrorTitle.contains("access check"), "Keep the network diagnosis separate")
+        }),
+        ("checking a draft key does not save it or verify the different saved key", {
+            let helper = ModelTestHelper(detail: modelBatch([]))
+            let model = makeTestModel(helper)
+            model.settingsDraftOpenAIKey = "offline-draft-key"
+            model.checkOpenAIKey()
+            try await waitForModel { !model.isBusy }
+            try expectEqual(helper.validationKeys, ["offline-draft-key"], "Check exactly the current draft value")
+            try expectEqual(model.savedOpenAIKey, "offline-test-key", "Validation never saves the draft")
+            try expectEqual(model.keyValidationTone, .success, "A valid check may verify the draft's account access")
+            try expect(!model.hasVerifiedOpenAIKey, "The saved key remains unchecked when a different draft was checked")
+            try expect(model.keyValidationMessage.contains("model"), "Do not claim every model permission was verified")
+        }),
+        ("editing a draft invalidates an in-flight key check result", {
+            let helper = ModelTestHelper(detail: modelBatch([]))
+            helper.holdValidation = true
+            let model = makeTestModel(helper)
+            model.checkOpenAIKey()
+            try await waitForModel { helper.validationContinuation != nil }
+            model.settingsDraftOpenAIKey = "replacement-offline-key"
+            helper.completeValidation()
+            try await waitForModel { !model.isBusy }
+            try expectEqual(model.keyValidationTone, .neutral, "An old response cannot verify a changed draft")
+            try expectEqual(model.keyValidationMessage, "", "Clear stale validation text immediately")
+            try expect(!model.hasVerifiedOpenAIKey, "The old check cannot leave a green saved-key status")
+        }),
+        ("a valid saved-key check verifies account access until the draft changes", {
+            let helper = ModelTestHelper(detail: modelBatch([]))
+            let model = makeTestModel(helper)
+            model.checkOpenAIKey()
+            try await waitForModel { !model.isBusy }
+            try expect(model.hasVerifiedOpenAIKey, "Only a successful explicit check verifies the saved key")
+            model.settingsDraftOpenAIKey = "new-unchecked-draft"
+            try expect(!model.hasVerifiedOpenAIKey && model.keyValidationTone == .neutral, "Changing the draft invalidates verification")
+        }),
+        ("an unverified restricted or disconnected check does not turn green or reject the key", {
+            let helper = ModelTestHelper(detail: modelBatch([]))
+            helper.validationResponse = OpenAIKeyValidationResponse(status: "unverified", message: "This restricted key cannot list models. Import checks model access separately.", reason: "restricted_key")
+            let model = makeTestModel(helper)
+            model.checkOpenAIKey()
+            try await waitForModel { !model.isBusy }
+            try expectEqual(model.keyValidationTone, .warning, "Restricted account checks remain unverified")
+            try expect(!model.hasVerifiedOpenAIKey && !model.hasAuthenticationError, "Unverified is neither valid nor rejected")
+        }),
+        ("saving a replacement key clears the old rejection without claiming verification", {
+            let helper = ModelTestHelper(detail: modelBatch([]))
+            helper.syncError = HelperClientError.authenticationFailed("Saved key rejected")
+            let preferences = ModelTestPreferences()
+            let model = AppModel(helper: helper, preferences: preferences.dependencies, terminateApplication: {})
+            model.startSync()
+            try await waitForModel { !model.isBusy }
+            try expect(model.hasAuthenticationError, "Establish the rejected-key state")
+            model.settingsDraftOpenAIKey = "replacement-offline-key"
+            try expect(model.saveSettings(), "The new key is saved through the injected preferences")
+            try await waitForModel { !model.isBusy }
+            try expect(!model.hasAuthenticationError && model.openAIAccessErrorMessage.isEmpty, "Clear the diagnosis belonging to the old saved key")
+            try expectEqual(model.keyValidationTone, .neutral, "Saving alone must not appear verified")
+            try expect(!model.hasVerifiedOpenAIKey, "A replacement key still needs an explicit account check")
+        }),
+        ("legacy authentication failures are read-only and can retry the original record", {
+            let helper = ModelTestHelper(detail: modelBatch(["needs_review"], errorCode: "openai_authentication_failed"))
+            let model = makeTestModel(helper)
+            installBatch(helper.detail, in: model)
+            try expect(model.canRetrySelectedRecord, "Old needs_review authentication failures remain recoverable")
+            try expect(!model.canAcceptSelectedRecord && !model.canEditSelectedRecord, "Do not accept an unvalidated authentication failure")
+            helper.detail = modelBatch(["ready_for_review"])
+            model.retrySelectedRecord()
+            try await waitForModel { !model.isBusy }
+            try expectEqual(helper.retryIDs, [1], "Retry preserves the original record identity")
+        }),
         ("search and status filters never leave a hidden record actionable", {
             let helper = ModelTestHelper(detail: modelBatch(["ready_for_review", "accepted", "failed"]))
             let model = makeTestModel(helper)
@@ -446,7 +554,7 @@ private func installBatch(_ detail: BatchDetailResponse, in model: AppModel) {
     model.selectedRecordID = detail.records.first?.id
 }
 
-private func modelBatch(_ statuses: [String], mode: String = "manual", batchID: Int = 7, firstRecordID: Int = 1, effectiveFields: [String: String]? = nil, baselineFields: [String: String]? = nil, baselineAvailable: Bool? = nil) -> BatchDetailResponse {
+private func modelBatch(_ statuses: [String], mode: String = "manual", batchID: Int = 7, firstRecordID: Int = 1, effectiveFields: [String: String]? = nil, baselineFields: [String: String]? = nil, baselineAvailable: Bool? = nil, errorCode: String? = nil) -> BatchDetailResponse {
     let records = statuses.enumerated().map { index, status in
         ProposedRecord(
             id: index + firstRecordID, batch_id: batchID, url: "https://eventstructure.com/work-\(index)", slug: "work-\(index)",
@@ -454,7 +562,7 @@ private func modelBatch(_ statuses: [String], mode: String = "manual", batchID: 
             title: "Work \(index)", title_cn: "", year: "", type: "", materials: "", size: "", duration: "", credits: "",
             description_en: "", description_cn: "", video_link: "", images: [], high_res_images: [],
             error_message: status == "failed" ? "AI request failed" : nil,
-            baseline_fields: baselineFields, effective_fields: effectiveFields, baseline_available: baselineAvailable
+            baseline_fields: baselineFields, effective_fields: effectiveFields, baseline_available: baselineAvailable, error_code: errorCode
         )
     }
     let accepted = statuses.filter { $0 == "accepted" }.count
@@ -491,6 +599,11 @@ private final class ModelTestHelper: ImporterHelper {
     var updatedFields: [[String: String]] = []
     var updateError: Error?
     var listError: Error?
+    var syncError: Error?
+    var validationKeys: [String] = []
+    var validationResponse = OpenAIKeyValidationResponse(status: "valid", message: "Account access checked")
+    var holdValidation = false
+    var validationContinuation: CheckedContinuation<OpenAIKeyValidationResponse, Error>?
     var applyWarning: String?
     var remainingAfterApply: Int?
     var holdSubmit = false
@@ -501,6 +614,19 @@ private final class ModelTestHelper: ImporterHelper {
     var listContinuation: CheckedContinuation<PendingRecordsResponse, Error>?
 
     init(detail: BatchDetailResponse) { self.detail = detail }
+
+    func validateOpenAIKey(openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> OpenAIKeyValidationResponse {
+        validationKeys.append(openAIKey)
+        if holdValidation {
+            return try await withCheckedThrowingContinuation { validationContinuation = $0 }
+        }
+        return validationResponse
+    }
+
+    func completeValidation() {
+        validationContinuation?.resume(returning: validationResponse)
+        validationContinuation = nil
+    }
 
     func bootstrapWorkspace(openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> BootstrapResponse {
         BootstrapResponse(settings: .empty, status: "baseline_synced")
@@ -521,6 +647,7 @@ private final class ModelTestHelper: ImporterHelper {
     }
     func startIncrementalSync(openAIKey: String, openAIModel: String, openAIModelSource: String, onProgress: (@Sendable (HelperProgress) -> Void)?) async throws -> StartSyncResponse {
         syncCalls += 1
+        if let syncError { throw syncError }
         return StartSyncResponse(batch_id: detail.batch.id, urls_processed: detail.total_records)
     }
     func submitManualURL(_ url: String, openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> SubmitURLResponse {
@@ -580,5 +707,21 @@ private final class ModelTestHelper: ImporterHelper {
     }
     func deleteBatch(batchID: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> DeleteBatchResponse {
         throw AppTestFailure(message: "Unexpected batch deletion")
+    }
+}
+
+@MainActor
+private final class ModelTestPreferences {
+    var key = "offline-test-key"
+    var selection = OpenAIModelSelection(preset: .gpt41, customModel: "")
+
+    var dependencies: AppModelPreferences {
+        AppModelPreferences(
+            loadKey: { self.key.isEmpty ? .notFound : .found(self.key) },
+            saveKey: { self.key = $0 },
+            deleteKey: { self.key = "" },
+            loadModel: { self.selection },
+            saveModel: { self.selection = $0 }
+        )
     }
 }

@@ -40,13 +40,16 @@ private final class PreviewPreferences {
 @MainActor
 private final class PreviewAppDelegate: NSObject, NSApplicationDelegate {
     let model: AppModel
+    let helper: PreviewHelper
 
     override init() {
         guard let fixtureURL = Bundle.main.url(forResource: "fixtures", withExtension: "json") else {
             fatalError("The preview bundle is missing fixtures.json")
         }
         do {
-            model = AppModel(helper: try PreviewHelper(fixtureURL: fixtureURL), preferences: PreviewPreferences().value)
+            let helper = try PreviewHelper(fixtureURL: fixtureURL)
+            self.helper = helper
+            model = AppModel(helper: helper, preferences: PreviewPreferences().value)
         } catch {
             fatalError("The preview fixture could not be loaded: \(error.localizedDescription)")
         }
@@ -66,6 +69,7 @@ private final class PreviewAppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct ImporterPreviewApp: App {
     @NSApplicationDelegateAdaptor(PreviewAppDelegate.self) private var appDelegate
+    @State private var authenticationMode = PreviewAuthenticationMode.valid
 
     var body: some Scene {
         Window("Importer Preview", id: importerWindowID) {
@@ -84,6 +88,21 @@ struct ImporterPreviewApp: App {
                     Button("Light") { NSApp.appearance = NSAppearance(named: .aqua) }
                     Button("Dark") { NSApp.appearance = NSAppearance(named: .darkAqua) }
                 }
+                Menu("API Authentication") {
+                    Picker("Scenario", selection: Binding(
+                        get: { authenticationMode },
+                        set: { mode in
+                            authenticationMode = mode
+                            appDelegate.helper.authenticationMode = mode
+                        }
+                    )) {
+                        ForEach(PreviewAuthenticationMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.inline)
+                }
+                .disabled(appDelegate.model.isBusy)
                 Divider()
                 Button("Restore Sample Data") {
                     appDelegate.model.confirmWorkspaceReset()

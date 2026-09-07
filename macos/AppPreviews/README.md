@@ -20,3 +20,5 @@ All toolbar, search, filter, editor, accept, retry, and confirmation controls us
 Choose **Preview → Restore Sample Data** (⌘⌥0) or relaunch the app to reset the fixtures. Settings changes also remain in memory. Rebuild after changing production views or model interfaces to update the preview binary.
 
 Choose **Preview → Appearance → System / Light / Dark** to inspect native appearance in this preview process. This changes only `NSApp.appearance`; it does not write system preferences or user defaults.
+
+**Preview → API Authentication** switches between **Valid Key**, **Rejected Key**, and **Connection Unavailable**. The scenario changes only an in-memory flag; it does not replace the sample key or touch Keychain. Use **Settings → Check API Key** to inspect each result. Rejected-key checks raise the production authentication error type; connection failures remain unverified. **Sync Site**, URL import, and retry stop before creating a batch or simulating any extraction when the scenario is rejected or disconnected. Switch back to **Valid Key** to resume. No OpenAI request is made by these scenarios.

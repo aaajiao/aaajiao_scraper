@@ -1291,6 +1291,7 @@ def test_apply_accepted_records_marks_batch_failed_with_real_stderr_on_push_reje
 
 def _transaction_fixture(tmp_path, monkeypatch):
     helper = _load_helper_module()
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     remote, source, _ = _prepare_baseline_remote(tmp_path)
     monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(tmp_path / "workspace"))
     monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(source))
@@ -1797,3 +1798,252 @@ def test_update_record_cli_reads_edits_file(tmp_path, monkeypatch, capsys):
     record = helper.get_batch_detail(batch_id)["records"][0]
     assert record["title_cn"] == "人工校订标题"
     assert record["effective_fields"]["description_en"] == "Concise."
+
+
+class _OpenAIHTTPFixture:
+    def __init__(self, get_response, post_response=None, get_error=None):
+        self.get_response = get_response
+        self.post_response = post_response
+        self.get_error = get_error
+        self.calls = []
+
+    def get(self, url, **kwargs):
+        self.calls.append(("GET", url, kwargs))
+        if self.get_error:
+            raise self.get_error
+        return self.get_response
+
+    def post(self, url, **kwargs):
+        self.calls.append(("POST", url, kwargs))
+        return self.post_response
+
+
+def _auth_extraction_fixture(helper, monkeypatch, sitemap, *, status=401):
+    modules = _fake_incremental_modules(helper, sitemap)
+    seen = []
+
+    def extract(_self, url):
+        seen.append(url)
+        return {
+            "title": url.rsplit("/", 1)[-1], "url": url, "year": "2026", "type": "installation",
+            "materials": "steel", "description_en": "Extracted artwork description", "images": ["https://example.com/image.jpg"],
+        }
+
+    modules["AaajiaoScraper"].extract_metadata_bs4 = extract
+    modules["AaajiaoScraper"].extract_work_details_v2 = lambda self, url: self.extract_metadata_bs4(url)
+    modules["is_artwork"] = lambda data: True
+    modules["normalize_year"] = lambda year: year
+    monkeypatch.setattr(helper, "_load_snapshot_modules", lambda: modules)
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-review-key")
+    body = {"error": {"message": "Incorrect API key provided: sk-proj-SYNTHETIC***TAIL", "code": "invalid_api_key"}}
+    if status != 401:
+        body = {"error": {"message": "Model access is not permitted", "code": "insufficient_permissions"}}
+    session = _OpenAIHTTPFixture(_make_response(200, b'{"data":[]}'), _make_response(status, json.dumps(body).encode()))
+    monkeypatch.setattr(helper, "_OPENAI_HTTP_SESSION", session)
+    return seen, session
+
+
+def test_incremental_stops_after_first_authentication_failure_and_preserves_extraction(tmp_path, monkeypatch, capsys):
+    helper, _remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    urls = [f"https://eventstructure.com/candidate-{index}" for index in range(7)]
+    seen, session = _auth_extraction_fixture(helper, monkeypatch, dict.fromkeys(urls, "2026-09-07"))
+
+    with pytest.raises(helper.OpenAIServiceError) as failure:
+        helper.start_incremental_sync()
+
+    assert failure.value.code == "openai_authentication_failed"
+    assert str(failure.value).startswith("[OPENAI_AUTHENTICATION_FAILED]")
+    assert seen == urls[:1]
+    assert [call[0] for call in session.calls] == ["GET", "POST"]
+    rows = helper._record_rows()
+    assert len(rows) == 1
+    assert rows[0]["status"] == helper.RECORD_FAILED
+    assert json.loads(rows[0]["proposed_record_json"])["description_en"] == "Extracted artwork description"
+    detail = helper.get_batch_detail(rows[0]["batch_id"])
+    assert detail["batch"]["status"] == helper.BATCH_FAILED
+    assert detail["records"][0]["error_code"] == "openai_authentication_failed"
+    assert helper.prune_terminal_batches() == 0
+    assert all(url not in helper._load_workspace_sitemap_cache() for url in urls)
+    assert "PROGRESS 0/7" in capsys.readouterr().err
+    assert "SYNTHETIC" not in json.dumps(detail)
+    assert "TAIL" not in helper._fatal_error_message(failure.value)
+
+
+@pytest.mark.parametrize("operation", ["manual", "retry"])
+def test_manual_and_retry_auth_failure_persist_data_and_machine_error(tmp_path, monkeypatch, operation):
+    helper, _remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    url = "https://eventstructure.com/auth-failure"
+    _seen, session = _auth_extraction_fixture(helper, monkeypatch, {url: "2026-09-07"})
+    record_id = None
+    if operation == "retry":
+        batch_id = helper._create_batch("manual")
+        record_id = _review_fixture(helper, batch_id, url=url, status=helper.RECORD_FAILED)
+    with pytest.raises(helper.OpenAIServiceError, match="OPENAI_AUTHENTICATION_FAILED"):
+        if operation == "manual":
+            helper.submit_manual_url(url)
+        else:
+            helper.retry_record(record_id)
+    rows = helper._record_rows()
+    assert len(rows) == 1
+    assert rows[0]["status"] == helper.RECORD_FAILED
+    assert rows[0]["error_code"] == "openai_authentication_failed"
+    assert json.loads(rows[0]["proposed_record_json"])["images"] == ["https://example.com/image.jpg"]
+    if record_id:
+        assert rows[0]["id"] == record_id
+        assert rows[0]["retry_count"] == 1
+    assert [call[0] for call in session.calls] == ["GET", "POST"]
+
+
+def test_legacy_auth_review_is_sanitized_without_mutation_and_can_retry_in_place(tmp_path, monkeypatch):
+    helper, _remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    batch_id = helper._create_batch("manual")
+    record_id = _review_fixture(helper, batch_id, status=helper.RECORD_NEEDS_REVIEW)
+    old_error = "AI validation failed [gpt-4.1]: Incorrect API key provided: sk-proj-LEGACY***FRAGMENT"
+    with helper.connect_db() as conn:
+        conn.execute(
+            "UPDATE records SET error_message = ?, error_history_json = ? WHERE id = ?",
+            (old_error, json.dumps([{"at": "2026-09-07", "message": old_error}]), record_id),
+        )
+    before = dict(helper._record_rows(batch_id=batch_id)[0])
+
+    record = helper.get_batch_detail(batch_id)["records"][0]
+
+    assert record["status"] == helper.RECORD_NEEDS_REVIEW
+    assert record["error_code"] == "openai_authentication_failed"
+    assert "LEGACY" not in json.dumps(record)
+    assert "FRAGMENT" not in json.dumps(record)
+    assert dict(helper._record_rows(batch_id=batch_id)[0]) == before
+    monkeypatch.setattr(helper, "_load_snapshot_modules", lambda: {})
+    monkeypatch.setattr(helper, "_import_url", lambda url, modules: _import_result(url))
+    result = helper.retry_record(record_id)
+    assert result["id"] == record_id
+    assert result["status"] == helper.RECORD_READY_FOR_REVIEW
+    assert helper.get_batch_detail(batch_id)["records"][0]["error_code"] is None
+    assert "LEGACY" not in helper._record_rows(batch_id=batch_id)[0]["error_history_json"]
+
+
+@pytest.mark.parametrize("status,body,expected", [
+    (401, {"error": {"message": "Server echoed arbitrary secret fragments"}}, "openai_authentication_failed"),
+    (400, {"error": {"code": "invalid_api_key", "message": "Arbitrary server content"}}, "openai_authentication_failed"),
+    (403, {"error": {"code": "insufficient_permissions", "message": "Model permission denied"}}, "openai_permission_denied"),
+    (400, {"error": {"code": "invalid_request_error", "message": "Invalid response parameter"}}, "ai_request_failed"),
+    (500, {"error": {"message": "Temporarily unavailable"}}, "ai_request_failed"),
+])
+def test_openai_response_codes_distinguish_auth_permission_and_other_failures(monkeypatch, status, body, expected):
+    helper = _load_helper_module()
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-review-key")
+    session = _OpenAIHTTPFixture(None, _make_response(status, json.dumps(body).encode()))
+    monkeypatch.setattr(helper, "_OPENAI_HTTP_SESSION", session)
+
+    result = helper._call_openai_validation("https://eventstructure.com/test-work", {"title": "Test Work"}, {})
+
+    assert result.error_state == expected
+    if expected in helper.OPENAI_FATAL_ERRORS:
+        assert result.payload.rejection_reason == str(helper.OpenAIServiceError(expected))
+        assert "Arbitrary" not in result.payload.rejection_reason
+        assert "secret fragments" not in result.payload.rejection_reason
+    assert len(session.calls) == 1
+
+
+def test_openai_preflight_and_validation_reuse_session_with_separate_short_connect_timeout(monkeypatch):
+    helper = _load_helper_module()
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-review-key")
+    session = _OpenAIHTTPFixture(_make_response(200, b'{"data":[]}'), _make_response(500, b'{}'))
+    created = []
+    monkeypatch.setattr(helper.requests, "Session", lambda: (created.append(session), session)[1])
+
+    assert helper.validate_openai_key()["status"] == "valid"
+    helper._call_openai_validation("https://eventstructure.com/test-work", {"title": "Test Work"}, {})
+
+    assert len(created) == 1
+    assert session.calls[0][2]["timeout"] == (5, 10)
+    assert session.calls[1][2]["timeout"] == (5, 120)
+    assert session.calls[0][1] == "https://api.openai.com/v1/models"
+    assert session.calls[1][1] == "https://api.openai.com/v1/chat/completions"
+
+
+@pytest.mark.parametrize("operation", ["incremental", "manual"])
+def test_invalid_key_preflight_stops_before_batch_creation_or_site_fetch(tmp_path, monkeypatch, operation):
+    helper, _remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-review-key")
+    session = _OpenAIHTTPFixture(_make_response(401, b'{"error":{"message":"Incorrect API key provided: sk-proj-PREFLIGHT***TAIL"}}'))
+    monkeypatch.setattr(helper, "_OPENAI_HTTP_SESSION", session)
+    monkeypatch.setattr(helper, "_load_snapshot_modules", lambda: pytest.fail("Site extraction must not start"))
+
+    with pytest.raises(helper.OpenAIServiceError, match="OPENAI_AUTHENTICATION_FAILED"):
+        if operation == "incremental":
+            helper.start_incremental_sync()
+        else:
+            helper.submit_manual_url("https://eventstructure.com/no-fetch")
+
+    with helper.connect_db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM batches").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM records").fetchone()[0] == 0
+    assert len(session.calls) == 1
+
+
+@pytest.mark.parametrize("failure_mode", ["timeout", "server"])
+def test_preflight_unavailable_is_not_invalid_key_and_blocks_import(tmp_path, monkeypatch, failure_mode):
+    helper, _remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-review-key")
+    session = _OpenAIHTTPFixture(
+        _make_response(503, b'{}'),
+        get_error=helper.requests.exceptions.ConnectTimeout("synthetic timeout") if failure_mode == "timeout" else None,
+    )
+    monkeypatch.setattr(helper, "_OPENAI_HTTP_SESSION", session)
+    assert helper.validate_openai_key()["status"] == "unverified"
+    monkeypatch.setattr(helper, "_load_snapshot_modules", lambda: pytest.fail("Site extraction must not start"))
+
+    with pytest.raises(helper.OpenAIServiceError) as failure:
+        helper.start_incremental_sync()
+
+    assert failure.value.code == "openai_preflight_failed"
+    assert "authentication" not in str(failure.value).lower()
+    assert helper._record_rows() == []
+
+
+def test_models_permission_denied_allows_chat_to_check_actual_model_access(tmp_path, monkeypatch):
+    helper, _remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    url = "https://eventstructure.com/permission-test"
+    seen, session = _auth_extraction_fixture(helper, monkeypatch, {url: "2026-09-07"}, status=403)
+    session.get_response = _make_response(403, b'{"error":{"message":"Restricted models listing"}}')
+    assert helper.validate_openai_key()["reason"] == "restricted_key"
+
+    with pytest.raises(helper.OpenAIServiceError) as failure:
+        helper.submit_manual_url(url)
+
+    assert failure.value.code == "openai_permission_denied"
+    assert seen == [url]
+    assert helper._record_rows()[0]["error_code"] == "openai_permission_denied"
+
+
+def test_retry_preflight_failure_updates_original_record_without_fetching(tmp_path, monkeypatch):
+    helper, _remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    batch_id = helper._create_batch("manual")
+    record_id = _review_fixture(helper, batch_id, status=helper.RECORD_FAILED)
+    before = helper._record_rows(batch_id=batch_id)[0]["proposed_record_json"]
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-review-key")
+    monkeypatch.setattr(helper, "_OPENAI_HTTP_SESSION", _OpenAIHTTPFixture(_make_response(401, b'{}')))
+    monkeypatch.setattr(helper, "_load_snapshot_modules", lambda: pytest.fail("Retry must not fetch after invalid key preflight"))
+
+    with pytest.raises(helper.OpenAIServiceError, match="OPENAI_AUTHENTICATION_FAILED"):
+        helper.retry_record(record_id)
+
+    record = helper._record_rows(batch_id=batch_id)[0]
+    assert record["id"] == record_id
+    assert record["proposed_record_json"] == before
+    assert record["retry_count"] == 1
+    assert record["error_code"] == "openai_authentication_failed"
+
+
+def test_validate_openai_key_cli_returns_status_without_echoing_key(monkeypatch, capsys):
+    helper = _load_helper_module()
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-review-key")
+    monkeypatch.setattr(helper, "_OPENAI_HTTP_SESSION", _OpenAIHTTPFixture(_make_response(200, b'{"data":[]}')))
+    monkeypatch.setattr(sys, "argv", ["helper", "validateOpenAIKey"])
+
+    helper.main()
+
+    output = capsys.readouterr().out
+    assert json.loads(output)["status"] == "valid"
+    assert "synthetic-review-key" not in output

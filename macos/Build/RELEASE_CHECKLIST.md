@@ -43,6 +43,11 @@ Expected result:
 - AppModel tests cover operation exclusion, failed import feedback, fresh publication
   preflight, cancellation, and publication success followed by a reload failure
 - Process tests cover timeout/cancellation, child-process cleanup, and large pipe output
+- Invalid OpenAI credentials fail before creating a batch or fetching artwork pages;
+  authentication failure during a run preserves one retryable result and stops the rest
+- Settings distinguishes saved/unverified/verified credentials and offers Check API Key;
+  editing the draft clears stale check results, and errors never display key fragments
+- Restricted model-list access and network failures are not labelled as invalid keys
 
 ```bash
 ./macos/Build/build_local_app.sh

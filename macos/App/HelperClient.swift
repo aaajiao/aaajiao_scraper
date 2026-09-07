@@ -5,6 +5,9 @@ enum HelperClientError: LocalizedError {
     case missingResources
     case cancelled
     case nonZeroExit(String)
+    case authenticationFailed(String)
+    case permissionDenied(String)
+    case preflightFailed(String)
     case decodeFailure(String)
     case timeout(command: String, seconds: TimeInterval)
 
@@ -14,13 +17,35 @@ enum HelperClientError: LocalizedError {
             return "Import cancelled."
         case .missingResources:
             return "Bundled helper resources are missing."
-        case .nonZeroExit(let message):
+        case .nonZeroExit(let message), .authenticationFailed(let message), .permissionDenied(let message), .preflightFailed(let message):
             return message.trimmingCharacters(in: .whitespacesAndNewlines)
         case .decodeFailure(let message):
             return "Failed to decode helper output: \(message)"
         case .timeout(let command, let seconds):
             return "Helper command '\(command)' timed out after \(Int(seconds))s."
         }
+    }
+
+    static func fromHelperStderr(_ stderr: String) -> Self {
+        // Codes come from the helper's deliberate failure classification. Do
+        // not infer an invalid key from arbitrary network errors or HTTP 403.
+        for line in stderr.components(separatedBy: .newlines).reversed() {
+            let lineText = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmed = lineText.hasPrefix("Error: ") ? String(lineText.dropFirst("Error: ".count)) : lineText
+            for (prefix, kind) in [
+                ("[OPENAI_AUTHENTICATION_FAILED]", 0),
+                ("[OPENAI_PERMISSION_DENIED]", 1),
+                ("[OPENAI_PREFLIGHT_FAILED]", 2)
+            ] where trimmed.hasPrefix(prefix) {
+                let message = String(trimmed.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                switch kind {
+                case 0: return .authenticationFailed(message)
+                case 1: return .permissionDenied(message)
+                default: return .preflightFailed(message)
+                }
+            }
+        }
+        return .nonZeroExit(stderr.isEmpty ? "Helper failed." : stderr)
     }
 }
 
@@ -224,6 +249,17 @@ final class HelperClient: @unchecked Sendable {
             openAIModelSource: openAIModelSource,
             timeout: Timeout.standard,
             as: BootstrapResponse.self
+        )
+    }
+
+    func validateOpenAIKey(openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> OpenAIKeyValidationResponse {
+        try await runCommandAsync(
+            arguments: ["validateOpenAIKey"],
+            openAIKey: openAIKey,
+            openAIModel: openAIModel,
+            openAIModelSource: openAIModelSource,
+            timeout: Timeout.quick,
+            as: OpenAIKeyValidationResponse.self
         )
     }
 
@@ -543,7 +579,7 @@ final class HelperClient: @unchecked Sendable {
         // non-zero exit codes retain their failure status.
         guard status == 0 else {
             let message = String(decoding: errorOutput, as: UTF8.self)
-            throw HelperClientError.nonZeroExit(message.isEmpty ? "Helper failed." : message)
+            throw HelperClientError.fromHelperStderr(message)
         }
         return output
     }

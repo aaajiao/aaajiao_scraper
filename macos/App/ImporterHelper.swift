@@ -4,6 +4,7 @@ import Foundation
 /// exercising operation state never reads the real workspace or starts a push.
 @MainActor
 protocol ImporterHelper: Sendable {
+    func validateOpenAIKey(openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> OpenAIKeyValidationResponse
     func bootstrapWorkspace(openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> BootstrapResponse
     func listPendingRecords(openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> PendingRecordsResponse
     func resetWorkspace(openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> BootstrapResponse

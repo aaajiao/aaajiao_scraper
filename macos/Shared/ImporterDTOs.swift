@@ -33,6 +33,7 @@ struct ProposedRecord: Codable, Identifiable, Hashable {
     let baseline_available: Bool?
     let error_history: [RecordError]?
     let retry_count: Int?
+    let error_code: String?
 
     init(
         id: Int, batch_id: Int, url: String, slug: String, status: String, page_type: String,
@@ -41,7 +42,7 @@ struct ProposedRecord: Codable, Identifiable, Hashable {
         description_en: String, description_cn: String, video_link: String, images: [String],
         high_res_images: [String], error_message: String?, baseline_fields: [String: String]? = nil,
         effective_fields: [String: String]? = nil, baseline_available: Bool? = nil,
-        error_history: [RecordError]? = nil, retry_count: Int? = nil
+        error_history: [RecordError]? = nil, retry_count: Int? = nil, error_code: String? = nil
     ) {
         self.id = id
         self.batch_id = batch_id
@@ -70,6 +71,7 @@ struct ProposedRecord: Codable, Identifiable, Hashable {
         self.baseline_available = baseline_available
         self.error_history = error_history
         self.retry_count = retry_count
+        self.error_code = error_code
     }
 
     var displayTitle: String {
@@ -146,6 +148,18 @@ struct AppSettings: Codable, Hashable {
 struct BootstrapResponse: Codable {
     let settings: AppSettings
     let status: String
+}
+
+struct OpenAIKeyValidationResponse: Codable {
+    let status: String
+    let message: String
+    let reason: String?
+
+    init(status: String, message: String, reason: String? = nil) {
+        self.status = status
+        self.message = message
+        self.reason = reason
+    }
 }
 
 struct PendingRecordsResponse: Codable {

@@ -167,10 +167,10 @@ private struct SidebarView: View {
                         Link("Baseline \(String((model.settings.baseline_commit ?? "").prefix(7)))", destination: url)
                     } else { Text(baselineLabel(model.settings.baseline_status)) }
                     Spacer()
-                    Image(systemName: model.hasSavedOpenAIKey ? "checkmark.circle" : "key")
-                        .foregroundStyle(model.hasSavedOpenAIKey ? Color.green : Color.orange)
-                        .help(model.hasSavedOpenAIKey ? "OpenAI: \(model.effectiveOpenAIModel)" : "OpenAI key required")
-                        .accessibilityLabel(model.hasSavedOpenAIKey ? "OpenAI configured" : "OpenAI key required")
+                    Image(systemName: model.hasAuthenticationError ? "key.slash" : (model.hasVerifiedOpenAIKey ? "checkmark.circle" : "key"))
+                        .foregroundStyle(model.hasAuthenticationError ? Color.red : (model.hasVerifiedOpenAIKey ? Color.green : Color.secondary))
+                        .help(openAIKeyLabel)
+                        .accessibilityLabel(openAIKeyLabel)
                 }
                 if model.hasBaselineWarning {
                     Text(baselineDetail(model.settings)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -182,6 +182,12 @@ private struct SidebarView: View {
         .onReceive(NotificationCenter.default.publisher(for: focusReviewSearchNotification)) { _ in
             isSearchFocused = true
         }
+    }
+
+    private var openAIKeyLabel: String {
+        if model.hasAuthenticationError { return "OpenAI API key rejected. Open Settings to update it." }
+        if model.hasVerifiedOpenAIKey { return "OpenAI account access verified. Model permissions are checked during import." }
+        return model.hasSavedOpenAIKey ? "OpenAI key saved; access has not been checked." : "OpenAI key required"
     }
 }
 
@@ -253,6 +259,7 @@ private struct DetailColumnView: View {
 
 private struct RecordDetailView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.openWindow) private var openWindow
     let record: ProposedRecord
     @State private var showChanges = false
 
@@ -285,12 +292,17 @@ private struct RecordDetailView: View {
 
                 if let message = record.error_message, !message.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
-                        Label(record.status == "failed" ? "Import failed" : "Review note", systemImage: "exclamationmark.bubble")
+                        Label(record.error_code == "openai_authentication_failed" ? "OpenAI API key rejected" : (record.status == "failed" ? "Import failed" : "Review note"), systemImage: "exclamationmark.bubble")
                             .font(.headline)
                         Text(message).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                        if record.status == "failed" {
-                            Button("Retry Import") { model.retrySelectedRecord() }
-                                .disabled(!model.canRetrySelectedRecord)
+                        HStack {
+                            if record.error_code == "openai_authentication_failed" || record.error_code == "openai_permission_denied" {
+                                Button("Open Settings") { presentSettingsWindow(openWindow) }
+                            }
+                            if record.status == "failed" || record.error_code == "openai_authentication_failed" || record.error_code == "openai_permission_denied" {
+                                Button("Retry Import") { model.retrySelectedRecord() }
+                                    .disabled(!model.canRetrySelectedRecord)
+                            }
                         }
                     }
                     .padding(16).frame(maxWidth: .infinity, alignment: .leading)
@@ -498,7 +510,7 @@ private struct SelectionActionBar: View {
             }
             Button("Edit Fields…") { model.beginEditingSelectedRecord() }
                 .disabled(!model.canEditSelectedRecord)
-            if model.selectedRecord?.status == "failed" {
+            if model.selectedRecord?.status == "failed" || model.selectedRecord?.error_code == "openai_authentication_failed" || model.selectedRecord?.error_code == "openai_permission_denied" {
                 Button("Retry Import") { model.retrySelectedRecord() }
                     .buttonStyle(.borderedProminent).disabled(!model.canRetrySelectedRecord)
             } else {
@@ -533,19 +545,23 @@ private struct ContextBannerView: View {
             } else if model.isCancellingImport {
                 Text("Stopping…").font(.caption).foregroundStyle(.secondary)
             }
-            if !model.hasSavedOpenAIKey {
+            if !model.hasSavedOpenAIKey || !model.openAIAccessErrorMessage.isEmpty {
                 Button("Settings…") { presentSettingsWindow(openWindow) }
             }
         }
         .padding(.horizontal, 18).padding(.vertical, 10)
+        .fixedSize(horizontal: false, vertical: true)
+        .layoutPriority(1)
         .background(Color(nsColor: .controlBackgroundColor))
     }
     private var message: String {
+        if !model.openAIAccessErrorMessage.isEmpty { return model.openAIAccessErrorMessage }
         if model.hasKeychainAccessFailure { return "The OpenAI key could not be read. Unlock Keychain and try again." }
         if !model.hasSavedOpenAIKey { return "Add your OpenAI key in Settings to import and validate artworks." }
         return model.statusMessage
     }
     private var tint: Color {
+        if !model.openAIAccessErrorMessage.isEmpty { return .red }
         if !model.hasSavedOpenAIKey { return .orange }
         switch model.statusTone {
         case .error: return .red
@@ -555,6 +571,8 @@ private struct ContextBannerView: View {
         }
     }
     private var icon: String {
+        if model.hasAuthenticationError { return "key.slash" }
+        if !model.openAIAccessErrorMessage.isEmpty { return "exclamationmark.triangle" }
         if !model.hasSavedOpenAIKey { return "key" }
         switch model.statusTone {
         case .error: return "xmark.circle"
@@ -722,8 +740,18 @@ struct SettingsView: View {
                     if model.settingsDraftOpenAIModelPreset == .custom {
                         TextField("Custom model", text: $model.settingsDraftCustomOpenAIModel)
                     }
+                    HStack {
+                        Button("Check API Key") { model.checkOpenAIKey() }
+                            .disabled(!model.canCheckOpenAIKey)
+                        if model.isCheckingOpenAIKey { ProgressView().controlSize(.small) }
+                    }
                 } header: { Text("OpenAI") } footer: {
                     VStack(alignment: .leading, spacing: 6) {
+                        if !model.keyValidationMessage.isEmpty {
+                            Text(model.keyValidationMessage)
+                                .foregroundStyle(model.keyValidationTone == .error ? Color.red : (model.keyValidationTone == .success ? Color.green : Color.secondary))
+                                .textSelection(.enabled)
+                        }
                         if !model.canSaveSettings {
                             Text("Enter a custom model name to enable Save.").foregroundStyle(.orange)
                         }
@@ -739,7 +767,7 @@ struct SettingsView: View {
             .formStyle(.grouped)
             .disabled(model.isBusy || model.isShowingRecordEditor)
             Divider()
-            if !model.settingsStatusMessage.isEmpty {
+            if !model.settingsStatusMessage.isEmpty && model.settingsStatusMessage != model.keyValidationMessage {
                 Text(model.settingsStatusMessage).font(.callout).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading).padding([.horizontal, .top], 20)
             }
@@ -756,7 +784,7 @@ struct SettingsView: View {
             }
             .padding(20).disabled(model.isBusy || model.isShowingRecordEditor)
         }
-        .frame(width: 520, height: 420)
+        .frame(width: 520, height: 460)
     }
 }
 

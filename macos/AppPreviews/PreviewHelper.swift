@@ -1,9 +1,28 @@
 import Foundation
 
+enum PreviewAuthenticationMode: String, CaseIterable, Identifiable {
+    case valid
+    case rejected
+    case connectionUnavailable
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .valid: return "Valid Key"
+        case .rejected: return "Rejected Key"
+        case .connectionUnavailable: return "Connection Unavailable"
+        }
+    }
+}
+
 /// A complete in-memory implementation of the production helper contract.
 /// It has no HelperClient, subprocess, Git, filesystem-write or credential API.
 @MainActor
 final class PreviewHelper: ImporterHelper {
+    // The scenario changes only this preview instance, never the stored key.
+    var authenticationMode: PreviewAuthenticationMode = .valid
+    private(set) var simulatedScrapeCount = 0
+    private(set) var validationCheckCount = 0
     private var records: [[String: Any]] = []
     private var templateRecords: [[String: Any]] = []
     private var batchModes: [Int: String] = [:]
@@ -99,7 +118,31 @@ final class PreviewHelper: ImporterHelper {
         return RecordStatusResponse(id: id, status: status)
     }
 
+    func validateOpenAIKey(openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> OpenAIKeyValidationResponse {
+        validationCheckCount += 1
+        switch authenticationMode {
+        case .valid:
+            return OpenAIKeyValidationResponse(status: "valid", message: "Preview API key check succeeded. No API was contacted.")
+        case .rejected:
+            throw HelperClientError.authenticationFailed("OpenAI authentication failed. Check the API key in Settings, then retry.")
+        case .connectionUnavailable:
+            return OpenAIKeyValidationResponse(
+                status: "unverified",
+                message: "Preview connection is unavailable. The key has not been rejected; try checking again when the connection is restored.",
+                reason: "connection_failed"
+            )
+        }
+    }
+
+    private func requireImportAuthentication(openAIKey: String, openAIModel: String, openAIModelSource: String) async throws {
+        let check = try await validateOpenAIKey(openAIKey: openAIKey, openAIModel: openAIModel, openAIModelSource: openAIModelSource)
+        if check.status == "unverified" {
+            throw HelperClientError.preflightFailed("Could not reach OpenAI to check the API key. No import was started; check the connection and retry.")
+        }
+    }
+
     private func pauseImport(onProgress: (@Sendable (HelperProgress) -> Void)? = nil) async throws {
+        simulatedScrapeCount += 1
         isImportRunning = true
         cancellationRequested = false
         defer { isImportRunning = false }
@@ -134,6 +177,7 @@ final class PreviewHelper: ImporterHelper {
     }
 
     func startIncrementalSync(openAIKey: String, openAIModel: String, openAIModelSource: String, onProgress: (@Sendable (HelperProgress) -> Void)?) async throws -> StartSyncResponse {
+        try await requireImportAuthentication(openAIKey: openAIKey, openAIModel: openAIModel, openAIModelSource: openAIModelSource)
         try await pauseImport(onProgress: onProgress)
         if batchModes[202] == nil {
             records.append(contentsOf: templateRecords.filter { $0["batch_id"] as? Int == 202 })
@@ -143,6 +187,7 @@ final class PreviewHelper: ImporterHelper {
     }
 
     func submitManualURL(_ url: String, openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> SubmitURLResponse {
+        try await requireImportAuthentication(openAIKey: openAIKey, openAIModel: openAIModel, openAIModelSource: openAIModelSource)
         try await pauseImport()
         guard var record = templateRecords.first else { throw PreviewError.recordNotFound }
         let batchID = nextBatchID
@@ -177,6 +222,7 @@ final class PreviewHelper: ImporterHelper {
     }
 
     func retryRecord(id: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> RecordStatusResponse {
+        try await requireImportAuthentication(openAIKey: openAIKey, openAIModel: openAIModel, openAIModelSource: openAIModelSource)
         try await pauseImport()
         let index = try index(id)
         records[index]["error_message"] = NSNull()

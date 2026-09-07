@@ -7,6 +7,7 @@ enum ImporterBusyAction {
     case importURL
     case retryRecord
     case editRecord
+    case checkOpenAIKey
     case syncSite
     case reloadResults
     case acceptRecord
@@ -36,6 +37,7 @@ enum StatusTone: Equatable {
 
 @MainActor
 final class AppModel: ObservableObject {
+    private enum OpenAIAccessFailureKind { case authentication, permission, preflight }
     @Published var manualURL = ""
     @Published var searchText = "" { didSet { reconcileFilteredSelection() } }
     @Published var reviewFilter: ReviewFilter = .all { didSet { reconcileFilteredSelection() } }
@@ -61,10 +63,22 @@ final class AppModel: ObservableObject {
     @Published var statusMessage = "Ready"
     @Published var statusTone: StatusTone = .neutral
     @Published var settings = AppSettings.empty
-    @Published var settingsDraftOpenAIKey = ""
+    @Published var settingsDraftOpenAIKey = "" {
+        didSet {
+            if oldValue != settingsDraftOpenAIKey {
+                clearKeyValidation()
+                settingsStatusMessage = ""
+            }
+        }
+    }
     @Published var settingsDraftOpenAIModelPreset = OpenAIModelPreset.defaultPreset
     @Published var settingsDraftCustomOpenAIModel = ""
     @Published var settingsStatusMessage = ""
+    @Published private(set) var keyValidationMessage = ""
+    @Published private(set) var keyValidationTone: StatusTone = .neutral
+    @Published private(set) var openAIAccessErrorMessage = ""
+    @Published private(set) var openAIAccessErrorTitle = ""
+    @Published private var accessFailureKind: OpenAIAccessFailureKind?
 
     private let helper: any ImporterHelper
     private let preferences: AppModelPreferences
@@ -74,6 +88,8 @@ final class AppModel: ObservableObject {
     private var editingRecordID: Int?
     private var editingBatchID: Int?
     private var recordEditorOriginalValues: [String: String] = [:]
+    private var validatedKeySnapshot: String?
+    private var keyValidationRequestID: UUID?
 
     // Keychain reads are relatively expensive and the derived properties below
     // are re-evaluated on every view update, so the last load is cached; call
@@ -161,6 +177,18 @@ final class AppModel: ObservableObject {
 
     var canRunProtectedActions: Bool {
         hasSavedOpenAIKey && !hasKeychainAccessFailure
+    }
+
+    var hasAuthenticationError: Bool { accessFailureKind == .authentication }
+
+    var hasVerifiedOpenAIKey: Bool {
+        validatedKeySnapshot == savedOpenAIKey && validatedKeySnapshot != nil && !hasAuthenticationError
+    }
+
+    var isCheckingOpenAIKey: Bool { currentBusyAction == .checkOpenAIKey }
+
+    var canCheckOpenAIKey: Bool {
+        !trimmedDraftOpenAIKey.isEmpty && !isReviewInteractionLocked && !hasOpenReviewModal
     }
 
     var canSubmitManualURL: Bool {
@@ -287,7 +315,7 @@ final class AppModel: ObservableObject {
 
     var canAcceptSelectedRecord: Bool {
         guard let record = selectedRecord else { return false }
-        return !isReviewInteractionLocked && !hasOpenReviewModal && ReviewFilter.pending.matches(record)
+        return !isReviewInteractionLocked && !hasOpenReviewModal && ReviewFilter.pending.matches(record) && recordAccessError(record) == nil
     }
 
     var canDeleteSelectedRecord: Bool {
@@ -295,7 +323,9 @@ final class AppModel: ObservableObject {
     }
 
     var canRetrySelectedRecord: Bool {
-        !isReviewInteractionLocked && !hasOpenReviewModal && canRunProtectedActions && selectedRecord?.status == "failed"
+        guard let record = selectedRecord else { return false }
+        let retryable = record.status == "failed" || (record.status == "needs_review" && record.error_code == "openai_authentication_failed")
+        return !isReviewInteractionLocked && !hasOpenReviewModal && canRunProtectedActions && retryable
     }
 
     var canCancelCurrentImport: Bool {
@@ -309,7 +339,7 @@ final class AppModel: ObservableObject {
 
     var canEditSelectedRecord: Bool {
         guard let record = selectedRecord else { return false }
-        return !isReviewInteractionLocked && !hasOpenReviewModal && ["ready_for_review", "needs_review", "accepted"].contains(record.status)
+        return !isReviewInteractionLocked && !hasOpenReviewModal && ["ready_for_review", "needs_review", "accepted"].contains(record.status) && record.error_code != "openai_authentication_failed"
     }
 
     var canSaveRecordEdits: Bool {
@@ -363,8 +393,10 @@ final class AppModel: ObservableObject {
             return "Retrying failed result..."
         case .editRecord:
             return "Saving corrections..."
+        case .checkOpenAIKey:
+            return "Checking OpenAI account access..."
         case .syncSite:
-            guard let syncProgress else { return "Syncing site..." }
+            guard let syncProgress else { return "Checking OpenAI access and finding artworks..." }
             return "Syncing site... (\(syncProgress.completed)/\(syncProgress.total))"
         case .reloadResults:
             return "Reloading results..."
@@ -388,7 +420,7 @@ final class AppModel: ObservableObject {
     }
 
     var shouldShowStatusBanner: Bool {
-        hasSavedOpenAIKey == false || hasKeychainAccessFailure || busyStatusMessage != nil || statusTone != .neutral || hasBaselineWarning
+        hasSavedOpenAIKey == false || hasKeychainAccessFailure || !openAIAccessErrorMessage.isEmpty || busyStatusMessage != nil || statusTone != .neutral || hasBaselineWarning
     }
 
     var hasBaselineWarning: Bool {
@@ -538,6 +570,7 @@ final class AppModel: ObservableObject {
             return
         }
         guard beginExclusive(.syncSite) else { return }
+        let importKey = savedOpenAIKey
         syncProgress = nil
         setStatus("Syncing site...", tone: .info)
         Task {
@@ -547,7 +580,7 @@ final class AppModel: ObservableObject {
             }
             do {
                 let result = try await helper.startIncrementalSync(
-                    openAIKey: savedOpenAIKey,
+                    openAIKey: importKey,
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
                     openAIModelSource: savedOpenAIModelSelection.source,
                     onProgress: { [weak self] progress in
@@ -560,9 +593,9 @@ final class AppModel: ObservableObject {
                     }
                 )
                 try await loadBatch(batchID: result.batch_id, updateStatusMessage: false)
-                reportImportOutcome(isSiteSync: true)
+                reportImportOutcome(isSiteSync: true, usedKey: importKey)
             } catch {
-                await reportImportError(error)
+                await reportImportError(error, usedKey: importKey)
             }
         }
     }
@@ -658,22 +691,23 @@ final class AppModel: ObservableObject {
             return
         }
         guard beginExclusive(.importURL) else { return }
+        let importKey = savedOpenAIKey
         setStatus("Importing URL...", tone: .info)
         Task {
             defer { endExclusive() }
             do {
                 let result = try await helper.submitManualURL(
                     trimmed,
-                    openAIKey: savedOpenAIKey,
+                    openAIKey: importKey,
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
                     openAIModelSource: savedOpenAIModelSelection.source
                 )
                 manualURL = ""
                 isShowingImportSheet = false
                 try await loadBatch(batchID: result.batch_id, updateStatusMessage: false)
-                reportImportOutcome(isSiteSync: false)
+                reportImportOutcome(isSiteSync: false, usedKey: importKey)
             } catch {
-                await reportImportError(error)
+                await reportImportError(error, usedKey: importKey)
             }
         }
     }
@@ -788,30 +822,42 @@ final class AppModel: ObservableObject {
         reloadKeychainCache()
         guard canRetrySelectedRecord, let record = selectedRecord, let batchID = currentBatchID else { return }
         guard beginExclusive(.retryRecord) else { return }
+        let importKey = savedOpenAIKey
         Task {
             defer { endExclusive() }
             do {
                 _ = try await helper.retryRecord(
                     id: record.id,
-                    openAIKey: savedOpenAIKey,
+                    openAIKey: importKey,
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
                     openAIModelSource: savedOpenAIModelSelection.source
                 )
                 try await loadBatch(batchID: batchID, updateStatusMessage: false)
-                if let retriedRecord = currentBatchDetail?.records.first(where: { $0.id == record.id }),
-                   retriedRecord.status == "failed" {
+                let retriedRecord = currentBatchDetail?.records.first(where: { $0.id == record.id })
+                if let retriedRecord, let accessError = recordAccessError(retriedRecord) {
+                    recordAccessFailure(accessError, usedKey: importKey)
+                    setStatus(display(accessError), tone: .error)
+                } else if let retriedRecord, retriedRecord.status == "failed" {
                     setStatus("Retry failed: \(retriedRecord.error_message ?? "The URL could not be imported.")", tone: .error)
                 } else {
                     setStatus("Retried \(record.displayTitle). Review the updated result.", tone: .success)
                 }
             } catch {
-                await reportImportError(error)
+                await reportImportError(error, usedKey: importKey)
             }
         }
     }
 
-    private func reportImportOutcome(isSiteSync: Bool) {
+    private func reportImportOutcome(isSiteSync: Bool, usedKey: String) {
         guard let detail = currentBatchDetail else { return }
+        if let error = detail.records.compactMap({ recordAccessError($0) }).first {
+            recordAccessFailure(error, usedKey: usedKey)
+            setStatus(display(error), tone: .error)
+            return
+        }
+        if usedKey == savedOpenAIKey && detail.records.contains(where: { ["ready_for_review", "needs_review"].contains($0.status) }) {
+            clearOpenAIAccessFailure()
+        }
         if detail.total_records == 0 {
             setStatus("No new URLs to import.", tone: .info)
         } else if detail.failed_count == detail.total_records {
@@ -828,7 +874,16 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func reportImportError(_ error: Error) async {
+    private func reportImportError(_ error: Error, usedKey: String) async {
+        // Surface authentication/permission failures before doing any recovery
+        // reads. The absence of a new batch must never erase this diagnosis.
+        recordAccessFailure(error, usedKey: usedKey)
+        if case HelperClientError.cancelled = error {
+            setStatus("Import cancelled. Loading any saved results...", tone: .info)
+        } else {
+            setStatus(display(error), tone: .error)
+        }
+        syncProgress = nil
         if !isQuitRequested {
             // The helper may have committed partial records before cancellation
             // or an error. Refresh the batch inventory so that run remains
@@ -854,6 +909,92 @@ final class AppModel: ObservableObject {
             setStatus("Import cancelled. Use Reload Results to inspect any saved progress.", tone: .info)
         } else {
             setStatus(display(error), tone: .error)
+        }
+    }
+
+    private func recordAccessError(_ record: ProposedRecord) -> HelperClientError? {
+        switch record.error_code {
+        case "openai_authentication_failed":
+            return .authenticationFailed("OpenAI authentication failed. Check the API key in Settings, then try again.")
+        case "openai_permission_denied":
+            return .permissionDenied("OpenAI permission denied. Check the project's access to the selected model, then retry.")
+        default:
+            return nil
+        }
+    }
+
+    private func recordAccessFailure(_ error: Error, usedKey: String) {
+        guard usedKey == savedOpenAIKey else { return }
+        switch error {
+        case HelperClientError.authenticationFailed:
+            accessFailureKind = .authentication
+            openAIAccessErrorTitle = "OpenAI authentication failed"
+        case HelperClientError.permissionDenied:
+            accessFailureKind = .permission
+            openAIAccessErrorTitle = "OpenAI permission denied"
+        case HelperClientError.preflightFailed:
+            accessFailureKind = .preflight
+            openAIAccessErrorTitle = "OpenAI access check failed"
+        default:
+            return
+        }
+        openAIAccessErrorMessage = display(error)
+        if trimmedDraftOpenAIKey == usedKey {
+            clearKeyValidation()
+            keyValidationMessage = display(error)
+            keyValidationTone = .error
+        }
+        settingsStatusMessage = display(error)
+    }
+
+    private func clearOpenAIAccessFailure() {
+        accessFailureKind = nil
+        openAIAccessErrorTitle = ""
+        openAIAccessErrorMessage = ""
+    }
+
+    private func clearKeyValidation() {
+        keyValidationRequestID = nil
+        validatedKeySnapshot = nil
+        keyValidationMessage = ""
+        keyValidationTone = .neutral
+    }
+
+    func checkOpenAIKey() {
+        guard canCheckOpenAIKey, beginExclusive(.checkOpenAIKey) else { return }
+        let key = trimmedDraftOpenAIKey
+        let requestID = UUID()
+        keyValidationRequestID = requestID
+        validatedKeySnapshot = nil
+        keyValidationMessage = "Checking account access without generating content..."
+        keyValidationTone = .info
+        settingsStatusMessage = ""
+        Task {
+            defer { endExclusive() }
+            do {
+                let result = try await helper.validateOpenAIKey(
+                    openAIKey: key,
+                    openAIModel: draftOpenAIModelSelection.effectiveModel,
+                    openAIModelSource: draftOpenAIModelSelection.source
+                )
+                guard keyValidationRequestID == requestID, trimmedDraftOpenAIKey == key else { return }
+                if result.status == "valid" {
+                    validatedKeySnapshot = key
+                    keyValidationMessage = "Account access checked. Access to each model is checked during import."
+                    keyValidationTone = .success
+                    if key == savedOpenAIKey && accessFailureKind != .permission {
+                        clearOpenAIAccessFailure()
+                    }
+                } else {
+                    keyValidationMessage = result.message.isEmpty ? "Account access could not be verified. Retry the check when the connection is available." : result.message
+                    keyValidationTone = .warning
+                }
+            } catch {
+                guard keyValidationRequestID == requestID, trimmedDraftOpenAIKey == key else { return }
+                recordAccessFailure(error, usedKey: key)
+                keyValidationMessage = display(error)
+                keyValidationTone = .error
+            }
         }
     }
 
@@ -1049,6 +1190,7 @@ final class AppModel: ObservableObject {
     @discardableResult
     func saveSettings() -> Bool {
         let newValue = trimmedDraftOpenAIKey
+        let keyChanged = newValue != savedOpenAIKey
         let modelSelection = draftOpenAIModelSelection
         guard modelSelection.isValid else {
             settingsStatusMessage = "Enter a custom model name or choose a preset."
@@ -1066,6 +1208,11 @@ final class AppModel: ObservableObject {
             }
             preferences.saveModel(modelSelection)
             reloadKeychainCache()
+            if keyChanged {
+                clearKeyValidation()
+                clearOpenAIAccessFailure()
+                setStatus(newValue.isEmpty ? "OpenAI key cleared." : "OpenAI key saved. Check account access in Settings before importing.", tone: .neutral)
+            }
             settingsDraftOpenAIKey = newValue
             settingsDraftOpenAIModelPreset = modelSelection.preset
             settingsDraftCustomOpenAIModel = modelSelection.customModel
@@ -1091,6 +1238,9 @@ final class AppModel: ObservableObject {
         do {
             try preferences.deleteKey()
             reloadKeychainCache()
+            clearKeyValidation()
+            clearOpenAIAccessFailure()
+            setStatus("OpenAI key cleared.", tone: .neutral)
             settingsDraftOpenAIKey = ""
             settingsStatusMessage = "OpenAI key cleared from macOS Keychain."
             refreshFromUI()
