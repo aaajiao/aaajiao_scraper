@@ -135,11 +135,13 @@ The sidebar switches between review runs and filters results by status, title, C
 title, or URL. Accepting a result advances to the next pending result. Failed rows have an
 in-place retry action, and active imports have a Stop Import control.
 
-Primary toolbar commands use visible text; ambiguous import and publish symbols are omitted to keep narrow windows readable. **Check for Updates**
-imports from the website; **Publish** uploads accepted artworks to GitHub. Generic More
-menus use labelled, accessible icon controls. Removal and reset actions keep text and
-scope-specific confirmation. The sidebar's Settings entry shows the saved/checked/error
-state of API access and opens the settings window.
+The toolbar uses icons for **Import URL**, **Check for Updates**, and **Publish**, with
+hover descriptions and keyboard shortcuts. **Check for Updates** imports from the
+website; **Publish** uploads accepted artworks to GitHub. Edit, remove, Settings, and
+More controls follow the same icon-and-tooltip pattern. Accessible names identify each
+action, including the accepted count for publishing. Review decisions, page guidance,
+menus, and scope-specific confirmations retain text. The sidebar shows the
+saved/checked/error state of API access beside its Settings icon.
 
 The last pending artwork uses **Accept** rather than promising a next item. An accepted
 artwork offers **Review Next** while other pending items exist, then **Publish**. Review

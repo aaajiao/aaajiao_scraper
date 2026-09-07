@@ -105,8 +105,11 @@ retry, field editing and validation, the publication sheet, image loading/fallba
 Settings. Check a compact window and both light/dark appearance. The preview uses in-memory
 fixtures and never publishes to a real repository.
 
-- At 900 × 620, Import URL, Check for Updates, and Publish retain visible text; More has
-  a VoiceOver name, and review actions fit without clipping.
+- At 900 × 620, Import URL, Check for Updates, and Publish display distinct icons without
+  visible labels. Hover descriptions include purpose and shortcuts; accessible names
+  identify each action. Publish describes its accepted count or why it is unavailable.
+  Edit, remove, Settings, and More use accessible icons and tooltips; review decisions
+  and confirmations retain text, and review actions fit without clipping.
 - Relaunching the app presents the Importer window, while closing it leaves the menu
   bar entry available. Both columns shrink and scroll without clipping their headers
   or bottom actions; native split-view minimum heights must not exceed the viewport.

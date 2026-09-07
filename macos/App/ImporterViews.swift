@@ -31,17 +31,17 @@ struct ContentView: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button { model.requestImportSheet() } label: {
                     Label("Import URL…", systemImage: "plus")
-                        .labelStyle(.titleOnly)
+                        .labelStyle(.iconOnly)
                 }
                 .disabled(!model.canOpenImportSheet)
-                .help("Import one artwork URL (⌘N)")
+                .help("Import URL — Add one artwork for review (⌘N)")
 
                 Button { model.startSync() } label: {
                     Label("Check for Updates", systemImage: "arrow.triangle.2.circlepath")
-                        .labelStyle(.titleOnly)
+                        .labelStyle(.iconOnly)
                 }
                 .disabled(!model.canStartImport)
-                .help("Find new and changed artworks on eventstructure.com for review (⇧⌘I)")
+                .help("Check for Updates — Find new and changed artworks on eventstructure.com (⇧⌘I)")
             }
             ToolbarItem(placement: .primaryAction) {
                 Menu {
@@ -56,18 +56,19 @@ struct ContentView: View {
                         .disabled(!model.canDiscardCurrentRun)
                     Button("Reset Workspace…", role: .destructive) { model.requestWorkspaceReset() }
                         .disabled(model.isBusy || model.isShowingRecordEditor)
-                } label: { Label("More", systemImage: "ellipsis.circle") }
+                } label: { Label("More", systemImage: "ellipsis") }
                 .labelStyle(.iconOnly)
                 .accessibilityLabel("More workspace actions")
-                .help("Workspace actions")
+                .help("More workspace actions")
             }
             ToolbarItem(placement: .primaryAction) {
                 Button { model.requestApply() } label: {
-                    Label(model.gitHubSyncActionTitle, systemImage: "arrow.up.circle")
-                        .labelStyle(.titleOnly)
+                    Label(publishAccessibilityLabel, systemImage: "arrow.up.circle")
+                        .labelStyle(.iconOnly)
                 }
                 .disabled(!model.canRequestGitHubSync)
-                .help("Publish accepted artworks to GitHub (⇧⌘P)")
+                .help(publishHelp)
+                .accessibilityLabel(publishAccessibilityLabel)
             }
         }
         .sheet(isPresented: $model.isShowingImportSheet) { ImportURLSheet().environmentObject(model) }
@@ -88,6 +89,16 @@ struct ContentView: View {
             Button("Cancel", role: .cancel) {}
         } message: { Text("This removes the result from the review queue. Published artwork data is unchanged.") }
         .onAppear { model.bootstrapIfNeeded() }
+    }
+
+    private var publishAccessibilityLabel: String {
+        let count = model.currentBatchDetail?.accepted_count ?? 0
+        return count > 0 ? "Publish \(count) accepted artwork\(count == 1 ? "" : "s") to GitHub" : "Publish accepted artworks to GitHub"
+    }
+
+    private var publishHelp: String {
+        let count = model.currentBatchDetail?.accepted_count ?? 0
+        return count > 0 ? "\(publishAccessibilityLabel) (⇧⌘P)" : "Publish — Accept an artwork to enable publishing (⇧⌘P)"
     }
 
 }
@@ -180,21 +191,27 @@ private struct SidebarView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     if let url = model.baselineCommitURL {
-                        Link(destination: url) { Label("Published data", systemImage: "arrow.down.circle") }
+                        Link(destination: url) { Label("Published data", systemImage: "arrow.up.right.square") }
                             .help("View the published data used for comparison")
                         Spacer()
                         Text(String((model.settings.baseline_commit ?? "").prefix(7)))
                             .foregroundStyle(.secondary).monospaced()
                     } else { Text(baselineLabel(model.settings.baseline_status)) }
                 }
-                Button { presentSettingsWindow(openWindow) } label: {
-                    Label(openAIKeyTitle, systemImage: model.hasAuthenticationError ? "key.slash" : "gearshape")
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                HStack {
+                    Label(openAIKeyTitle, systemImage: model.hasAuthenticationError ? "key.slash" : "key")
+                        .foregroundStyle(model.hasAuthenticationError ? Color.red : Color.secondary)
+                        .help(openAIKeyLabel)
+                    Spacer()
+                    Button { presentSettingsWindow(openWindow) } label: {
+                        Label("Settings…", systemImage: "gearshape")
+                            .labelStyle(.iconOnly)
+                            .padding(4)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Settings (⌘,)")
+                    .accessibilityLabel("Settings")
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(model.hasAuthenticationError ? Color.red : Color.secondary)
-                .help(openAIKeyLabel)
-                .accessibilityLabel("Settings. \(openAIKeyLabel)")
                 if model.hasBaselineWarning {
                     Text(baselineDetail(model.settings)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
@@ -214,9 +231,9 @@ private struct SidebarView: View {
     }
 
     private var openAIKeyTitle: String {
-        if !model.openAIAccessErrorMessage.isEmpty { return "API needs attention · Settings…" }
-        if model.hasVerifiedOpenAIKey { return "API checked · Settings…" }
-        return model.hasSavedOpenAIKey ? "API key saved · Settings…" : "Set up API key…"
+        if !model.openAIAccessErrorMessage.isEmpty { return "API needs attention" }
+        if model.hasVerifiedOpenAIKey { return "API checked" }
+        return model.hasSavedOpenAIKey ? "API key saved" : "API key required"
     }
 }
 
@@ -624,15 +641,22 @@ private struct SelectionActionBar: View {
                     } label: { Label("Copy URL", systemImage: "doc.on.doc") }
                 } label: { Label("More artwork actions", systemImage: "ellipsis") }
                 .labelStyle(.iconOnly)
-                .help("Open the source page or copy its URL")
+                .help("More artwork actions: open the source page or copy its URL")
                 .accessibilityLabel("More artwork actions")
                 .fixedSize()
-                Button("Remove…", role: .destructive) { model.requestDeleteSelectedRecord() }
+                Button(role: .destructive) { model.requestDeleteSelectedRecord() } label: {
+                    Label("Remove from Review Queue…", systemImage: "trash")
+                        .labelStyle(.iconOnly).frame(minWidth: 20)
+                }
                     .disabled(!model.canDeleteSelectedRecord)
-                    .help("Remove this artwork from the review queue")
-                Spacer(minLength: 8)
-                Button("Edit Fields…") { model.beginEditingSelectedRecord() }
+                    .help("Remove from review queue (⌘⌫)")
+                Button { model.beginEditingSelectedRecord() } label: {
+                    Label("Edit Fields…", systemImage: "square.and.pencil")
+                        .labelStyle(.iconOnly).frame(minWidth: 20)
+                }
                     .disabled(!model.canEditSelectedRecord)
+                    .help("Edit artwork fields (⌘E)")
+                Spacer(minLength: 8)
                 if model.selectedRecord?.status == "failed" || model.selectedRecord?.error_code == "openai_authentication_failed" || model.selectedRecord?.error_code == "openai_permission_denied" {
                     Button("Retry Import") { model.retrySelectedRecord() }
                         .buttonStyle(.borderedProminent).disabled(!model.canRetrySelectedRecord)
