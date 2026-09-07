@@ -29,9 +29,25 @@ func closeSettingsWindow() {
     NSApp.keyWindow?.performClose(nil)
 }
 
+private struct ImporterMenuBarLabel: View {
+    @Environment(\.openWindow) private var openWindow
+    @Binding var hasPresentedInitialWindow: Bool
+
+    var body: some View {
+        Image(systemName: "tray.full")
+            .accessibilityLabel("aaajiao Importer")
+            .onAppear {
+                guard !hasPresentedInitialWindow else { return }
+                hasPresentedInitialWindow = true
+                presentImporterWindow(openWindow)
+            }
+    }
+}
+
 @main
 struct AaajiaoImporterApp: App {
     @NSApplicationDelegateAdaptor(ImporterAppDelegate.self) private var appDelegate
+    @State private var hasPresentedInitialWindow = false
 
     private var model: AppModel { appDelegate.model }
 
@@ -46,9 +62,11 @@ struct AaajiaoImporterApp: App {
             AppCommands(model: model)
         }
 
-        MenuBarExtra("aaajiao Importer", systemImage: "tray.full") {
+        MenuBarExtra {
             MenuBarMenuView()
                 .environmentObject(model)
+        } label: {
+            ImporterMenuBarLabel(hasPresentedInitialWindow: $hasPresentedInitialWindow)
         }
 
         Window("Settings", id: settingsWindowID) {
