@@ -3,6 +3,71 @@ import Foundation
 @MainActor
 func appModelTests() -> [AsyncAppTest] {
     [
+        ("import entry remains available before an API key is configured", {
+            let helper = ModelTestHelper(detail: modelBatch([]))
+            let preferences = ModelTestPreferences()
+            preferences.key = ""
+            let model = AppModel(helper: helper, preferences: preferences.dependencies, terminateApplication: {})
+            try expect(model.canOpenImportSheet, "Users can open the entry point to learn what setup is needed")
+            try expect(!model.canStartImport, "Fetching still requires a saved key")
+            model.requestImportSheet()
+            model.manualURL = "https://eventstructure.com/work"
+            try expect(model.isShowingImportSheet, "An unconfigured key must not make the import button silently do nothing")
+            try expect(!model.canSubmitManualURL, "Opening the sheet cannot bypass API setup")
+            model.submitURL()
+            try expectEqual(helper.submitCalls, 0, "No helper request starts without a key")
+        }),
+        ("review guidance exposes mixed states and publish remains explicit", {
+            let helper = ModelTestHelper(detail: modelBatch(["ready_for_review", "needs_review", "accepted", "failed"]))
+            let model = makeTestModel(helper)
+            installBatch(helper.detail, in: model)
+            try expectEqual(model.reviewStatusValue, "2 to review · 1 accepted · 1 failed", "Accepted records must not hide work that still needs attention")
+            try expectEqual(model.gitHubSyncActionTitle, "Publish 1…", "The action states how many accepted results will enter the preview")
+            try expectEqual(model.acceptActionTitle, "Accept & Next", "Advance is promised only when another actionable result is visible")
+            model.searchText = "work-0"
+            try expectEqual(model.acceptActionTitle, "Accept", "A hidden next result must not be promised")
+            helper.detail = modelBatch(["accepted"])
+            installBatch(helper.detail, in: model)
+            try expect(model.reviewGuidance.contains("Publish"), "Finishing review still requires publication")
+        }),
+        ("next review crosses filters without accepting or changing records", {
+            let helper = ModelTestHelper(detail: modelBatch(["needs_review", "accepted", "failed", "ready_for_review"]))
+            let model = makeTestModel(helper)
+            installBatch(helper.detail, in: model)
+            model.reviewFilter = .accepted
+            model.searchText = "work-1"
+            try expect(model.canSelectNextPendingRecord, "A filtered accepted record can continue reviewing")
+            model.selectNextPendingRecord()
+            try expectEqual(model.reviewFilter, .pending, "Make the destination review context visible")
+            try expectEqual(model.searchText, "", "A prior search cannot hide the destination")
+            try expectEqual(model.selectedRecordID, 4, "Move forward from the selected artwork and skip failures")
+            model.selectNextPendingRecord()
+            try expectEqual(model.selectedRecordID, 1, "Wrap at the end of the queue")
+            try expectEqual(helper.acceptedIDs, [], "Navigation is read-only")
+        }),
+        ("stage updates preserve numeric progress and clear after import", {
+            let helper = ModelTestHelper(detail: modelBatch(["needs_review"], mode: "incremental"))
+            helper.holdSync = true
+            let model = makeTestModel(helper)
+            model.startSync()
+            try await waitForModel { helper.syncContinuation != nil }
+            guard let numeric = HelperProgress(stderrLine: Data("PROGRESS 1/7 https://eventstructure.com/completed".utf8)),
+                  let stage = HelperProgress(stderrLine: Data("STAGE validating_record https://eventstructure.com/current".utf8)) else {
+                throw AppTestFailure(message: "Expected valid progress fixtures")
+            }
+            helper.syncProgressHandler?(numeric)
+            try await waitForModel { model.syncProgress?.completed == 1 }
+            helper.syncProgressHandler?(stage)
+            try await waitForModel { model.syncStage == "validating_record" }
+            try expectEqual(model.syncProgress, SyncProgress(completed: 1, total: 7), "A stage-only event must not reset the counter")
+            try expectEqual(model.syncCurrentURL, "https://eventstructure.com/current", "Show the currently processed URL")
+            try expectEqual(model.busyStatusMessage, "Checking artwork details… 2 of 7", "Explain both the phase and position")
+            helper.completeSync()
+            try await waitForModel { !model.isBusy }
+            try expectNil(model.syncProgress, "Clear the completed counter")
+            try expectNil(model.syncStage, "A finished run cannot retain a busy stage")
+            try expectEqual(model.syncCurrentURL, "", "Clear the finished URL")
+        }),
         ("authentication failure appears before recovery and survives an empty batch list", {
             let helper = ModelTestHelper(detail: modelBatch([]))
             helper.syncError = HelperClientError.authenticationFailed("OpenAI authentication failed. Check Settings.")
@@ -31,6 +96,45 @@ func appModelTests() -> [AsyncAppTest] {
             try await waitForModel { !model.isBusy }
             try expectEqual(model.keyValidationTone, .success, "GET models can verify account access")
             try expect(model.openAIAccessErrorTitle.contains("permission"), "Account access cannot clear a known model permission failure")
+            try expectEqual(model.statusTone, .error, "Account access alone cannot resolve a model permission error")
+        }),
+        ("checking the saved key clears its recovered authentication status before reopening import", {
+            let helper = ModelTestHelper(detail: modelBatch([]))
+            helper.syncError = HelperClientError.authenticationFailed("OpenAI authentication failed. Check Settings.")
+            let model = makeTestModel(helper)
+            model.startSync()
+            try await waitForModel { !model.isBusy }
+            try expectEqual(model.statusTone, .error, "Establish a visible authentication failure")
+            model.checkOpenAIKey()
+            try await waitForModel { !model.isBusy }
+            try expect(!model.hasAuthenticationError, "Successful saved-key validation resolves the old authentication diagnosis")
+            try expectEqual(model.statusTone, .success, "The global import status must recover with the key status")
+            try expect(model.statusMessage.contains("account access checked"), "Explain why the import can be retried")
+            try expect(model.saveSettings(), "Done with unchanged settings succeeds")
+            model.requestImportSheet()
+            try expect(model.isShowingImportSheet, "The user can reopen the import flow")
+            try expectEqual(model.statusTone, .success, "Unchanged Done must not resurrect the stale red authentication message")
+        }),
+        ("successful account check preserves unrelated errors and errors belonging to a different saved key", {
+            let helper = ModelTestHelper(detail: modelBatch([]))
+            helper.syncError = HelperClientError.authenticationFailed("OpenAI authentication failed. Check Settings.")
+            let model = makeTestModel(helper)
+            model.startSync()
+            try await waitForModel { !model.isBusy }
+            let originalError = model.statusMessage
+            model.settingsDraftOpenAIKey = "different-offline-draft"
+            model.checkOpenAIKey()
+            try await waitForModel { !model.isBusy }
+            try expectEqual(model.statusMessage, originalError, "Verifying a different unsaved key cannot resolve the saved key's diagnosis")
+            try expect(model.hasAuthenticationError, "The saved key remains rejected")
+            model.revertSettings()
+            model.statusMessage = "The GitHub review database could not be loaded."
+            model.statusTone = .error
+            model.checkOpenAIKey()
+            try await waitForModel { !model.isBusy }
+            try expect(!model.hasAuthenticationError, "The saved key itself is now verified")
+            try expectEqual(model.statusMessage, "The GitHub review database could not be loaded.", "Account recovery cannot erase a different failure")
+            try expectEqual(model.statusTone, .error, "Unrelated error severity remains unchanged")
         }),
         ("network preflight failure remains a connectivity problem", {
             let helper = ModelTestHelper(detail: modelBatch([]))
@@ -314,6 +418,48 @@ func appModelTests() -> [AsyncAppTest] {
             try await waitForModel { !model.isBusy }
             try expectEqual(model.statusTone, .info, "An empty sync is informational")
             try expect(model.statusMessage.contains("No new URLs"), "Explain why no review rows were added")
+            try expect(model.hasCompletedEmptySiteCheck, "Expose a completed empty check independently of informational status tone")
+            model.refreshFromUI()
+            try await waitForModel { !model.isBusy }
+            try expect(model.hasCompletedEmptySiteCheck, "Read-only reload preserves the confirmed empty check")
+            model.checkOpenAIKey()
+            try await waitForModel { !model.isBusy }
+            try expect(model.hasCompletedEmptySiteCheck, "Checking settings does not erase the last site-check outcome")
+        }),
+        ("a failed new preflight cannot reuse an older empty site-check outcome", {
+            let helper = ModelTestHelper(detail: modelBatch([], mode: "incremental"))
+            let model = makeTestModel(helper)
+            model.startSync()
+            try await waitForModel { !model.isBusy }
+            try expect(model.hasCompletedEmptySiteCheck, "Establish a completed empty check")
+            helper.syncError = HelperClientError.authenticationFailed("Check the API key in Settings.")
+            model.startSync()
+            try expect(!model.hasCompletedEmptySiteCheck, "Starting another site check invalidates the previous completion immediately")
+            try await waitForModel { !model.isBusy }
+            try expectEqual(model.currentBatchID, 7, "An older batch can remain selected after preflight fails")
+            try expect(!model.hasCompletedEmptySiteCheck, "An old empty batch is not evidence that the failed check found no updates")
+            try expectEqual(model.statusTone, .error, "Preserve the actual failure")
+        }),
+        ("a cancelled new check cannot reuse an older empty site-check outcome", {
+            let helper = ModelTestHelper(detail: modelBatch([], mode: "incremental"))
+            let model = makeTestModel(helper)
+            model.startSync()
+            try await waitForModel { !model.isBusy }
+            try expect(model.hasCompletedEmptySiteCheck, "Establish a completed empty check")
+            helper.syncError = HelperClientError.cancelled
+            model.startSync()
+            try await waitForModel { !model.isBusy }
+            try expectEqual(model.currentBatchID, 7, "Cancellation may leave the prior empty batch visible")
+            try expect(!model.hasCompletedEmptySiteCheck, "Cancellation cannot appear as a successful update check")
+        }),
+        ("empty site-check completion belongs only to its original batch", {
+            let helper = ModelTestHelper(detail: modelBatch([], mode: "incremental"))
+            let model = makeTestModel(helper)
+            model.startSync()
+            try await waitForModel { !model.isBusy }
+            try expect(model.hasCompletedEmptySiteCheck, "Establish a completed empty check")
+            installBatch(modelBatch([], mode: "incremental", batchID: 8), in: model)
+            try expect(!model.hasCompletedEmptySiteCheck, "Another empty batch does not inherit a known check's completion")
         }),
         ("exclusive action gate prevents overlapping helper mutations", {
             let helper = ModelTestHelper(detail: modelBatch(["ready_for_review"]))
@@ -396,7 +542,7 @@ func appModelTests() -> [AsyncAppTest] {
             model.quitApplication()
             try expectEqual(helper.cancelCalls, 0, "Quit must not cancel an in-flight publication")
             try expectEqual(terminations, 0, "Keep the app alive until publish reconciliation finishes")
-            try expect(model.busyStatusMessage?.contains("Finishing GitHub sync") == true, "Explain why Quit is waiting")
+            try expect(model.busyStatusMessage?.contains("Finishing publication") == true, "Explain why Quit is waiting")
             helper.completeApply()
             try await waitForModel { !model.isBusy }
             try expectEqual(terminations, 1, "Terminate after the complete apply and refresh operation")
@@ -454,7 +600,8 @@ func appModelTests() -> [AsyncAppTest] {
             try await waitForModel { !model.isBusy }
             try expectEqual(helper.applyCalls, 1, "The push happens exactly once")
             try expectEqual(model.statusTone, .warning, "A refresh failure is a warning after confirmed publication")
-            try expect(model.statusMessage.contains("Synced to GitHub at verified-sha"), "Retain the confirmed commit as the leading outcome")
+            try expect(model.statusMessage.contains("Published 1 artwork to GitHub"), "Lead with the confirmed publication outcome")
+            try expectEqual(model.lastPublication?.commitSHA, "verified-sha", "Retain the full confirmed commit for the receipt link even when refresh fails")
             try expect(!model.hasCurrentRun, "Published review rows are cleared")
         }),
         ("push cleanup warning retains the confirmed commit", {
@@ -465,7 +612,32 @@ func appModelTests() -> [AsyncAppTest] {
             model.confirmApply()
             try await waitForModel { !model.isBusy }
             try expectEqual(model.statusTone, .warning, "A helper cleanup warning must remain visible")
-            try expect(model.statusMessage.contains("verified-sha") && model.statusMessage.contains("local cleanup"), "Report confirmed publication and the remaining cleanup work together")
+            try expect(model.statusMessage.contains("Published 1 artwork") && model.statusMessage.contains("local cleanup"), "Report confirmed publication and the remaining cleanup work together")
+            try expectEqual(model.lastPublication?.commitSHA, "verified-sha", "Keep the exact commit outside the main status sentence")
+            try expect(model.lastPublication?.nextStep.contains("local cleanup") == true, "A confirmed push with unfinished cleanup must not claim the entire import is complete")
+        }),
+        ("publication receipt survives read-only refresh but cannot become a later import result", {
+            let helper = ModelTestHelper(detail: modelBatch(["accepted"]))
+            let model = makeTestModel(helper)
+            installBatch(helper.detail, in: model)
+            model.confirmApply()
+            try await waitForModel { !model.isBusy }
+            try expectEqual(model.lastPublication?.publishedCount, 1, "Keep the confirmed outcome for the completion state")
+            model.refreshFromUI()
+            try await waitForModel { !model.isBusy }
+            try expectEqual(model.lastPublication?.commitSHA, "verified-sha", "A read-only refresh cannot erase the receipt")
+            helper.detail = modelBatch([], mode: "incremental")
+            model.startSync()
+            try expectNil(model.lastPublication, "Starting a new check clears the prior completion state immediately")
+            try await waitForModel { !model.isBusy }
+            try expectNil(model.lastPublication, "An empty new check must not show the previous publication as its result")
+        }),
+        ("unknown remaining count does not imply the review queue is empty", {
+            let receipt = PublicationSummary(publishedCount: 1, newCount: 1, updatedCount: 0,
+                                             remainingCount: nil, needsLocalCleanup: false,
+                                             commitSHA: "verified-sha", commitURL: nil)
+            try expect(receipt.nextStep.contains("Reload results"), "Legacy or incomplete receipts require a queue check")
+            try expect(!receipt.nextStep.contains("complete"), "Unknown cannot stand in for zero remaining")
         }),
         ("partial publication keeps failed and unreviewed rows in the same run", {
             let helper = ModelTestHelper(detail: modelBatch(["accepted", "failed", "needs_review"], mode: "incremental"))
@@ -479,6 +651,9 @@ func appModelTests() -> [AsyncAppTest] {
             try expectEqual(model.visibleCurrentRecords.map(\.id), [2, 3], "Keep the original IDs of unpublished records")
             try expectEqual(model.selectedRecord?.status, "failed", "The failed result remains directly retryable")
             try expect(model.statusMessage.contains("2 results remain for review"), "Do not imply the whole batch was published")
+            try expectEqual(model.lastPublication?.publishedCount, 1, "The published count comes from the helper receipt")
+            try expectEqual(model.lastPublication?.remainingCount, 2, "The receipt records the unpublished portion separately")
+            try expectEqual(model.lastPublication?.newCount, 1, "Keep verified new/updated counts for the completed state")
             try expectNil(model.currentApplyPreview, "The old acceptance preview is no longer valid")
         }),
         ("partial publication remains recoverable after cleanup and refresh warnings", {
@@ -494,7 +669,8 @@ func appModelTests() -> [AsyncAppTest] {
             try expectEqual(model.currentBatchID, 7, "Keep the batch address for Reload Results")
             try expectNil(model.currentBatchDetail, "Do not leave published acceptance rows visible after refresh failure")
             try expectEqual(model.statusTone, .warning, "Publication remains a confirmed success with follow-up warnings")
-            try expect(model.statusMessage.contains("verified-sha") && model.statusMessage.contains("Local cleanup"), "Retain both confirmed publication and cleanup details")
+            try expect(model.statusMessage.contains("Published 1 artwork") && model.statusMessage.contains("Local cleanup"), "Retain both confirmed publication and cleanup details")
+            try expectEqual(model.lastPublication?.commitSHA, "verified-sha", "A failed refresh must not erase the publish receipt")
             helper.listError = nil
             model.refreshFromUI()
             try await waitForModel { !model.isBusy }
@@ -584,6 +760,9 @@ private func modelPreview(willPush: Bool) -> ApplyPreview {
 
 @MainActor
 private final class ModelTestHelper: ImporterHelper {
+    var holdSync = false
+    var syncContinuation: CheckedContinuation<StartSyncResponse, Error>?
+    var syncProgressHandler: (@Sendable (HelperProgress) -> Void)?
     var detail: BatchDetailResponse
     var detailsByID: [Int: BatchDetailResponse] = [:]
     var listedBatches: [BatchSummary] = []
@@ -647,8 +826,17 @@ private final class ModelTestHelper: ImporterHelper {
     }
     func startIncrementalSync(openAIKey: String, openAIModel: String, openAIModelSource: String, onProgress: (@Sendable (HelperProgress) -> Void)?) async throws -> StartSyncResponse {
         syncCalls += 1
+        syncProgressHandler = onProgress
         if let syncError { throw syncError }
+        if holdSync {
+            return try await withCheckedThrowingContinuation { syncContinuation = $0 }
+        }
         return StartSyncResponse(batch_id: detail.batch.id, urls_processed: detail.total_records)
+    }
+    func completeSync() {
+        syncContinuation?.resume(returning: StartSyncResponse(batch_id: detail.batch.id, urls_processed: detail.total_records))
+        syncContinuation = nil
+        syncProgressHandler = nil
     }
     func submitManualURL(_ url: String, openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> SubmitURLResponse {
         submitCalls += 1

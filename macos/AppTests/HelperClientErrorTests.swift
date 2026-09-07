@@ -2,6 +2,42 @@ import Foundation
 
 func helperClientErrorTests() -> [AppTest] {
     [
+        ("helper progress distinguishes known stages from numeric updates", {
+            for stage in ["checking_access", "discovering_urls", "reading_page", "validating_record"] {
+                for url in ["", "https://eventstructure.com/artwork"] {
+                    let line = "STAGE \(stage)" + (url.isEmpty ? "" : " \(url)")
+                    guard let progress = HelperProgress(stderrLine: Data(line.utf8)) else {
+                        throw AppTestFailure(message: "Expected known stage \(line)")
+                    }
+                    try expectEqual(progress.stage, stage, "Stage name")
+                    try expectEqual(progress.url, url, "Optional stage URL")
+                    try expectEqual(progress.completed, 0, "Stage events do not report completed counts")
+                    try expectEqual(progress.total, 0, "Stage events do not report totals")
+                }
+            }
+            guard let progress = HelperProgress(stderrLine: Data("PROGRESS 2/7 https://eventstructure.com/artwork".utf8)) else {
+                throw AppTestFailure(message: "Numeric progress must remain supported")
+            }
+            try expectEqual(progress.stage, nil, "Numeric events have no stage")
+            try expectEqual(progress.completed, 2, "Numeric completed count")
+            try expectEqual(progress.total, 7, "Numeric total count")
+            try expectEqual(progress.url, "https://eventstructure.com/artwork", "Numeric URL")
+        }),
+        ("helper progress preserves unknown stages and malformed protocol as stderr", {
+            for line in [
+                "STAGE future_stage https://eventstructure.com/artwork",
+                "STAGE checking_access_extra",
+                "STAGE reading_page unexpected failure details",
+                "STAGE validating_record file:///tmp/page",
+                "STAGE ",
+                "STAGE",
+                "ordinary STAGE checking_access",
+                "PROGRESS invalid/7 https://eventstructure.com/artwork",
+                "PROGRESS 2/7"
+            ] {
+                try expect(HelperProgress(stderrLine: Data(line.utf8)) == nil, "Unrecognized line must remain stderr: \(line)")
+            }
+        }),
         ("helper authentication marker survives the actual CLI Error prefix", {
             let error = HelperClientError.fromHelperStderr("STAGE checking_access\nError: [OPENAI_AUTHENTICATION_FAILED] OpenAI authentication failed. Check Settings.\n")
             guard case .authenticationFailed(let message) = error else { throw AppTestFailure(message: "Expected a typed authentication failure") }

@@ -1,5 +1,40 @@
 import Foundation
 
+/// A confirmed helper receipt. Keep it separate from the currently selected
+/// review batch so partial publication and later imports cannot alter it.
+struct PublicationSummary: Equatable {
+    let publishedCount: Int
+    let newCount: Int
+    let updatedCount: Int
+    let remainingCount: Int?
+    let needsLocalCleanup: Bool
+    let commitSHA: String
+    let commitURL: URL?
+
+    var shortCommitSHA: String { String(commitSHA.prefix(7)) }
+
+    var title: String {
+        "Published \(publishedCount) \(publishedCount == 1 ? "artwork" : "artworks") to GitHub"
+    }
+
+    var changesDescription: String {
+        "\(newCount) new · \(updatedCount) updated"
+    }
+
+    var nextStep: String {
+        if needsLocalCleanup {
+            return "Finish local cleanup before starting another import."
+        }
+        guard let remainingCount else {
+            return "Reload results to check whether anything remains to review."
+        }
+        if remainingCount > 0 {
+            return "\(remainingCount) \(remainingCount == 1 ? "result remains" : "results remain") for review. Continue reviewing or retry failed results."
+        }
+        return "This import is complete. You can check the site again or import another URL."
+    }
+}
+
 enum ReviewFilter: String, CaseIterable, Identifiable {
     case all, pending, accepted, failed
 
@@ -7,7 +42,7 @@ enum ReviewFilter: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .all: return "All"
-        case .pending: return "Pending"
+        case .pending: return "To Review"
         case .accepted: return "Accepted"
         case .failed: return "Failed"
         }

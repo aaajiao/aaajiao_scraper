@@ -10,34 +10,37 @@ struct ContentView: View {
         VStack(spacing: 0) {
             if model.shouldShowStatusBanner { ContextBannerView() }
             NavigationSplitView {
-            SidebarView()
-                .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 350)
-        } detail: {
-            DetailColumnView()
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    if model.hasSelectedRecord { SelectionActionBar() }
-                }
+                SidebarView()
+                    .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 350)
+            } detail: {
+                DetailColumnView()
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        if model.hasSelectedRecord { SelectionActionBar() }
+                    }
             }
         }
         .frame(minWidth: 900, minHeight: 620)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button { model.requestImportSheet() } label: {
-                    Label("Import URL", systemImage: "plus")
+                    Label("Import URL…", systemImage: "plus")
+                        .labelStyle(.titleOnly)
                 }
-                .disabled(model.isBusy || model.isShowingRecordEditor)
+                .disabled(!model.canOpenImportSheet)
                 .help("Import one artwork URL (⌘N)")
 
                 Button { model.startSync() } label: {
-                    Label("Sync Site", systemImage: "arrow.triangle.2.circlepath")
+                    Label("Check for Updates", systemImage: "arrow.triangle.2.circlepath")
+                        .labelStyle(.titleOnly)
                 }
                 .disabled(!model.canStartImport)
-                .help("Find new and changed artworks (⇧⌘I)")
-
+                .help("Find new and changed artworks on eventstructure.com for review (⇧⌘I)")
+            }
+            ToolbarItem(placement: .primaryAction) {
                 Menu {
-                    Button { model.refreshFromUI() } label: { Label("Reload Results", systemImage: "arrow.clockwise") }
+                    Button { model.refreshFromUI() } label: { Label("Reload Review Queue", systemImage: "arrow.clockwise") }
                         .disabled(model.isBusy || model.isShowingRecordEditor)
-                    Button { model.refreshWorkspaceBaseline() } label: { Label("Refresh Baseline", systemImage: "arrow.down.circle") }
+                    Button { model.refreshWorkspaceBaseline() } label: { Label("Get Latest Published Data", systemImage: "arrow.down.circle") }
                         .disabled(!model.canRefreshBaseline)
                     Button { model.openWorkspaceFolderOrCopyPath() } label: { Label("Show Workspace in Finder", systemImage: "folder") }
                         .disabled(model.settings.workspace_path.isEmpty)
@@ -47,43 +50,44 @@ struct ContentView: View {
                     Button("Reset Workspace…", role: .destructive) { model.requestWorkspaceReset() }
                         .disabled(model.isBusy || model.isShowingRecordEditor)
                 } label: { Label("More", systemImage: "ellipsis.circle") }
+                .labelStyle(.iconOnly)
+                .accessibilityLabel("More workspace actions")
                 .help("Workspace actions")
-
+            }
+            ToolbarItem(placement: .primaryAction) {
                 Button { model.requestApply() } label: {
-                    Label(publishTitle, systemImage: "arrow.up.circle")
+                    Label(model.gitHubSyncActionTitle, systemImage: "arrow.up.circle")
+                        .labelStyle(.titleOnly)
                 }
                 .disabled(!model.canRequestGitHubSync)
-                .help("Review and publish accepted results to GitHub")
+                .help("Publish accepted artworks to GitHub (⇧⌘P)")
             }
         }
         .sheet(isPresented: $model.isShowingImportSheet) { ImportURLSheet().environmentObject(model) }
         .sheet(isPresented: $model.isShowingRecordEditor) { RecordEditorSheet().environmentObject(model) }
         .sheet(isPresented: $model.isShowingApplyConfirmation) { ApplyReviewSheet().environmentObject(model) }
-        .alert("Reset workspace from bundled seed?", isPresented: $model.isShowingResetConfirmation) {
+        .alert("Reset the local workspace?", isPresented: $model.isShowingResetConfirmation) {
             Button("Cancel", role: .cancel) {}
-            Button("Reset", role: .destructive) { model.confirmWorkspaceReset() }
+            Button("Reset Workspace", role: .destructive) { model.confirmWorkspaceReset() }
         } message: {
-            Text("This removes local review results and restores the workspace, then loads the latest GitHub baseline when available.")
+            Text("This removes all local review results and reloads published artwork data. Artworks already on GitHub are kept.")
         }
         .confirmationDialog("Discard the current review run?", isPresented: $model.isShowingDiscardConfirmation, titleVisibility: .visible) {
             Button("Discard Run", role: .destructive) { model.confirmDiscardCurrentRun() }
             Button("Cancel", role: .cancel) {}
         } message: { Text("This removes the current run's unpublished review results.") }
-        .confirmationDialog("Delete the selected result?", isPresented: $model.isShowingDeleteConfirmation, titleVisibility: .visible) {
-            Button("Delete Result", role: .destructive) { model.confirmDeleteSelectedRecord() }
+        .confirmationDialog("Remove this artwork from review?", isPresented: $model.isShowingDeleteConfirmation, titleVisibility: .visible) {
+            Button("Remove from Queue", role: .destructive) { model.confirmDeleteSelectedRecord() }
             Button("Cancel", role: .cancel) {}
         } message: { Text("This removes the result from the review queue. Published artwork data is unchanged.") }
         .onAppear { model.bootstrapIfNeeded() }
     }
 
-    private var publishTitle: String {
-        let count = model.currentBatchDetail?.accepted_count ?? 0
-        return count > 0 ? "Publish \(count)…" : "Publish…"
-    }
 }
 
 private struct SidebarView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.openWindow) private var openWindow
     @FocusState private var isSearchFocused: Bool
 
     var body: some View {
@@ -112,27 +116,32 @@ private struct SidebarView: View {
                     .disabled(model.isBusy || model.isShowingRecordEditor)
                     .accessibilityLabel("Choose review run")
                 }
-                if let detail = model.currentBatchDetail {
+                if let detail = model.currentBatchDetail, !model.visibleCurrentRecords.isEmpty {
                     HStack(spacing: 12) {
                         QueueCount(title: "To review", count: detail.pending_count, tint: .secondary)
                         QueueCount(title: "Accepted", count: detail.accepted_count, tint: .green)
                         QueueCount(title: "Failed", count: detail.failed_count, tint: .orange)
                     }
-                }
-                TextField("Search title or URL", text: $model.searchText)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($isSearchFocused)
-                    .accessibilityLabel("Search review queue")
-                HStack {
-                    Picker("Show", selection: $model.reviewFilter) {
-                        ForEach(ReviewFilter.allCases) { filter in Text(filter.title).tag(filter) }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .accessibilityLabel("Filter review status")
-                    Spacer()
-                    Text("\(model.filteredCurrentRecords.count) shown")
+                    Text(model.reviewGuidance)
                         .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !model.visibleCurrentRecords.isEmpty {
+                    TextField("Search title or URL", text: $model.searchText)
+                        .textFieldStyle(.roundedBorder)
+                        .focused($isSearchFocused)
+                        .accessibilityLabel("Search review queue")
+                    HStack {
+                        Picker("Show", selection: $model.reviewFilter) {
+                            ForEach(ReviewFilter.allCases) { filter in Text(filter.title).tag(filter) }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .accessibilityLabel("Filter review status")
+                        Spacer()
+                        Text("\(model.filteredCurrentRecords.count) shown")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
             }
             .padding(16)
@@ -146,13 +155,13 @@ private struct SidebarView: View {
             .overlay {
                 if model.filteredCurrentRecords.isEmpty {
                     VStack(spacing: 8) {
-                        Image(systemName: model.hasCurrentRun ? "line.3.horizontal.decrease.circle" : "tray")
+                        Image(systemName: model.visibleCurrentRecords.isEmpty ? "tray" : "line.3.horizontal.decrease.circle")
                             .font(.title2).foregroundStyle(.secondary)
-                        Text(model.hasCurrentRun ? "No matching results" : "Your queue is empty")
+                        Text(model.visibleCurrentRecords.isEmpty ? "No artworks in review" : "No matching results")
                             .font(.headline)
-                        Text(model.hasCurrentRun ? "Try a different search or status filter." : "Import a URL or sync the site to begin.")
+                        Text(model.visibleCurrentRecords.isEmpty ? "Imported artworks will appear here." : "Try a different search or status filter.")
                             .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                        if !model.searchText.isEmpty || model.reviewFilter != .all {
+                        if !model.visibleCurrentRecords.isEmpty && (!model.searchText.isEmpty || model.reviewFilter != .all) {
                             Button("Clear Filters") { model.searchText = ""; model.reviewFilter = .all }
                         }
                     }
@@ -162,16 +171,22 @@ private struct SidebarView: View {
             Divider()
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Image(systemName: "arrow.down.circle")
                     if let url = model.baselineCommitURL {
-                        Link("Baseline \(String((model.settings.baseline_commit ?? "").prefix(7)))", destination: url)
+                        Link(destination: url) { Label("Published data", systemImage: "arrow.down.circle") }
+                            .help("View the published data used for comparison")
+                        Spacer()
+                        Text(String((model.settings.baseline_commit ?? "").prefix(7)))
+                            .foregroundStyle(.secondary).monospaced()
                     } else { Text(baselineLabel(model.settings.baseline_status)) }
-                    Spacer()
-                    Image(systemName: model.hasAuthenticationError ? "key.slash" : (model.hasVerifiedOpenAIKey ? "checkmark.circle" : "key"))
-                        .foregroundStyle(model.hasAuthenticationError ? Color.red : (model.hasVerifiedOpenAIKey ? Color.green : Color.secondary))
-                        .help(openAIKeyLabel)
-                        .accessibilityLabel(openAIKeyLabel)
                 }
+                Button { presentSettingsWindow(openWindow) } label: {
+                    Label(openAIKeyTitle, systemImage: model.hasAuthenticationError ? "key.slash" : "gearshape")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(model.hasAuthenticationError ? Color.red : Color.secondary)
+                .help(openAIKeyLabel)
+                .accessibilityLabel("Settings. \(openAIKeyLabel)")
                 if model.hasBaselineWarning {
                     Text(baselineDetail(model.settings)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
@@ -188,6 +203,12 @@ private struct SidebarView: View {
         if model.hasAuthenticationError { return "OpenAI API key rejected. Open Settings to update it." }
         if model.hasVerifiedOpenAIKey { return "OpenAI account access verified. Model permissions are checked during import." }
         return model.hasSavedOpenAIKey ? "OpenAI key saved; access has not been checked." : "OpenAI key required"
+    }
+
+    private var openAIKeyTitle: String {
+        if !model.openAIAccessErrorMessage.isEmpty { return "API needs attention · Settings…" }
+        if model.hasVerifiedOpenAIKey { return "API checked · Settings…" }
+        return model.hasSavedOpenAIKey ? "API key saved · Settings…" : "Set up API key…"
     }
 }
 
@@ -238,22 +259,111 @@ private struct DetailColumnView: View {
             if let record = model.selectedRecord {
                 RecordDetailView(record: record).id(record.id)
             } else {
-                VStack(spacing: 16) {
-                    Image(systemName: model.hasCurrentRun ? "sidebar.left" : "tray.and.arrow.down")
-                        .font(.system(size: 34, weight: .light)).foregroundStyle(.secondary)
-                    Text(model.hasCurrentRun ? "Choose a result to review" : "Bring your artwork archive up to date")
-                        .font(.title2.weight(.semibold))
-                    Text(model.hasCurrentRun ? "Inspect changes, make corrections, and accept the results you want to publish." : "Import an artwork URL or find new work across the site. Every result stays in your review queue until you publish it.")
-                        .foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 420)
-                    if !model.hasCurrentRun {
-                        Button("Import URL…") { model.requestImportSheet() }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(model.isBusy || model.isShowingRecordEditor)
-                    }
-                }
-                .padding(32).frame(maxWidth: .infinity, maxHeight: .infinity)
+                ReviewEmptyView()
             }
         }
+    }
+}
+
+private struct ReviewEmptyView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.openWindow) private var openWindow
+
+    private var hasHiddenRecords: Bool { !model.visibleCurrentRecords.isEmpty }
+    private var isImporting: Bool { model.isImportingURL || model.isSyncingSite }
+    private var hasNoUpdates: Bool {
+        model.hasCompletedEmptySiteCheck && !model.isBusy
+    }
+    private var publicationNeedsAttention: Bool {
+        guard let publication = model.lastPublication else { return false }
+        return publication.needsLocalCleanup || publication.remainingCount == nil
+    }
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Image(systemName: symbol)
+                .font(.system(size: 36, weight: .light)).foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            VStack(spacing: 10) {
+                Text(title).font(.title2.weight(.semibold))
+                Text(description).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !model.isBusy {
+                if hasHiddenRecords {
+                    if model.filteredCurrentRecords.isEmpty {
+                        Button("Show All Results") { model.searchText = ""; model.reviewFilter = .all }
+                    } else if model.canSelectNextPendingRecord {
+                        Button("Review Next Artwork") { model.selectNextPendingRecord() }
+                            .buttonStyle(.borderedProminent)
+                    }
+                    if model.canRequestGitHubSync {
+                        Button(model.gitHubSyncActionTitle) { model.requestApply() }
+                            .buttonStyle(.borderedProminent)
+                    }
+                } else {
+                    if !hasNoUpdates, let publication = model.lastPublication {
+                        if let url = publication.commitURL {
+                            Link(destination: url) { Label("View on GitHub", systemImage: "arrow.up.right.square") }
+                        }
+                    }
+                    if publicationNeedsAttention {
+                        Button("Reload Review Queue") { model.refreshFromUI() }
+                            .buttonStyle(.borderedProminent)
+                    } else if !model.canRunProtectedActions || model.hasAuthenticationError {
+                        Button(model.hasAuthenticationError ? "Open Settings…" : "Set Up API Key…") { presentSettingsWindow(openWindow) }
+                            .buttonStyle(.borderedProminent)
+                    } else {
+                        HStack(spacing: 12) {
+                            Button("Check for Updates") { model.startSync() }
+                                .buttonStyle(.borderedProminent).disabled(!model.canStartImport)
+                            Button("Import URL…") { model.requestImportSheet() }
+                                .disabled(!model.canOpenImportSheet)
+                        }
+                    }
+                    if model.lastPublication == nil && !hasNoUpdates {
+                        VStack(alignment: .leading, spacing: 12) {
+                            workflowStep("1", title: "Import", detail: "Find website updates or add one artwork URL.")
+                            workflowStep("2", title: "Review", detail: "Check the details, edit if needed, then accept.")
+                            workflowStep("3", title: "Publish", detail: "Upload accepted artworks to GitHub.")
+                        }
+                        .padding(.top, 12)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: 440)
+        .padding(28).frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func workflowStep(_ number: String, title: String, detail: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 14) {
+            Text(number).font(.callout.monospacedDigit()).foregroundStyle(.tertiary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.callout.weight(.medium))
+                Text(detail).font(.callout).foregroundStyle(.secondary)
+            }
+        }.accessibilityElement(children: .combine)
+    }
+
+    private var symbol: String {
+        if isImporting { return "tray.and.arrow.down" }
+        if hasHiddenRecords { return "sidebar.left" }
+        return hasNoUpdates || model.lastPublication != nil ? "checkmark.circle" : "tray.and.arrow.down"
+    }
+    private var title: String {
+        if isImporting { return "Your results will appear here" }
+        if hasHiddenRecords { return model.filteredCurrentRecords.isEmpty ? "No matching results" : "Choose an artwork to review" }
+        if hasNoUpdates { return "No new website updates found" }
+        if let publication = model.lastPublication { return publication.title }
+        return "Bring your artwork archive up to date"
+    }
+    private var description: String {
+        if isImporting { return "You can review each artwork after the import finishes." }
+        if hasHiddenRecords { return model.reviewGuidance }
+        if hasNoUpdates { return "This check found no new or changed artwork pages to import. You can still import a specific URL." }
+        if let publication = model.lastPublication { return "\(publication.changesDescription). \(publication.nextStep)" }
+        return "Import from eventstructure.com, review locally, and publish when you are ready."
     }
 }
 
@@ -358,7 +468,7 @@ private struct RecordDetailView: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .onAppear { showChanges = record.is_update && record.status != "failed" }
-        .navigationTitle(record.displayTitle)
+        .navigationTitle("Importer")
     }
 }
 
@@ -490,33 +600,48 @@ private struct ComparisonValue: View {
 private struct SelectionActionBar: View {
     @EnvironmentObject private var model: AppModel
     var body: some View {
-        HStack(spacing: 10) {
-            Menu {
-                Button { model.openSelectedRecordSourcePage() } label: { Label("Open Source Page", systemImage: "arrow.up.right.square") }
-                Button {
-                    guard let record = model.selectedRecord else { return }
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(record.url, forType: .string)
-                } label: { Label("Copy URL", systemImage: "doc.on.doc") }
-                Divider()
-                Button("Delete Result…", role: .destructive) { model.requestDeleteSelectedRecord() }
-                    .disabled(!model.canDeleteSelectedRecord)
-            } label: { Label("Result", systemImage: "ellipsis") }
-            .fixedSize()
-            Spacer(minLength: 8)
+        VStack(alignment: .leading, spacing: 10) {
             if model.selectedRecord?.status == "accepted" {
-                Label("Ready to publish", systemImage: "checkmark.circle.fill")
-                    .font(.callout).foregroundStyle(.green)
+                Label("Accepted locally. Publish to add this artwork to GitHub.", systemImage: "checkmark.circle")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Button("Edit Fields…") { model.beginEditingSelectedRecord() }
-                .disabled(!model.canEditSelectedRecord)
-            if model.selectedRecord?.status == "failed" || model.selectedRecord?.error_code == "openai_authentication_failed" || model.selectedRecord?.error_code == "openai_permission_denied" {
-                Button("Retry Import") { model.retrySelectedRecord() }
-                    .buttonStyle(.borderedProminent).disabled(!model.canRetrySelectedRecord)
-            } else {
-                Button("Accept & Next") { model.acceptSelectedRecord() }
-                    .buttonStyle(.borderedProminent).disabled(!model.canAcceptSelectedRecord)
-                    .help("Accept this result and move to the next item (⌘Return)")
+            HStack(spacing: 10) {
+                Menu {
+                    Button { model.openSelectedRecordSourcePage() } label: { Label("Open Source Page", systemImage: "arrow.up.right.square") }
+                    Button {
+                        guard let record = model.selectedRecord else { return }
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(record.url, forType: .string)
+                    } label: { Label("Copy URL", systemImage: "doc.on.doc") }
+                } label: { Label("More artwork actions", systemImage: "ellipsis") }
+                .labelStyle(.iconOnly)
+                .help("Open the source page or copy its URL")
+                .accessibilityLabel("More artwork actions")
+                .fixedSize()
+                Button("Remove…", role: .destructive) { model.requestDeleteSelectedRecord() }
+                    .disabled(!model.canDeleteSelectedRecord)
+                    .help("Remove this artwork from the review queue")
+                Spacer(minLength: 8)
+                Button("Edit Fields…") { model.beginEditingSelectedRecord() }
+                    .disabled(!model.canEditSelectedRecord)
+                if model.selectedRecord?.status == "failed" || model.selectedRecord?.error_code == "openai_authentication_failed" || model.selectedRecord?.error_code == "openai_permission_denied" {
+                    Button("Retry Import") { model.retrySelectedRecord() }
+                        .buttonStyle(.borderedProminent).disabled(!model.canRetrySelectedRecord)
+                } else if model.selectedRecord?.status == "accepted" {
+                    if model.canSelectNextPendingRecord {
+                        Button("Review Next") { model.selectNextPendingRecord() }
+                            .buttonStyle(.borderedProminent)
+                            .help("Show the next artwork awaiting review")
+                    } else {
+                        Button(model.gitHubSyncActionTitle) { model.requestApply() }
+                            .buttonStyle(.borderedProminent).disabled(!model.canRequestGitHubSync)
+                    }
+                } else {
+                    Button(model.acceptActionTitle) { model.acceptSelectedRecord() }
+                        .buttonStyle(.borderedProminent).disabled(!model.canAcceptSelectedRecord)
+                        .help("Accept this artwork for publishing (⌘Return)")
+                }
             }
         }
         .padding(.horizontal, 20).padding(.vertical, 14).background(.bar)
@@ -535,6 +660,14 @@ private struct ContextBannerView: View {
                     Text(busy).font(.callout.weight(.medium))
                     if let progress = model.syncProgress, progress.total > 0 {
                         ProgressView(value: Double(progress.completed), total: Double(progress.total)).frame(maxWidth: 240)
+                    }
+                    if !model.syncCurrentURL.isEmpty {
+                        Text(model.syncCurrentURL).font(.caption).foregroundStyle(.secondary)
+                            .lineLimit(1).truncationMode(.middle)
+                    }
+                    if model.canCancelCurrentImport {
+                        Text("Stopping keeps completed results for review.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                 } else {
                     Text(message).font(.callout).textSelection(.enabled)
@@ -585,6 +718,7 @@ private struct ContextBannerView: View {
 
 private struct ImportURLSheet: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.openWindow) private var openWindow
     @FocusState private var isFieldFocused: Bool
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -598,7 +732,14 @@ private struct ImportURLSheet: View {
                 Label(message, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.orange)
             }
             if !model.canRunProtectedActions {
-                Text("Save an OpenAI key in Settings before importing.").font(.callout).foregroundStyle(.secondary)
+                HStack {
+                    Text("Set up an OpenAI key to enable import.").font(.callout).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Open Settings…") {
+                        model.cancelImportSheet()
+                        presentSettingsWindow(openWindow)
+                    }
+                }
             }
             if model.isImportingURL {
                 HStack { ProgressView().controlSize(.small); Text(model.isCancellingImport ? "Stopping import…" : "Importing and validating artwork…") }
@@ -692,11 +833,24 @@ private struct ApplyReviewSheet: View {
                     QueueCount(title: "Updates", count: preview.updated_count, tint: .primary)
                 }
                 Divider()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(model.visibleCurrentRecords.filter { $0.status == "accepted" }) { record in
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(record.displayTitle).lineLimit(2)
+                                Spacer()
+                                Text(record.is_update ? "Update" : "New").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 150)
+                .accessibilityLabel("Artworks included in this publication")
                 LabeledContent("Branch", value: model.settings.baseline_branch ?? "main")
                 if let remote = model.settings.baseline_source_url, !remote.isEmpty {
                     LabeledContent("Repository") { Text(remote).font(.callout).multilineTextAlignment(.trailing).textSelection(.enabled) }
                 }
-                Text("The latest remote data is checked again before publishing. A conflicting artwork edit stops publication and keeps your review results.")
+                Text("These accepted artworks will be published to GitHub. If the same artwork changed there, publication stops so you can review the conflict.")
                     .font(.callout).foregroundStyle(.secondary)
                 if (model.currentBatchDetail?.pending_count ?? 0) + (model.currentBatchDetail?.failed_count ?? 0) > 0 {
                     Label("Unreviewed and failed results will stay in this queue.", systemImage: "tray")
@@ -755,6 +909,9 @@ struct SettingsView: View {
                         if !model.canSaveSettings {
                             Text("Enter a custom model name to enable Save.").foregroundStyle(.orange)
                         }
+                        if model.isSettingsDirty {
+                            Text("Unsaved changes. Check tests the key shown above; Save & Close uses it for future imports.")
+                        }
                         Text("Your API key is stored in macOS Keychain. Model selection is saved on this Mac.")
                     }
                 }
@@ -772,11 +929,11 @@ struct SettingsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading).padding([.horizontal, .top], 20)
             }
             HStack {
-                Button("Clear Key", role: .destructive) { model.clearSavedKey() }
+                Button("Remove Key", role: .destructive) { model.clearSavedKey() }
                     .disabled(!model.hasSavedOpenAIKey && model.trimmedDraftOpenAIKey.isEmpty)
                 Spacer()
-                Button("Revert") { model.revertSettings() }.disabled(!model.isSettingsDirty)
-                Button(model.isSettingsDirty ? "Save" : "Done") {
+                Button("Revert Changes") { model.revertSettings() }.disabled(!model.isSettingsDirty)
+                Button(model.isSettingsDirty ? "Save & Close" : "Done") {
                     if model.saveSettings() { closeSettingsWindow() }
                 }
                 .buttonStyle(.borderedProminent).disabled(!model.canSaveSettings)
@@ -784,7 +941,7 @@ struct SettingsView: View {
             }
             .padding(20).disabled(model.isBusy || model.isShowingRecordEditor)
         }
-        .frame(width: 520, height: 460)
+        .frame(width: 540, height: 500)
     }
 }
 
@@ -795,8 +952,8 @@ struct MenuBarMenuView: View {
         Text(model.busyStatusMessage ?? model.reviewStatusValue)
         Button { presentImporterWindow(openWindow) } label: { Label("Open Importer", systemImage: "sidebar.left") }
         Button { presentImporterWindow(openWindow); model.requestImportSheet() } label: { Label("Import URL…", systemImage: "plus") }
-            .disabled(model.isBusy || model.isShowingRecordEditor)
-        Button { model.startSync() } label: { Label("Sync Site", systemImage: "arrow.triangle.2.circlepath") }
+            .disabled(!model.canOpenImportSheet)
+        Button { presentImporterWindow(openWindow); model.startSync() } label: { Label("Check for Updates", systemImage: "arrow.triangle.2.circlepath") }
             .disabled(!model.canStartImport)
         if model.canCancelCurrentImport { Button("Stop Import") { model.cancelCurrentImport() } }
         Divider()
@@ -815,7 +972,7 @@ struct AppCommands: Commands {
         }
         CommandGroup(replacing: .newItem) {
             Button("Import URL…") { presentImporterWindow(openWindow); model.requestImportSheet() }
-                .keyboardShortcut("n", modifiers: .command).disabled(model.isBusy || model.isShowingRecordEditor)
+                .keyboardShortcut("n", modifiers: .command).disabled(!model.canOpenImportSheet)
         }
         CommandGroup(after: .textEditing) {
             Button("Find in Review Queue") { NotificationCenter.default.post(name: focusReviewSearchNotification, object: nil) }
@@ -823,20 +980,22 @@ struct AppCommands: Commands {
                 .disabled(model.isShowingRecordEditor || model.isShowingImportSheet || model.isShowingApplyConfirmation)
         }
         CommandMenu("Actions") {
-            Button("Reload Results") { model.refreshFromUI() }
+            Button("Reload Review Queue") { model.refreshFromUI() }
                 .keyboardShortcut("r", modifiers: .command).disabled(model.isBusy || model.isShowingRecordEditor)
-            Button("Sync Site") { model.startSync() }
+            Button("Check for Updates") { presentImporterWindow(openWindow); model.startSync() }
                 .keyboardShortcut("i", modifiers: [.command, .shift]).disabled(!model.canStartImport)
             Button("Stop Import") { model.cancelCurrentImport() }.disabled(!model.canCancelCurrentImport)
             Divider()
-            Button("Refresh Baseline") { model.refreshWorkspaceBaseline() }
+            Button("Get Latest Published Data") { model.refreshWorkspaceBaseline() }
                 .keyboardShortcut("r", modifiers: [.command, .option]).disabled(!model.canRefreshBaseline)
-            Button("Publish Accepted Results…") { model.requestApply() }
+            Button("Publish Accepted Artworks…") { presentImporterWindow(openWindow); model.requestApply() }
                 .keyboardShortcut("p", modifiers: [.command, .shift]).disabled(!model.canRequestGitHubSync)
         }
         CommandMenu("Review") {
-            Button("Accept & Next") { model.acceptSelectedRecord() }
+            Button(model.acceptActionTitle) { model.acceptSelectedRecord() }
                 .keyboardShortcut(.return, modifiers: .command).disabled(!model.canAcceptSelectedRecord)
+            Button("Review Next Artwork") { model.selectNextPendingRecord() }
+                .keyboardShortcut("]", modifiers: [.command, .option]).disabled(!model.canSelectNextPendingRecord)
             Button("Edit Fields…") { model.beginEditingSelectedRecord() }
                 .keyboardShortcut("e", modifiers: .command).disabled(!model.canEditSelectedRecord)
             Button("Retry Import") { model.retrySelectedRecord() }
@@ -844,7 +1003,7 @@ struct AppCommands: Commands {
             Divider()
             Button("Open Source Page") { model.openSelectedRecordSourcePage() }
                 .disabled(model.selectedRecordSourceURL == nil)
-            Button("Delete Selected Result…") { model.requestDeleteSelectedRecord() }
+            Button("Remove from Review Queue…") { model.requestDeleteSelectedRecord() }
                 .keyboardShortcut(.delete, modifiers: .command).disabled(!model.canDeleteSelectedRecord)
         }
         CommandGroup(replacing: .appTermination) {
@@ -861,8 +1020,7 @@ private func webURL(_ value: String) -> URL? {
 private func recordStatusLabel(_ status: String) -> String {
     switch status {
     case "accepted": return "Accepted"
-    case "needs_review": return "Needs review"
-    case "ready_for_review": return "Ready for review"
+    case "needs_review", "ready_for_review": return "To review"
     case "failed": return "Failed"
     default: return status.replacingOccurrences(of: "_", with: " ").capitalized
     }

@@ -71,6 +71,56 @@ private func expectProcessStopped(_ pid: pid_t) throws {
 
 func helperProcessTests() -> [AppTest] {
     [
+        ("stderr filter reconstructs stage and progress events across arbitrary chunks", {
+            var events: [HelperProgress] = []
+            let filter = StderrProgressFilter { events.append($0) }
+            let stream = Data("STAGE checking_access\nPROGRESS 0/7 https://eventstructure.com/artwork\nSTAGE reading_page https://eventstructure.com/artwork\nError: 页面不可用\nSTAGE validating_record https://eventstructure.com/artwork".utf8)
+            // Feed one byte at a time, including a split UTF-8 error message and
+            // an unterminated final stage, without relying on pipe timing.
+            for byte in stream { filter.consume(Data([byte])) }
+            try expectEqual(filter.finish(), Data("Error: 页面不可用\n".utf8), "Only protocol lines should be removed")
+            try expectEqual(events.count, 4, "Each complete protocol line emits once")
+            try expectEqual(events.map(\.stage), ["checking_access", nil, "reading_page", "validating_record"], "Event order survives chunk boundaries")
+            try expectEqual(events[1].total, 7, "Numeric progress remains intact")
+            try expectEqual(events[2].url, "https://eventstructure.com/artwork", "Stage URL survives chunk boundaries")
+        }),
+        ("stderr filter preserves unknown stages and final error bytes without a callback", {
+            let filter = StderrProgressFilter()
+            filter.consume(Data("STAGE discovering_urls\nSTAGE future_stage\nWarning: continuing\nSTAGE reading_page unexpected error\nError: final failure".utf8))
+            try expectEqual(
+                filter.finish(),
+                Data("STAGE future_stage\nWarning: continuing\nSTAGE reading_page unexpected error\nError: final failure".utf8),
+                "Unknown protocol and the unterminated final error are preserved exactly"
+            )
+        }),
+        ("helper hides valid stage protocol without changing the final error classification", {
+            for (stderr, expected) in [
+                ("STAGE checking_access\\nError: [OPENAI_AUTHENTICATION_FAILED] Check Settings.\\n", "Check Settings."),
+                ("STAGE reading_page https://eventstructure.com/artwork\\nSTAGE future_stage\\nError: page unavailable", "STAGE future_stage\nError: page unavailable")
+            ] {
+                let fixture = try HelperProcessFixture { _ in
+                    """
+                    printf '\(stderr)' >&2
+                    exit 1
+                    """
+                }
+                do {
+                    _ = try fixture.client().runRawCommand(arguments: ["submitManualURL"], timeout: 2)
+                    throw AppTestFailure(message: "Expected helper failure")
+                } catch let error as HelperClientError {
+                    try expectEqual(error.errorDescription, expected, "Progress must not leak into the visible failure")
+                    if stderr.contains("OPENAI_AUTHENTICATION_FAILED") {
+                        guard case .authenticationFailed = error else {
+                            throw AppTestFailure(message: "Stage filtering must preserve typed authentication errors")
+                        }
+                    } else {
+                        guard case .nonZeroExit = error else {
+                            throw AppTestFailure(message: "Ordinary failures must retain their classification")
+                        }
+                    }
+                }
+            }
+        }),
         ("helper timeout kills and reaps an uncooperative process group", {
             let fixture = try HelperProcessFixture { directory in
                 """

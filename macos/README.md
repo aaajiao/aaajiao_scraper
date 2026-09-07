@@ -52,9 +52,9 @@ by subsequent syncs.
 ## Current flow
 
 1. Bootstrap a dedicated workspace from bundled seed data, then refresh the data baseline from GitHub.
-2. Run incremental sync or submit a manual artwork URL.
-3. Review `ready_for_review` and `needs_review` records in the menu bar app.
-4. Preview the apply transaction, then explicitly confirm the push to `origin/<baseline
+2. Choose **Check for Updates** to find new/changed website pages, or **Import URL…** for one artwork.
+3. Review artwork details and changes, edit as needed, then **Accept**. Acceptance saves a local review decision.
+4. Choose **Publish…**, check the included artworks, then explicitly confirm the push to `origin/<baseline
    branch>` (pull locally afterward to pick up the new commit in this checkout).
 
 ## Validation model
@@ -118,6 +118,24 @@ The sidebar switches between review runs and filters results by status, title, C
 title, or URL. Accepting a result advances to the next pending result. Failed rows have an
 in-place retry action, and active imports have a Stop Import control.
 
+Primary toolbar commands use visible text; ambiguous import and publish symbols are omitted to keep narrow windows readable. **Check for Updates**
+imports from the website; **Publish** uploads accepted artworks to GitHub. Generic More
+menus use labelled, accessible icon controls. Removal and reset actions keep text and
+scope-specific confirmation. The sidebar's Settings entry shows the saved/checked/error
+state of API access and opens the settings window.
+
+The last pending artwork uses **Accept** rather than promising a next item. An accepted
+artwork offers **Review Next** while other pending items exist, then **Publish**. Review
+Next clears search/status filters to reveal the pending item. Empty queues, zero-update
+checks, no matching search results, and confirmed publication have separate explanations
+and actions. The publication receipt reports counts and a GitHub link; local cleanup
+warnings remain visible, and a new import clears the preceding completion card.
+
+Site imports report API checking, update discovery, page reading, and detail validation
+as distinct phases, with the current URL and completed/total progress. Stopping leaves
+completed work available for review. An import entry without a saved key opens an
+explanation with a Settings action; it never silently ignores the click.
+
 Artwork updates open in a Changes view that compares the saved baseline with the effective
 values to be published. Old records without a baseline snapshot are labelled as unknown.
 The Details view includes lazy image previews, source links, bilingual descriptions, and
@@ -126,11 +144,12 @@ an accepted result to `needs_review`. Explicit corrections can shorten or clear 
 remove images; they are preserved exactly when the result is subsequently accepted and
 published. The source URL remains the record's fixed identity.
 
-Publication has a dedicated review sheet showing accepted/new/updated counts, repository,
+Publication has a dedicated review sheet showing artwork titles, accepted/new/updated counts, repository,
 branch, and target files. Failed and unreviewed results remain in the queue after a partial
 publication. Secondary workspace actions are grouped in the toolbar's More menu.
 
-Keyboard commands: `⌘N` import URL, `⇧⌘I` sync site, `⌘R` reload, `⌘Return` accept and next,
+Keyboard commands: `⌘N` import URL, `⇧⌘I` check for updates, `⌘R` reload, `⌘Return` accept,
+`⌥⌘]` review next artwork,
 `⌘E` edit fields, `⇧⌘R` retry, `⇧⌘P` review publication, and `⌘,` settings. Editing uses native
 text controls and supports their standard selection, copy/paste, and undo behavior.
 

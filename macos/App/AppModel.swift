@@ -46,8 +46,12 @@ final class AppModel: ObservableObject {
     @Published var currentBatchDetail: BatchDetailResponse?
     @Published var selectedRecordID: Int?
     @Published var currentApplyPreview: ApplyPreview?
+    @Published private(set) var lastPublication: PublicationSummary?
+    @Published private var completedEmptySiteCheckBatchID: Int?
     @Published var currentBusyAction: ImporterBusyAction?
     @Published var syncProgress: SyncProgress?
+    @Published var syncStage: String?
+    @Published var syncCurrentURL = ""
     @Published var isCancellingImport = false
     @Published private(set) var isQuitRequested = false
     @Published var isShowingApplyConfirmation = false
@@ -199,6 +203,10 @@ final class AppModel: ObservableObject {
         canRunProtectedActions && !isReviewInteractionLocked && !hasOpenReviewModal
     }
 
+    var canOpenImportSheet: Bool {
+        !isReviewInteractionLocked && !hasOpenReviewModal
+    }
+
     var manualURLValidationMessage: String? {
         artworkURLValidationMessage(manualURL)
     }
@@ -273,27 +281,80 @@ final class AppModel: ObservableObject {
         currentBatchDetail != nil
     }
 
+    var hasCompletedEmptySiteCheck: Bool {
+        guard let completedEmptySiteCheckBatchID, let detail = currentBatchDetail else { return false }
+        return currentBatchID == completedEmptySiteCheckBatchID
+            && detail.batch.id == completedEmptySiteCheckBatchID
+            && detail.total_records == 0
+    }
+
     var hasSelectedRecord: Bool {
         selectedRecord != nil
     }
 
     var currentRunTitle: String {
         guard let batch = currentBatchSummary else { return "No current results" }
-        return batch.mode == "manual" ? "Single URL import" : "Site sync in review"
+        return batch.mode == "manual" ? "URL import" : "Site import"
     }
 
     var reviewStatusValue: String {
         guard let detail = currentBatchDetail else { return "Nothing to review" }
-        if detail.accepted_count > 0 {
-            return "\(detail.accepted_count) accepted"
+        var counts: [String] = []
+        if detail.pending_count > 0 { counts.append("\(detail.pending_count) to review") }
+        if detail.accepted_count > 0 { counts.append("\(detail.accepted_count) accepted") }
+        if detail.failed_count > 0 { counts.append("\(detail.failed_count) failed") }
+        return counts.isEmpty ? "Nothing to review" : counts.joined(separator: " · ")
+    }
+
+    var reviewGuidance: String {
+        guard let detail = currentBatchDetail else {
+            return availableBatches.isEmpty
+                ? "Check the site for new artwork pages, or import a specific URL."
+                : "Choose an import to continue reviewing."
         }
         if detail.pending_count > 0 {
-            return "\(detail.pending_count) pending"
+            return "Review each result and accept the changes you want to publish."
+        }
+        if detail.accepted_count > 0 {
+            return detail.failed_count > 0
+                ? "Publish accepted results now, or retry the failed results first."
+                : "Review is complete. Publish the accepted results to GitHub."
         }
         if detail.failed_count > 0 {
-            return "\(detail.failed_count) failed"
+            return "Select a failed result to retry, or remove it from this import."
         }
-        return "Ready"
+        return "No results to review in this import. Check the site again or import a URL."
+    }
+
+    var acceptActionTitle: String {
+        guard let selectedRecord else { return "Accept" }
+        let hasNext = filteredCurrentRecords.contains {
+            $0.id != selectedRecord.id && ReviewFilter.pending.matches($0) && recordAccessError($0) == nil
+        }
+        return canAcceptSelectedRecord && hasNext ? "Accept & Next" : "Accept"
+    }
+
+    private var nextPendingReviewRecord: ProposedRecord? {
+        let records = visibleCurrentRecords
+        let selectedIndex = records.firstIndex { $0.id == selectedRecordID }
+        let orderedRecords: [ProposedRecord]
+        if let selectedIndex {
+            orderedRecords = Array(records.dropFirst(selectedIndex + 1)) + Array(records.prefix(selectedIndex))
+        } else {
+            orderedRecords = records
+        }
+        return orderedRecords.first { ReviewFilter.pending.matches($0) && recordAccessError($0) == nil }
+    }
+
+    var canSelectNextPendingRecord: Bool {
+        !isReviewInteractionLocked && !hasOpenReviewModal && nextPendingReviewRecord != nil
+    }
+
+    func selectNextPendingRecord() {
+        guard canSelectNextPendingRecord, let next = nextPendingReviewRecord else { return }
+        searchText = ""
+        reviewFilter = .pending
+        selectedRecordID = next.id
     }
 
     var canRequestGitHubSync: Bool {
@@ -306,7 +367,8 @@ final class AppModel: ObservableObject {
     }
 
     var gitHubSyncActionTitle: String {
-        "Sync GitHub…"
+        let count = currentBatchDetail?.accepted_count ?? 0
+        return count > 0 ? "Publish \(count)…" : "Publish…"
     }
 
     var gitHubSyncActionSymbol: String {
@@ -376,7 +438,7 @@ final class AppModel: ObservableObject {
             case .importURL, .syncSite, .retryRecord:
                 return "Stopping import before quitting..."
             case .syncGitHub:
-                return "Finishing GitHub sync before quitting..."
+                return "Finishing publication before quitting..."
             case .none:
                 return "Quitting..."
             default:
@@ -396,8 +458,18 @@ final class AppModel: ObservableObject {
         case .checkOpenAIKey:
             return "Checking OpenAI account access..."
         case .syncSite:
-            guard let syncProgress else { return "Checking OpenAI access and finding artworks..." }
-            return "Syncing site... (\(syncProgress.completed)/\(syncProgress.total))"
+            let pagePosition = syncProgress.flatMap { progress in
+                progress.total > 0 ? " \(min(progress.completed + 1, progress.total)) of \(progress.total)" : nil
+            } ?? ""
+            switch syncStage {
+            case "checking_access": return "Checking API access…"
+            case "discovering_urls": return "Finding site updates…"
+            case "reading_page": return "Reading artwork page…\(pagePosition)"
+            case "validating_record": return "Checking artwork details…\(pagePosition)"
+            default:
+                guard let syncProgress else { return "Checking API access and finding site updates…" }
+                return "Importing artwork pages… \(syncProgress.completed) of \(syncProgress.total) processed"
+            }
         case .reloadResults:
             return "Reloading results..."
         case .acceptRecord:
@@ -409,9 +481,9 @@ final class AppModel: ObservableObject {
         case .resetWorkspace:
             return "Resetting workspace..."
         case .prepareGitHubSync:
-            return "Preparing GitHub sync preview..."
+            return "Preparing publication preview..."
         case .syncGitHub:
-            return "Syncing accepted results..."
+            return "Publishing accepted results to GitHub..."
         case .refreshBaseline:
             return "Refreshing workspace baseline..."
         case .none:
@@ -443,6 +515,12 @@ final class AppModel: ObservableObject {
         guard !isShowingRecordEditor || action == .editRecord else { return false }
         guard !isShowingImportSheet || action == .importURL else { return false }
         guard !isShowingApplyConfirmation || action == .syncGitHub else { return false }
+        if [.syncSite, .importURL, .resetWorkspace, .discardRun, .deleteRecord].contains(action) {
+            lastPublication = nil
+        }
+        if [.syncSite, .importURL, .retryRecord, .resetWorkspace, .discardRun].contains(action) {
+            completedEmptySiteCheckBatchID = nil
+        }
         currentBusyAction = action
         return true
     }
@@ -572,11 +650,15 @@ final class AppModel: ObservableObject {
         guard beginExclusive(.syncSite) else { return }
         let importKey = savedOpenAIKey
         syncProgress = nil
-        setStatus("Syncing site...", tone: .info)
+        syncStage = nil
+        syncCurrentURL = ""
+        setStatus("Checking the site for new artwork pages...", tone: .info)
         Task {
             defer {
                 endExclusive()
                 syncProgress = nil
+                syncStage = nil
+                syncCurrentURL = ""
             }
             do {
                 let result = try await helper.startIncrementalSync(
@@ -588,7 +670,12 @@ final class AppModel: ObservableObject {
                             // Ignore stray progress lines that arrive after this
                             // sync has already finished/been superseded.
                             guard let self, self.currentBusyAction == .syncSite else { return }
-                            self.syncProgress = SyncProgress(completed: progress.completed, total: progress.total)
+                            if let stage = progress.stage {
+                                self.syncStage = stage
+                                self.syncCurrentURL = progress.url
+                            } else {
+                                self.syncProgress = SyncProgress(completed: progress.completed, total: progress.total)
+                            }
                         }
                     }
                 )
@@ -601,7 +688,7 @@ final class AppModel: ObservableObject {
     }
 
     func requestImportSheet() {
-        guard canStartImport else { return }
+        guard canOpenImportSheet else { return }
         isShowingImportSheet = true
     }
 
@@ -859,22 +946,24 @@ final class AppModel: ObservableObject {
             clearOpenAIAccessFailure()
         }
         if detail.total_records == 0 {
-            setStatus("No new URLs to import.", tone: .info)
+            if isSiteSync { completedEmptySiteCheckBatchID = detail.batch.id }
+            setStatus("No new URLs were found in this site check. Use Import URL to revisit a specific artwork.", tone: .info)
         } else if detail.failed_count == detail.total_records {
             let failure = detail.records.first(where: { $0.status == "failed" })?.error_message
             let reason = failure.flatMap { $0.isEmpty ? nil : $0 } ?? "The URLs could not be imported."
             setStatus("Import failed: \(reason)", tone: .error)
         } else if detail.failed_count > 0 {
             let reviewable = detail.total_records - detail.failed_count - detail.deleted_count
-            setStatus("Imported \(reviewable) results for review; \(detail.failed_count) failed. Select a failed result to retry.", tone: .warning)
+            setStatus("Imported \(reviewable) \(reviewable == 1 ? "result" : "results") for review; \(detail.failed_count) failed. Accept the changes you want to publish, or select a failed result to retry.", tone: .warning)
         } else if isSiteSync {
-            setStatus("Imported \(detail.total_records) results for review.", tone: .success)
+            setStatus("Imported \(detail.total_records) \(detail.total_records == 1 ? "result" : "results"). Review and accept the changes before publishing.", tone: .success)
         } else {
-            setStatus("Imported result is ready for review.", tone: .success)
+            setStatus("Import complete. Review the result and accept the changes before publishing.", tone: .success)
         }
     }
 
     private func reportImportError(_ error: Error, usedKey: String) async {
+        completedEmptySiteCheckBatchID = nil
         // Surface authentication/permission failures before doing any recovery
         // reads. The absence of a new batch must never erase this diagnosis.
         recordAccessFailure(error, usedKey: usedKey)
@@ -884,6 +973,9 @@ final class AppModel: ObservableObject {
             setStatus(display(error), tone: .error)
         }
         syncProgress = nil
+        syncStage = nil
+        syncCurrentURL = ""
+        var didReloadResults = false
         if !isQuitRequested {
             // The helper may have committed partial records before cancellation
             // or an error. Refresh the batch inventory so that run remains
@@ -900,13 +992,20 @@ final class AppModel: ObservableObject {
                 if let recoveryBatchID {
                     try await loadBatch(batchID: recoveryBatchID, updateStatusMessage: false)
                 }
+                didReloadResults = true
             } catch {
                 // Keep the original operation error visible. A later Reload
                 // Results can retry this read without rerunning the import.
             }
         }
         if case HelperClientError.cancelled = error {
-            setStatus("Import cancelled. Use Reload Results to inspect any saved progress.", tone: .info)
+            if didReloadResults {
+                setStatus(visibleCurrentRecords.isEmpty
+                    ? "Import stopped. No saved results to review."
+                    : "Import stopped. Review the saved results, then publish the changes you accept.", tone: .info)
+            } else {
+                setStatus("Import stopped. Use Reload Results to inspect any saved progress.", tone: .info)
+            }
         } else {
             setStatus(display(error), tone: .error)
         }
@@ -983,7 +1082,16 @@ final class AppModel: ObservableObject {
                     keyValidationMessage = "Account access checked. Access to each model is checked during import."
                     keyValidationTone = .success
                     if key == savedOpenAIKey && accessFailureKind != .permission {
+                        // A successful account check resolves only its own
+                        // earlier authentication/connectivity diagnosis. Do
+                        // not erase an unrelated workspace or publish error.
+                        let restoresDisplayedAccessError = accessFailureKind != nil
+                            && statusTone == .error
+                            && statusMessage == openAIAccessErrorMessage
                         clearOpenAIAccessFailure()
+                        if restoresDisplayedAccessError {
+                            setStatus("OpenAI account access checked. You can retry the import.", tone: .success)
+                        }
                     }
                 } else {
                     keyValidationMessage = result.message.isEmpty ? "Account access could not be verified. Retry the check when the connection is available." : result.message
@@ -1017,11 +1125,11 @@ final class AppModel: ObservableObject {
                 if let batchID = currentBatchID {
                     try await loadBatch(batchID: batchID, updateStatusMessage: false)
                 }
-                let pending = filteredCurrentRecords.filter { ReviewFilter.pending.matches($0) }
+                let pending = filteredCurrentRecords.filter { ReviewFilter.pending.matches($0) && recordAccessError($0) == nil }
                 if let next = nextIDs.first(where: { candidate in pending.contains(where: { $0.id == candidate.id }) }) ?? pending.first {
                     selectedRecordID = next.id
                 }
-                setStatus("Accepted \(record.displayTitle)", tone: .success)
+                setStatus("Accepted \(record.displayTitle). \(reviewGuidance)", tone: .success)
             } catch {
                 setStatus(display(error), tone: .error)
             }
@@ -1051,7 +1159,7 @@ final class AppModel: ObservableObject {
                     availableBatches.removeAll { $0.id == batchID }
                     clearCurrentRun()
                     try await refresh(allowFallbackBatch: false)
-                    setStatus("Discarded current results", tone: .success)
+                    setStatus("Removed the last result from this review queue.", tone: .success)
                     return
                 }
 
@@ -1062,7 +1170,7 @@ final class AppModel: ObservableObject {
                     openAIModelSource: savedOpenAIModelSelection.source
                 )
                 try await loadBatch(batchID: batchID, updateStatusMessage: false)
-                setStatus("Deleted \(record.displayTitle)", tone: .success)
+                setStatus("Removed \(record.displayTitle) from the review queue.", tone: .success)
             } catch {
                 setStatus(display(error), tone: .error)
             }
@@ -1090,7 +1198,7 @@ final class AppModel: ObservableObject {
                 availableBatches.removeAll { $0.id == batchID }
                 clearCurrentRun()
                 try await refresh(allowFallbackBatch: false)
-                setStatus("Discarded current results", tone: .success)
+                setStatus("Discarded the current import run.", tone: .success)
             } catch {
                 setStatus(display(error), tone: .error)
             }
@@ -1104,7 +1212,7 @@ final class AppModel: ObservableObject {
         // Git branch/upstream configuration may have changed outside the app.
         // Recheck on every explicit attempt, including after a failed preview.
         currentApplyPreview = nil
-        setStatus("Preparing GitHub sync preview...", tone: .info)
+        setStatus("Preparing publication preview...", tone: .info)
         Task {
             defer { endExclusive() }
             do {
@@ -1127,7 +1235,7 @@ final class AppModel: ObservableObject {
             isShowingApplyConfirmation = true
         } else {
             let message = preview.error_message.isEmpty
-                ? "Accepted results are not ready to sync to GitHub yet."
+                ? "Accepted results are not ready to publish to GitHub yet."
                 : preview.error_message
             setStatus(message, tone: .warning)
         }
@@ -1136,7 +1244,7 @@ final class AppModel: ObservableObject {
     func confirmApply() {
         guard let batchID = currentBatchID else { return }
         guard beginExclusive(.syncGitHub) else { return }
-        setStatus("Syncing accepted results to GitHub...", tone: .info)
+        setStatus("Publishing accepted results to GitHub...", tone: .info)
         Task {
             defer { endExclusive() }
             let result: ApplyResponse
@@ -1146,6 +1254,15 @@ final class AppModel: ObservableObject {
                     openAIKey: savedOpenAIKey,
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
                     openAIModelSource: savedOpenAIModelSelection.source
+                )
+                lastPublication = PublicationSummary(
+                    publishedCount: result.preview.accepted_count,
+                    newCount: result.preview.new_count,
+                    updatedCount: result.preview.updated_count,
+                    remainingCount: result.remaining_records,
+                    needsLocalCleanup: !(result.warning_message ?? "").isEmpty,
+                    commitSHA: result.applied_commit_sha,
+                    commitURL: githubCommitURL(sourceURL: settings.baseline_source_url, commit: result.applied_commit_sha)
                 )
                 isShowingApplyConfirmation = false
                 if (result.remaining_records ?? 0) > 0 {
@@ -1164,13 +1281,15 @@ final class AppModel: ObservableObject {
             // front so a failing read-only refresh can only downgrade it to a
             // warning, never present it as the sync itself having failed.
             let remaining = result.remaining_records ?? 0
-            let remainingMessage = remaining > 0 ? " \(remaining) results remain for review." : ""
+            let publicationMessage = lastPublication.map { "\($0.title). \($0.nextStep)" } ?? "Published accepted results to GitHub."
             do {
                 try await refresh(allowFallbackBatch: false)
                 if let warning = result.warning_message, !warning.isEmpty {
-                    setStatus("Synced to GitHub at \(result.applied_commit_sha).\(remainingMessage) \(warning)", tone: .warning)
+                    setStatus("\(publicationMessage) \(warning)", tone: .warning)
+                } else if result.remaining_records == nil {
+                    setStatus(publicationMessage, tone: .warning)
                 } else {
-                    setStatus("Synced to GitHub at \(result.applied_commit_sha).\(remainingMessage)", tone: .success)
+                    setStatus(publicationMessage, tone: .success)
                 }
             } catch {
                 if remaining > 0 {
@@ -1182,7 +1301,7 @@ final class AppModel: ObservableObject {
                     currentApplyPreview = nil
                 }
                 let cleanupWarning = result.warning_message.map { " \($0)" } ?? ""
-                setStatus("Synced to GitHub at \(result.applied_commit_sha).\(remainingMessage) Reloading results failed — use Reload Results.\(cleanupWarning)", tone: .warning)
+                setStatus("\(publicationMessage) Reloading results failed. Use Reload Results.\(cleanupWarning)", tone: .warning)
             }
         }
     }
@@ -1342,6 +1461,7 @@ final class AppModel: ObservableObject {
         // mid-operation (e.g. before a follow-up refresh) and the busy gate
         // must stay held until the whole action finishes via endExclusive().
         currentBatchID = nil
+        completedEmptySiteCheckBatchID = nil
         currentBatchDetail = nil
         selectedRecordID = nil
         currentApplyPreview = nil

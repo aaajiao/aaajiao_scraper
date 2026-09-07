@@ -97,6 +97,19 @@ retry, field editing and validation, the publication sheet, image loading/fallba
 Settings. Check a compact window and both light/dark appearance. The preview uses in-memory
 fixtures and never publishes to a real repository.
 
+- At 900 × 620, Import URL, Check for Updates, and Publish retain visible text; More has
+  a VoiceOver name, and review actions fit without clipping.
+- Check Empty Queue, No Site Updates, and All Accepted preview scenarios; search with no
+  matches must differ from a genuinely empty queue.
+- Accepting the last pending artwork exposes the publication step; Review Next reveals
+  pending artworks even when a search or status filter had hidden them.
+- Publication lists included artworks and returns a count-based confirmation; partial
+  publication and local-cleanup warnings do not imply that all review work is finished.
+- Import without a key gives a Settings entry point. Settings distinguishes checking the
+  draft from saving it, and labels unsaved changes.
+- Progress shows the actual helper stage, current URL, completed count, and Stop Import.
+  Known STAGE protocol lines never leak into normal helper errors, even without a callback.
+
 ## 5. Optional live validation
 
 Run one real import in a temporary workspace. `OPENAI_API_KEY` is optional on this script:

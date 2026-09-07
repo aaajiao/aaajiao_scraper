@@ -15,6 +15,23 @@ enum PreviewAuthenticationMode: String, CaseIterable, Identifiable {
     }
 }
 
+enum PreviewQueueScenario: String, CaseIterable, Identifiable {
+    case emptyQueue
+    case noSiteUpdates
+    case allAccepted
+    case sampleData
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .emptyQueue: return "Empty Queue"
+        case .noSiteUpdates: return "No Site Updates"
+        case .allAccepted: return "All Accepted"
+        case .sampleData: return "Restore Sample Data"
+        }
+    }
+}
+
 /// A complete in-memory implementation of the production helper contract.
 /// It has no HelperClient, subprocess, Git, filesystem-write or credential API.
 @MainActor
@@ -26,6 +43,9 @@ final class PreviewHelper: ImporterHelper {
     private var records: [[String: Any]] = []
     private var templateRecords: [[String: Any]] = []
     private var batchModes: [Int: String] = [:]
+    private var templateBatchModes: [Int: String] = [:]
+    private var completedBatchIDs: Set<Int> = []
+    private(set) var queueScenario: PreviewQueueScenario = .sampleData
     private var nextBatchID = 303
     private var nextRecordID = 3001
     private var isImportRunning = false
@@ -50,8 +70,39 @@ final class PreviewHelper: ImporterHelper {
             guard let id = batch["id"] as? Int, let mode = batch["mode"] as? String else { return nil }
             return (id, mode)
         })
+        templateBatchModes = batchModes
         nextBatchID = 303
         nextRecordID = 3001
+    }
+
+    func selectQueueScenario(_ scenario: PreviewQueueScenario) {
+        guard !isImportRunning else { return }
+        records = templateRecords
+        batchModes = templateBatchModes
+        completedBatchIDs = []
+        nextBatchID = 303
+        nextRecordID = 3001
+        cancellationRequested = false
+        queueScenario = scenario
+        switch scenario {
+        case .emptyQueue:
+            records = []
+            batchModes = [:]
+        case .noSiteUpdates:
+            records = []
+            batchModes = [nextBatchID: "incremental"]
+            completedBatchIDs.insert(nextBatchID)
+            nextBatchID += 1
+        case .allAccepted:
+            for index in records.indices {
+                records[index]["status"] = "accepted"
+                records[index]["error_message"] = NSNull()
+                records[index]["error_code"] = NSNull()
+                records[index]["error_history"] = [[String: String]]()
+            }
+        case .sampleData:
+            break
+        }
     }
 
     private func settings(model: String = "gpt-4.1", source: String = "default", hasKey: Bool = true) -> AppSettings {
@@ -83,7 +134,7 @@ final class PreviewHelper: ImporterHelper {
         return BatchSummary(
             id: batchID,
             mode: batchModes[batchID] ?? "manual",
-            status: accepted > 0 ? "ready_to_apply" : "reviewing",
+            status: completedBatchIDs.contains(batchID) ? "completed" : (accepted > 0 ? "ready_to_apply" : "reviewing"),
             total_records: rows.count,
             accepted_records: accepted,
             ready_records: rows.filter { $0["status"] as? String == "ready_for_review" }.count,
@@ -141,17 +192,36 @@ final class PreviewHelper: ImporterHelper {
         }
     }
 
-    private func pauseImport(onProgress: (@Sendable (HelperProgress) -> Void)? = nil) async throws {
-        simulatedScrapeCount += 1
+    private func pauseImport(total: Int = 4, onProgress: (@Sendable (HelperProgress) -> Void)? = nil) async throws {
+        if total > 0 { simulatedScrapeCount += 1 }
         isImportRunning = true
         cancellationRequested = false
         defer { isImportRunning = false }
-        for step in 1...4 {
-            try await Task.sleep(nanoseconds: 200_000_000)
-            if cancellationRequested { throw HelperClientError.cancelled }
-            if let progress = HelperProgress(stderrLine: Data("PROGRESS \(step)/4 https://eventstructure.com/preview".utf8)) {
+
+        func emit(_ line: String) {
+            if let progress = HelperProgress(stderrLine: Data(line.utf8)) {
                 onProgress?(progress)
             }
+        }
+
+        func pause() async throws {
+            try await Task.sleep(nanoseconds: 400_000_000)
+            if cancellationRequested { throw HelperClientError.cancelled }
+        }
+
+        emit("STAGE checking_access")
+        try await pause()
+        emit("STAGE discovering_urls")
+        try await pause()
+        guard total > 0 else { return }
+        emit("PROGRESS 0/\(total) https://eventstructure.com/preview-1")
+        for step in 1...total {
+            let url = "https://eventstructure.com/preview-\(step)"
+            emit("STAGE reading_page \(url)")
+            try await pause()
+            emit("STAGE validating_record \(url)")
+            try await pause()
+            emit("PROGRESS \(step)/\(total) \(url)")
         }
     }
 
@@ -168,7 +238,7 @@ final class PreviewHelper: ImporterHelper {
     }
 
     func resetWorkspace(openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> BootstrapResponse {
-        try loadFixtures()
+        selectQueueScenario(.sampleData)
         return BootstrapResponse(settings: settings(model: openAIModel, source: openAIModelSource, hasKey: !openAIKey.isEmpty), status: "reset_synced")
     }
 
@@ -178,6 +248,14 @@ final class PreviewHelper: ImporterHelper {
 
     func startIncrementalSync(openAIKey: String, openAIModel: String, openAIModelSource: String, onProgress: (@Sendable (HelperProgress) -> Void)?) async throws -> StartSyncResponse {
         try await requireImportAuthentication(openAIKey: openAIKey, openAIModel: openAIModel, openAIModelSource: openAIModelSource)
+        if queueScenario == .noSiteUpdates {
+            try await pauseImport(total: 0, onProgress: onProgress)
+            let batchID = nextBatchID
+            nextBatchID += 1
+            batchModes[batchID] = "incremental"
+            completedBatchIDs.insert(batchID)
+            return StartSyncResponse(batch_id: batchID, urls_processed: 0)
+        }
         try await pauseImport(onProgress: onProgress)
         if batchModes[202] == nil {
             records.append(contentsOf: templateRecords.filter { $0["batch_id"] as? Int == 202 })
@@ -268,12 +346,15 @@ final class PreviewHelper: ImporterHelper {
         try await Task.sleep(nanoseconds: 250_000_000)
         records.removeAll { $0["batch_id"] as? Int == batchID && ["accepted", "rejected"].contains($0["status"] as? String ?? "") }
         let remaining = records.filter { $0["batch_id"] as? Int == batchID }.count
-        if remaining == 0 { batchModes.removeValue(forKey: batchID) }
+        if remaining == 0 {
+            batchModes.removeValue(forKey: batchID)
+            completedBatchIDs.remove(batchID)
+        }
         return ApplyResponse(
             batch_id: batchID,
             applied_commit_sha: "preview-only-no-git-push",
             preview: preview,
-            warning_message: "Preview only: the sample records changed in memory. No repository or remote was contacted.",
+            warning_message: nil,
             remaining_records: remaining
         )
     }
@@ -282,6 +363,7 @@ final class PreviewHelper: ImporterHelper {
         let deleted = records.filter { $0["batch_id"] as? Int == batchID }.count
         records.removeAll { $0["batch_id"] as? Int == batchID }
         batchModes.removeValue(forKey: batchID)
+        completedBatchIDs.remove(batchID)
         return DeleteBatchResponse(batch_id: batchID, deleted_records: deleted)
     }
 

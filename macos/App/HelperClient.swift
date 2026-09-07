@@ -50,22 +50,48 @@ enum HelperClientError: LocalizedError {
 }
 
 /// A machine-readable progress update the helper may emit on stderr during
-/// long-running batch operations (currently only `startIncrementalSync`),
-/// one line per completed URL: `PROGRESS <completed>/<total> <url>`.
+/// long-running batch operations. Numeric updates use
+/// `PROGRESS <completed>/<total> <url>`; stage updates use `STAGE <stage> [url]`.
 struct HelperProgress: Sendable {
     let completed: Int
     let total: Int
     let url: String
+    /// Stage events carry zero counts. Consumers should preserve their latest
+    /// numeric progress when this is non-nil.
+    let stage: String?
 
     private static let prefix = "PROGRESS "
+    private static let stagePrefix = "STAGE "
+    private static let knownStages: Set<String> = [
+        "checking_access", "discovering_urls", "reading_page", "validating_record"
+    ]
 
     /// Parses a single stderr line. Returns nil for anything that isn't a
     /// well-formed progress line, which callers then treat as ordinary
     /// stderr output — this is what keeps the format backward compatible
     /// with helper builds that never emit progress lines at all.
     init?(stderrLine data: Data) {
-        guard let line = String(data: data, encoding: .utf8),
-              line.hasPrefix(HelperProgress.prefix) else { return nil }
+        guard let line = String(data: data, encoding: .utf8) else { return nil }
+        if line.hasPrefix(Self.stagePrefix) {
+            let parts = line.dropFirst(Self.stagePrefix.count).split(separator: " ", maxSplits: 1)
+            guard let stage = parts.first.map(String.init), Self.knownStages.contains(stage) else { return nil }
+            let url = parts.count == 2 ? String(parts[1]) : ""
+            // Only consume the known protocol. A log sentence beginning with a
+            // stage name must remain visible if its suffix isn't a page URL.
+            if !url.isEmpty {
+                guard url.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
+                      let parsedURL = URL(string: url),
+                      let scheme = parsedURL.scheme?.lowercased(),
+                      ["http", "https"].contains(scheme),
+                      parsedURL.host != nil else { return nil }
+            }
+            self.completed = 0
+            self.total = 0
+            self.url = url
+            self.stage = stage
+            return
+        }
+        guard line.hasPrefix(Self.prefix) else { return nil }
         let rest = line.dropFirst(HelperProgress.prefix.count)
         let parts = rest.split(separator: " ", maxSplits: 1)
         guard parts.count == 2 else { return nil }
@@ -76,6 +102,7 @@ struct HelperProgress: Sendable {
         self.completed = completed
         self.total = total
         self.url = String(parts[1])
+        self.stage = nil
     }
 }
 
@@ -85,13 +112,13 @@ struct HelperProgress: Sendable {
 /// from the accumulated text so they never pollute an eventual error
 /// message; every other line is preserved byte-for-byte, so stderr behaves
 /// exactly as before whenever the helper doesn't emit any progress lines.
-private final class StderrProgressFilter {
-    private let onProgress: (HelperProgress) -> Void
+final class StderrProgressFilter {
+    private let onProgress: ((HelperProgress) -> Void)?
     private let lock = NSLock()
     private var pending = Data()
     private var filtered = Data()
 
-    init(onProgress: @escaping (HelperProgress) -> Void) {
+    init(onProgress: ((HelperProgress) -> Void)? = nil) {
         self.onProgress = onProgress
     }
 
@@ -117,22 +144,22 @@ private final class StderrProgressFilter {
         pending.removeAll()
         lock.unlock()
         if !remainder.isEmpty {
-            classify([remainder])
+            classify([remainder], terminated: false)
         }
         lock.lock()
         defer { lock.unlock() }
         return filtered
     }
 
-    private func classify(_ lines: [Data]) {
+    private func classify(_ lines: [Data], terminated: Bool = true) {
         guard !lines.isEmpty else { return }
         var keep = Data()
         for line in lines {
             if let progress = HelperProgress(stderrLine: line) {
-                onProgress(progress)
+                onProgress?(progress)
             } else {
                 keep.append(line)
-                keep.append(0x0A)
+                if terminated { keep.append(0x0A) }
             }
         }
         guard !keep.isEmpty else { return }
@@ -512,11 +539,9 @@ final class HelperClient: @unchecked Sendable {
         ].merging(ProcessInfo.processInfo.environment) { new, _ in new }
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
-        let progressFilter = onProgress.map { StderrProgressFilter(onProgress: $0) }
+        let progressFilter = StderrProgressFilter(onProgress: onProgress)
         let stdoutReader = PipeStreamReader(pipe: stdoutPipe)
-        let stderrReader = PipeStreamReader(pipe: stderrPipe, onChunk: progressFilter.map { filter in
-            { chunk in filter.consume(chunk) }
-        })
+        let stderrReader = PipeStreamReader(pipe: stderrPipe, onChunk: { chunk in progressFilter.consume(chunk) })
         stdoutReader.start()
         stderrReader.start()
 
@@ -572,8 +597,8 @@ final class HelperClient: @unchecked Sendable {
             stopHelperGroup(pid, reaped: &reaped, status: &status, gracePeriod: terminationGracePeriod)
         }
         let output = stdoutReader.finish(deadline: .distantFuture)
-        let rawStderr = stderrReader.finish(deadline: .distantFuture)
-        let errorOutput = progressFilter?.finish() ?? rawStderr
+        _ = stderrReader.finish(deadline: .distantFuture)
+        let errorOutput = progressFilter.finish()
         if let stoppedError { throw stoppedError }
         // waitpid's status is zero only for a clean exit(0); signals and
         // non-zero exit codes retain their failure status.
