@@ -7,8 +7,10 @@ Tests ReportMixin methods:
 - Agent report with image downloads
 """
 
+import copy
 import json
 import os
+import re
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -86,6 +88,64 @@ class TestGenerateMarkdown:
         pos_2020 = content.find("Work 2020")
         
         assert pos_2023 < pos_2021 < pos_2020
+        assert re.findall(r"^## (.+)$", content, re.MULTILINE) == ["2023", "2021", "2020"]
+
+    def test_preserves_display_order_across_mixed_years(self, scraper_with_mock_cache, tmp_path):
+        """Caller-supplied display order may differ from both year and title order."""
+        works = [
+            {"title": "Zulu", "year": "2020", "url": "https://example.com/zulu"},
+            {"title": "Alpha", "year": "2018-2025", "url": "https://example.com/alpha"},
+            {"title": "Mike", "year": "2026", "url": "https://example.com/mike"},
+            {"title": "Beta", "year": "2020", "url": "https://example.com/beta"},
+            {"title": "Omega", "year": "2010", "url": "https://example.com/omega"},
+        ]
+        original = copy.deepcopy(works)
+        scraper_with_mock_cache.works = works
+        output_file = tmp_path / "display_order.md"
+
+        with patch.object(scraper_with_mock_cache.session, "get") as session_get, patch("requests.get") as requests_get:
+            scraper_with_mock_cache.generate_markdown(str(output_file), preserve_order=True)
+
+        content = output_file.read_text(encoding="utf-8")
+        assert re.findall(r"^### \[.*?\]\((.*?)\)", content, re.MULTILINE) == [work["url"] for work in works]
+        assert not re.search(r"^## ", content, re.MULTILINE)
+        for work in works:
+            assert f"**Year**: {work['year']}" in content
+        assert scraper_with_mock_cache.works == original
+        session_get.assert_not_called()
+        requests_get.assert_not_called()
+
+    def test_preserved_markdown_matches_json_order_without_changing_metadata(
+        self, scraper_with_mock_cache, sample_artwork_data, tmp_path
+    ):
+        """Only section ordering and year-group headings differ from legacy output."""
+        works = []
+        for title, year in [("Second", "2020"), ("First", "2026"), ("Third", "2019-2024")]:
+            work = copy.deepcopy(sample_artwork_data)
+            work.update(title=title, year=year, url=f"https://example.com/{title.lower()}")
+            works.append(work)
+        original = copy.deepcopy(works)
+        scraper_with_mock_cache.works = works
+        legacy_file = tmp_path / "legacy.md"
+        ordered_file = tmp_path / "ordered.md"
+        json_file = tmp_path / "ordered.json"
+
+        scraper_with_mock_cache.generate_markdown(str(legacy_file))
+        scraper_with_mock_cache.generate_markdown(str(ordered_file), preserve_order=True)
+        scraper_with_mock_cache.save_to_json(str(json_file))
+
+        exported = json.loads(json_file.read_text(encoding="utf-8"))
+        ordered_content = ordered_file.read_text(encoding="utf-8")
+        assert re.findall(r"^### \[.*?\]\((.*?)\)", ordered_content, re.MULTILINE) == [work["url"] for work in exported]
+        assert exported == original
+        assert scraper_with_mock_cache.works == original
+
+        def artwork_sections(content):
+            without_year_groups = re.sub(r"^## [^\n]*\n+", "", content, flags=re.MULTILINE)
+            sections = re.split(r"^### ", without_year_groups, flags=re.MULTILINE)[1:]
+            return {section.splitlines()[0]: section.strip() for section in sections}
+
+        assert artwork_sections(ordered_content) == artwork_sections(legacy_file.read_text(encoding="utf-8"))
 
     def test_includes_bilingual_titles(self, scraper_with_mock_cache, tmp_path):
         """Test bilingual title formatting."""

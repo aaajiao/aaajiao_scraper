@@ -98,6 +98,14 @@ Expected result:
   are not checkpointed before a review decision; manual import and retry remain inspectable.
 - Field editing changes only review data and resets acceptance; shortened/cleared fields
   and removed images match both the Changes view and the published output
+- New and updated artworks follow the website's displayed order in both JSON and
+  Markdown. Verify real Markdown generation, not only a stubbed transaction output.
+  Dry-run and final publication use the same sorting path. Unlisted remote artworks
+  remain intact and stable; incomplete, duplicate, or failed website indexes prevent
+  a push and preserve retryable review results.
+- Upgrading with pending reviews refreshes the scraper code while preserving the
+  queue, saved baselines, edits, acceptance state, and sitemap checkpoints. A pending
+  review still prevents replacing the data baseline from GitHub.
 
 Before packaging a UI change, build `./macos/Build/build_ui_preview.sh` and inspect its
 isolated native app. Check search/status filters, switching runs, accept-and-next, failed

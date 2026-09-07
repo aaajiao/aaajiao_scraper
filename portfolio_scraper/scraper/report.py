@@ -56,18 +56,23 @@ class ReportMixin:
             json.dump(self.works, f, ensure_ascii=False, indent=2)
         logger.info(f"JSON data saved: {target_path} ({len(self.works)} works)")
 
-    def generate_markdown(self, filename: str = "aaajiao_portfolio.md") -> None:
+    def generate_markdown(
+        self, filename: str = "aaajiao_portfolio.md", *, preserve_order: bool = False
+    ) -> None:
         """Generate Markdown format portfolio document for basic scraper.
         
-        Creates a human-readable Markdown file organized by year with
-        artwork details, descriptions, and metadata.
+        Creates a human-readable Markdown file with artwork details,
+        descriptions, and metadata, grouped by year unless order is preserved.
         
         Args:
             filename: Output Markdown filename. Defaults to 'aaajiao_portfolio.md'.
                 Relative paths are resolved from current directory.
+            preserve_order: Keep the existing works sequence without year-group
+                headings. The caller supplies the desired display order; this
+                method does not fetch or infer it. Defaults to False.
         
         Note:
-            - Artworks are sorted by year in descending order
+            - Artworks are sorted by year descending unless preserve_order is True
             - Supports bilingual titles (English/Chinese)
             - Includes images and videos when available
             
@@ -93,12 +98,12 @@ class ReportMixin:
                 return parts[-1].strip()  # Use end year (most recent)
             return year
         
-        sorted_works = sorted(self.works, key=get_sort_year, reverse=True)
+        ordered_works = self.works if preserve_order else sorted(self.works, key=get_sort_year, reverse=True)
 
         current_year = None
-        for work in sorted_works:
+        for work in ordered_works:
             year = work.get("year", "Unknown")
-            if year != current_year:
+            if not preserve_order and year != current_year:
                 lines.append(f"## {year}\n\n")
                 current_year = year
 

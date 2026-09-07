@@ -22,6 +22,7 @@ REMOTE_REPO="${TMP_ROOT}/remote.git"
 WORKSPACE_ROOT="${TMP_ROOT}/workspace"
 APPLY_JSON="${TMP_ROOT}/apply.json"
 PREVIEW_JSON="${TMP_ROOT}/preview.json"
+export AAAJIAO_IMPORTER_SITE_ORDER_FILE="${TMP_ROOT}/site-order.json"
 
 cleanup() {
   rm -rf "${TMP_ROOT}"
@@ -68,6 +69,9 @@ record = {
     "images": [],
     "source": "git_transaction_fixture",
 }
+baseline = json.loads((workspace_root / "aaajiao_works.json").read_text())
+ordered_urls = [record["url"], *[work["url"] for work in reversed(baseline)]]
+Path(os.environ["AAAJIAO_IMPORTER_SITE_ORDER_FILE"]).write_text(json.dumps(ordered_urls), encoding="utf-8")
 
 conn = sqlite3.connect(db_path)
 cur = conn.cursor()
@@ -124,6 +128,7 @@ export TEST_REPO REMOTE_REPO BRANCH_NAME PREVIEW_JSON APPLY_JSON INITIAL_HEAD
 /usr/bin/python3 - <<'PY'
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -153,6 +158,17 @@ remote_head = subprocess.run(
 ).stdout.strip()
 assert head == initial_head, (head, initial_head, apply_result)
 assert remote_head == apply_result["applied_commit_sha"], (remote_head, apply_result)
+expected_urls = json.loads(Path(os.environ["AAAJIAO_IMPORTER_SITE_ORDER_FILE"]).read_text())
+published_json = subprocess.run(
+    ["git", f"--git-dir={remote_repo}", "show", f"{remote_head}:aaajiao_works.json"],
+    capture_output=True, text=True, check=True,
+).stdout
+published_markdown = subprocess.run(
+    ["git", f"--git-dir={remote_repo}", "show", f"{remote_head}:aaajiao_portfolio.md"],
+    capture_output=True, text=True, check=True,
+).stdout
+assert [work["url"] for work in json.loads(published_json)] == expected_urls
+assert re.findall(r"^### \[.*?\]\(([^)]+)\)", published_markdown, flags=re.MULTILINE) == expected_urls
 
 last_commit_files = subprocess.run(
     ["git", f"--git-dir={remote_repo}", "show", "--name-only", "--format=", remote_head],

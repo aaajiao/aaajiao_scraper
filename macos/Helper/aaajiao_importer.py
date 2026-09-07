@@ -677,7 +677,9 @@ def ensure_workspace() -> str:
     if not workspace_seed_version:
         workspace_seed_version = bundle_seed_version
     workspace_status = "ready" if workspace_seed_version == bundle_seed_version else "seed_version_mismatch"
-    if workspace_status == "seed_version_mismatch" and not _workspace_has_local_activity():
+    if workspace_status == "seed_version_mismatch":
+        # Snapshot upgrades replace executable scraper code only. Pending reviews
+        # retain their original data snapshots, published baseline and checkpoints.
         _refresh_scraper_snapshot()
         workspace_seed_version = bundle_seed_version
         workspace_status = "ready"
@@ -946,12 +948,16 @@ def workspace_cwd() -> Iterable[None]:
         os.chdir(prev)
 
 
-def _load_snapshot_modules() -> Dict[str, Any]:
+def _import_snapshot_module(name: str) -> Any:
     snapshot_path = str(snapshot_root())
     if snapshot_path not in sys.path:
         sys.path.insert(0, snapshot_path)
-    scraper_pkg = importlib.import_module("scraper")
-    basic_mod = importlib.import_module("scraper.basic")
+    return importlib.import_module(name)
+
+
+def _load_snapshot_modules() -> Dict[str, Any]:
+    scraper_pkg = _import_snapshot_module("scraper")
+    basic_mod = _import_snapshot_module("scraper.basic")
     return {
         "scraper_pkg": scraper_pkg,
         "AaajiaoScraper": scraper_pkg.AaajiaoScraper,
@@ -986,11 +992,37 @@ def _generate_markdown_at(works: List[Dict[str, Any]], path: Path) -> None:
     with workspace_cwd():
         scraper = scraper_cls(use_cache=True)
         scraper.works = works
-        scraper.generate_markdown(str(path))
+        scraper.generate_markdown(str(path), preserve_order=True)
+
+
+def _fetch_website_order() -> List[str]:
+    """Read authoritative website order, or an explicit offline-check URL fixture."""
+    site_order = _import_snapshot_module("scraper.site_order")
+    fixture = _normalize_string(os.environ.get("AAAJIAO_IMPORTER_SITE_ORDER_FILE"))
+    if not fixture:
+        return site_order.fetch_website_order()
+    with Path(fixture).open(encoding="utf-8") as handle:
+        urls = json.load(handle)
+    if not isinstance(urls, list) or not urls:
+        raise RuntimeError("The offline website-order fixture must be a non-empty JSON URL list")
+    canonical = [site_order.canonical_work_url(url) for url in urls]
+    if len(set(canonical)) != len(canonical):
+        raise RuntimeError("The offline website-order fixture contains duplicate artwork URLs")
+    return canonical
 
 
 def _write_apply_outputs(root: Path, works: List[Dict[str, Any]]) -> None:
     """Generate a transaction's artifacts without changing the workspace baseline."""
+    try:
+        ordered_urls = _fetch_website_order()
+        site_order = _import_snapshot_module("scraper.site_order")
+        works = site_order.sort_works_by_website_order(works, ordered_urls)
+    except Exception as exc:
+        raise RuntimeError(
+            "Could not verify the website artwork order. No changes were published. "
+            "Your review queue is preserved; retry publishing when the website is available. "
+            f"{_fatal_error_message(exc)}"
+        ) from exc
     root.mkdir(parents=True, exist_ok=True)
     (root / REPO_WORKS).write_text(json.dumps(works, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     _generate_markdown_at(works, root / REPO_PORTFOLIO)

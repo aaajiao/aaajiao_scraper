@@ -45,6 +45,15 @@ cannot leak its proposed records into another batch. A durable publish receipt d
 a confirmed publication from local cleanup errors, which are returned as warnings with the
 published commit SHA.
 
+Both output files follow the website's displayed project order. Before generating a
+dry-run or publishing, the helper reads the complete Cargo project index and checks its
+thumbnail IDs against the homepage's ordered project list. It then applies that order
+to the merged data once: JSON and Markdown use the same sequence, and Markdown keeps
+each artwork's year field without regrouping the document by year. Existing records
+absent from the website remain at the end in their previous relative order; no record
+is removed by sorting. An unavailable or incomplete index stops publication and leaves
+the accepted review results available for retry.
+
 `applyAcceptedRecords --dry-run` writes the proposed artifacts into
 `workspace/apply_previews/batch-<id>/` and returns `staging_path`; it does not replace the
 workspace baseline or publish anything. Failed imports remain available for `retryRecord`
@@ -58,6 +67,9 @@ incremental sitemap checkpoints, or publication receipts. Those are durable user
 only an explicit Reset starts a fresh workspace. If GitHub cannot be reached, an existing
 valid published baseline is kept and reported as `cached_fallback`, with its commit and
 timestamp intact, rather than being replaced with an older bundled snapshot.
+Code refresh also applies when reviews are pending, so existing reviews use the updated
+output logic; their saved baselines, edits, acceptance state, and sync checkpoints remain
+intact, and the data baseline is still not refreshed while review work is pending.
 
 Incremental checks also compare the effective merged artwork fields against the published
 baseline. A validated result that would change no artwork fields is not queued again; its
@@ -223,6 +235,11 @@ GitHub baseline status, commit, and fallback error details for the workspace dat
 `wheelhouse_requirements.txt` is the pinned runtime dependency lock for the bundled Python
 environment. `refresh_wheelhouse.sh` downloads wheels into `macos/Vendor/wheelhouse/`, and
 `verify_wheelhouse.sh` proves that the wheelhouse can satisfy an offline install.
+
+The isolated acceptance and Git transaction scripts set
+`AAAJIAO_IMPORTER_SITE_ORDER_FILE` to a temporary JSON array of canonical artwork URLs.
+This supplies deterministic ordering without contacting the public website. Normal
+app runs leave this test override unset and fetch the current website index.
 
 Build locally with:
 

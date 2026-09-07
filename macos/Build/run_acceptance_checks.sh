@@ -28,6 +28,7 @@ EDITS_FILE="${TMP_ROOT}/edits.json"
 PREVIEW_JSON="${TMP_ROOT}/preview.json"
 DRY_RUN_JSON="${TMP_ROOT}/dry-run.json"
 RESET_JSON="${TMP_ROOT}/reset.json"
+export AAAJIAO_IMPORTER_SITE_ORDER_FILE="${TMP_ROOT}/site-order.json"
 
 cleanup() {
   rm -rf "${TMP_ROOT}"
@@ -72,6 +73,9 @@ record = {
     "images": [],
     "source": "acceptance_fixture",
 }
+baseline = json.loads((workspace_root / "aaajiao_works.json").read_text())
+ordered_urls = [record["url"], *[work["url"] for work in reversed(baseline)]]
+Path(os.environ["AAAJIAO_IMPORTER_SITE_ORDER_FILE"]).write_text(json.dumps(ordered_urls), encoding="utf-8")
 
 conn = sqlite3.connect(db_path)
 cur = conn.cursor()
@@ -155,6 +159,7 @@ export BOOTSTRAP_JSON LIST_JSON ACCEPT_JSON EDIT_JSON PREVIEW_JSON DRY_RUN_JSON 
 /usr/bin/python3 - <<'PY'
 import json
 import os
+import re
 from pathlib import Path
 
 bootstrap = json.loads(Path(os.environ["BOOTSTRAP_JSON"]).read_text(encoding="utf-8"))
@@ -181,6 +186,10 @@ assert dry_run["dry_run"] is True, dry_run
 staging = Path(dry_run["staging_path"])
 assert staging.is_relative_to(workspace_root / "apply_previews"), dry_run
 staged_works = json.loads((staging / "aaajiao_works.json").read_text())
+expected_urls = json.loads(Path(os.environ["AAAJIAO_IMPORTER_SITE_ORDER_FILE"]).read_text())
+assert [work["url"] for work in staged_works] == expected_urls
+staged_markdown = (staging / "aaajiao_portfolio.md").read_text()
+assert re.findall(r"^### \[.*?\]\(([^)]+)\)", staged_markdown, flags=re.MULTILINE) == expected_urls
 fixture = next(work for work in staged_works if work["url"] == "https://eventstructure.com/codex-fixture-work")
 assert fixture["size"] == "80 x 50 cm", fixture
 assert fixture["description_cn"] == "人工校对", fixture

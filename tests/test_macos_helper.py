@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -8,6 +9,15 @@ import pytest
 from requests import Response
 
 HELPER_PATH = Path(__file__).resolve().parents[1] / "macos" / "Helper" / "aaajiao_importer.py"
+
+
+@pytest.fixture(autouse=True)
+def current_scraper_source(monkeypatch):
+    # Exercise checked-out code, including the real renderer, rather than whichever
+    # generated Vendor snapshot happened to be present after the last app build.
+    monkeypatch.syspath_prepend(str(HELPER_PATH.parents[2] / "portfolio_scraper"))
+    importlib.import_module("scraper")
+    monkeypatch.delenv("AAAJIAO_IMPORTER_SITE_ORDER_FILE", raising=False)
 
 
 def _load_helper_module():
@@ -805,6 +815,7 @@ def test_delete_incremental_batch_restores_all_urls_to_sitemap_cache(tmp_path, m
 
 def test_apply_accepted_records_uses_managed_publish_repo_when_source_repo_is_dirty(tmp_path, monkeypatch):
     helper = _load_helper_module()
+    monkeypatch.setattr(helper, "_fetch_website_order", lambda: ["https://eventstructure.com/test-work"])
 
     remote_repo = tmp_path / "remote.git"
     working_repo = tmp_path / "source"
@@ -1199,6 +1210,7 @@ def test_apply_accepted_records_marks_batch_failed_with_real_stderr_on_push_reje
     tmp_path, monkeypatch
 ):
     helper = _load_helper_module()
+    monkeypatch.setattr(helper, "_fetch_website_order", lambda: ["https://eventstructure.com/test-work"])
 
     remote_repo = tmp_path / "remote.git"
     working_repo = tmp_path / "source"
@@ -1289,7 +1301,7 @@ def test_apply_accepted_records_marks_batch_failed_with_real_stderr_on_push_reje
         assert conn.execute("SELECT COUNT(*) FROM records WHERE batch_id = ?", (batch_id,)).fetchone()[0] == 0
 
 
-def _transaction_fixture(tmp_path, monkeypatch):
+def _transaction_fixture(tmp_path, monkeypatch, *, real_markdown=False):
     helper = _load_helper_module()
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     remote, source, _ = _prepare_baseline_remote(tmp_path)
@@ -1298,10 +1310,12 @@ def _transaction_fixture(tmp_path, monkeypatch):
     helper.ensure_workspace()
     for name in helper.TARGET_FILES:
         (helper.workspace_root() / name).write_bytes((source / name).read_bytes())
-    monkeypatch.setattr(
-        helper, "_generate_markdown_at",
-        lambda works, path: path.write_text("# Portfolio\n" + "\n".join(work["title"] for work in works), encoding="utf-8"),
-    )
+    monkeypatch.setattr(helper, "_fetch_website_order", lambda: ["https://eventstructure.com/remote-baseline-work"])
+    if not real_markdown:
+        monkeypatch.setattr(
+            helper, "_generate_markdown_at",
+            lambda works, path: path.write_text("# Portfolio\n" + "\n".join(work["title"] for work in works), encoding="utf-8"),
+        )
     return helper, remote, source
 
 
@@ -1326,6 +1340,10 @@ def test_publish_replays_only_reviewed_delta_onto_latest_remote(tmp_path, monkey
     remote_works = _remote_works(remote)
     remote_works[0]["description_en"] = "A remote correction made during review.\n\nKeep this formatting."
     remote_works.append({"title": "Remote Addition", "url": "https://eventstructure.com/remote-addition", "images": []})
+    remote_works.append({"title": "Another Remote Addition", "url": "https://eventstructure.com/another-remote-addition", "images": []})
+    monkeypatch.setattr(helper, "_fetch_website_order", lambda: [
+        "https://eventstructure.com/imported-work", remote_works[0]["url"],
+    ])
     (source / helper.REPO_WORKS).write_text(json.dumps(remote_works), encoding="utf-8")
     _run_git(source, "add", helper.REPO_WORKS)
     _run_git(source, "commit", "-m", "remote artwork update during review")
@@ -1334,10 +1352,130 @@ def test_publish_replays_only_reviewed_delta_onto_latest_remote(tmp_path, monkey
     response = helper.apply_accepted_records(batch_id)
 
     published = _remote_works(remote)
-    assert published[:2] == remote_works
-    assert published[-1]["title"] == "Imported Work"
+    assert published[0]["title"] == "Imported Work"
+    assert published[1:] == remote_works
     assert response["applied_commit_sha"] == _run_git(remote, "rev-parse", "refs/heads/main")
     assert helper._load_workspace_works() == published
+
+
+def test_dry_run_and_publish_use_website_order_with_real_markdown(tmp_path, monkeypatch):
+    helper, remote, source = _transaction_fixture(tmp_path, monkeypatch, real_markdown=True)
+    baseline = helper._load_workspace_works()
+    original = baseline[0]
+    other = dict(original, title="Website First", url="https://eventstructure.com/website-first", year="2001")
+    baseline.append(other)
+    (source / helper.REPO_WORKS).write_text(json.dumps(baseline), encoding="utf-8")
+    _run_git(source, "add", helper.REPO_WORKS)
+    _run_git(source, "commit", "-m", "second baseline artwork")
+    _run_git(source, "push")
+    helper._write_workspace_works(baseline)
+    baseline_bytes = {name: (helper.workspace_root() / name).read_bytes() for name in helper.TARGET_FILES}
+
+    batch_id = helper._create_batch("manual")
+    updated_id = _review_fixture(helper, batch_id, title=original["title"], url=original["url"])
+    helper.update_record(updated_id, {"title": "Updated Baseline", "year": "2099"})
+    helper.accept_record(updated_id)
+    new_url = "https://eventstructure.com/inserted-work"
+    new_id = _review_fixture(helper, batch_id, title="Inserted Work", url=new_url)
+    helper.update_record(new_id, {"year": "1998"})
+    helper.accept_record(new_id)
+    expected_urls = [other["url"], new_url, original["url"]]
+    fetches = []
+
+    def website_order():
+        fetches.append(True)
+        return expected_urls
+
+    monkeypatch.setattr(helper, "_fetch_website_order", website_order)
+    preview = helper.get_apply_preview(batch_id)
+    assert (preview["new_count"], preview["updated_count"]) == (1, 1)
+    assert fetches == [], "Count-only previews must not fetch the website"
+
+    dry_run = helper.apply_accepted_records(batch_id, dry_run=True)
+    staging = Path(dry_run["staging_path"])
+    staged_json = json.loads((staging / helper.REPO_WORKS).read_text())
+    staged_markdown = (staging / helper.REPO_PORTFOLIO).read_text()
+    assert [work["url"] for work in staged_json] == expected_urls
+    assert re.findall(r"^### \[.*?\]\(([^)]+)\)", staged_markdown, flags=re.MULTILINE) == expected_urls
+    assert not re.search(r"^## \d", staged_markdown, flags=re.MULTILINE)
+    assert {name: (helper.workspace_root() / name).read_bytes() for name in helper.TARGET_FILES} == baseline_bytes
+
+    helper.apply_accepted_records(batch_id)
+
+    assert fetches == [True, True], "Each output transaction needs one verified website order"
+    assert _remote_works(remote) == staged_json
+    assert _run_git(remote, "show", "refs/heads/main:aaajiao_portfolio.md") == staged_markdown.strip()
+    assert helper._load_workspace_works() == staged_json
+    assert staged_json[-1]["title"] == "Updated Baseline"
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_website_order_failure_leaves_outputs_and_queue_retryable(tmp_path, monkeypatch, dry_run):
+    helper, remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    batch_id = helper._create_batch("manual")
+    record_id = _review_fixture(helper, batch_id)
+    original_head = _run_git(remote, "rev-parse", "refs/heads/main")
+    baseline_bytes = {name: (helper.workspace_root() / name).read_bytes() for name in helper.TARGET_FILES}
+    expected_urls = ["https://eventstructure.com/imported-work", "https://eventstructure.com/remote-baseline-work"]
+    original_write = helper._generate_markdown_at
+
+    def unavailable():
+        raise RuntimeError("Website returned an incomplete project list")
+
+    monkeypatch.setattr(helper, "_fetch_website_order", unavailable)
+    monkeypatch.setattr(helper, "_generate_markdown_at", lambda *args: pytest.fail("Do not write unverified output"))
+    assert helper.get_apply_preview(batch_id)["will_push"] is True
+    with pytest.raises(RuntimeError, match="Could not verify the website artwork order.*No changes were published"):
+        helper.apply_accepted_records(batch_id, dry_run=dry_run)
+
+    assert _run_git(remote, "rev-parse", "refs/heads/main") == original_head
+    assert {name: (helper.workspace_root() / name).read_bytes() for name in helper.TARGET_FILES} == baseline_bytes
+    row = helper._record_rows(batch_id=batch_id)[0]
+    assert (row["id"], row["status"]) == (record_id, helper.RECORD_ACCEPTED)
+    assert not helper._publish_receipt_path(batch_id).exists()
+    assert not (helper.workspace_root() / "apply_previews" / f"batch-{batch_id}").exists()
+    with helper.connect_db() as conn:
+        batch = conn.execute("SELECT status, last_error FROM batches WHERE id = ?", (batch_id,)).fetchone()
+        assert batch["status"] == helper.BATCH_FAILED
+        assert "website artwork order" in batch["last_error"]
+
+    monkeypatch.setattr(helper, "_fetch_website_order", lambda: expected_urls)
+    monkeypatch.setattr(helper, "_generate_markdown_at", original_write)
+    response = helper.apply_accepted_records(batch_id)
+    assert response["applied_commit_sha"] != original_head
+    assert [work["url"] for work in _remote_works(remote)] == expected_urls
+
+
+@pytest.mark.parametrize("fixture", [
+    [], {}, "https://eventstructure.com/work", [None], [5],
+    ["https://eventstructure.com/"], ["https://elsewhere.example/work"],
+    ["file:///private/work"], ["https://user:password@eventstructure.com/work"],
+    ["https://eventstructure.com/work", "http://www.eventstructure.com/work/?preview=1"],
+])
+def test_offline_website_order_fixture_rejects_invalid_or_duplicate_urls(tmp_path, monkeypatch, fixture):
+    helper = _load_helper_module()
+    fixture_path = tmp_path / "order.json"
+    fixture_path.write_text(json.dumps(fixture), encoding="utf-8")
+    monkeypatch.setenv("AAAJIAO_IMPORTER_SITE_ORDER_FILE", str(fixture_path))
+    output = tmp_path / "output"
+    with pytest.raises(RuntimeError, match="Could not verify the website artwork order"):
+        helper._write_apply_outputs(output, [{"url": "https://eventstructure.com/work", "title": "Work"}])
+    assert not output.exists()
+
+
+def test_website_order_fixture_is_read_only_and_default_fetches_live(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    site_order = importlib.import_module("scraper.site_order")
+    live_calls = []
+    monkeypatch.setattr(site_order, "fetch_website_order", lambda: (live_calls.append(True), ["https://eventstructure.com/live"])[1])
+    assert helper._fetch_website_order() == ["https://eventstructure.com/live"]
+    fixture = tmp_path / "order.json"
+    fixture_bytes = b'["http://www.eventstructure.com/Fixture/?view=1", "https://eventstructure.com/second"]\n'
+    fixture.write_bytes(fixture_bytes)
+    monkeypatch.setenv("AAAJIAO_IMPORTER_SITE_ORDER_FILE", str(fixture))
+    assert helper._fetch_website_order() == ["https://eventstructure.com/Fixture", "https://eventstructure.com/second"]
+    assert live_calls == [True]
+    assert fixture.read_bytes() == fixture_bytes
 
 
 @pytest.mark.parametrize("unknown_legacy_snapshot", [False, True])
@@ -2116,6 +2254,48 @@ def test_publish_then_seed_upgrade_keeps_checkpoints_and_real_later_updates(tmp_
     assert changed["urls_processed"] == 1
     assert imported == [urls[0]]
     assert helper._record_rows(batch_id=changed["batch_id"])[0]["is_update"] == 1
+
+
+def test_seed_upgrade_with_pending_review_refreshes_code_only_and_skips_baseline(tmp_path, monkeypatch):
+    helper, _remote, _source = _transaction_fixture(tmp_path, monkeypatch, real_markdown=True)
+    manifest, _seed = _install_older_seed_fixture(helper, tmp_path, monkeypatch)
+    original = helper._load_workspace_works()[0]
+    batch_id = helper._create_batch("manual")
+    record_id = _review_fixture(helper, batch_id, title=original["title"], url=original["url"])
+    helper.update_record(record_id, {"description_en": "Unpublished review edit"})
+    records_before = [dict(row) for row in helper._record_rows(batch_id=batch_id)]
+    files_before = {name: (helper.workspace_root() / name).read_bytes() for name in helper.TARGET_FILES}
+    helper._write_json_atomic(helper._workspace_sitemap_cache_path(), {original["url"]: "2026-09-07"})
+    checkpoint_before = helper._workspace_sitemap_cache_path().read_bytes()
+    receipt = helper._publication_root(999) / "receipt.json"
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text('{"status":"prepared","commit_sha":"keep-receipt"}', encoding="utf-8")
+    snapshot = helper.snapshot_root() / "scraper"
+    (snapshot / "site_order.py").unlink(missing_ok=True)
+    (snapshot / "report.py").write_text("# Old renderer without preserve_order\n", encoding="utf-8")
+    obsolete = snapshot / "obsolete.py"
+    obsolete.write_text("# Remove obsolete code\n", encoding="utf-8")
+    source_snapshot = HELPER_PATH.parents[2] / "portfolio_scraper"
+    monkeypatch.setattr(helper, "seed_snapshot_root", lambda: source_snapshot)
+    monkeypatch.setattr(helper, "_clone_remote_baseline_repo", lambda: pytest.fail("Pending reviews must prevent baseline refresh"))
+    manifest["seed_version"] = "pending-review-code-upgrade-v2"
+
+    response = helper.bootstrap_workspace()
+
+    assert response["status"] == "baseline_sync_skipped_pending_review"
+    workspace_manifest = helper._workspace_manifest_or_empty()
+    assert workspace_manifest["workspace_status"] == "ready"
+    assert workspace_manifest["workspace_seed_version"] == manifest["seed_version"]
+    assert workspace_manifest["baseline_status"] == helper.BASELINE_STATUS_SYNC_SKIPPED_PENDING_REVIEW
+    for name in ("site_order.py", "report.py"):
+        assert (snapshot / name).read_bytes() == (source_snapshot / "scraper" / name).read_bytes()
+    assert not obsolete.exists()
+    assert [dict(row) for row in helper._record_rows(batch_id=batch_id)] == records_before
+    assert {name: (helper.workspace_root() / name).read_bytes() for name in helper.TARGET_FILES} == files_before
+    assert helper._workspace_sitemap_cache_path().read_bytes() == checkpoint_before
+    assert "keep-receipt" in receipt.read_text()
+    helper._write_apply_outputs(tmp_path / "upgraded-output", [original])
+    assert original["title"] in (tmp_path / "upgraded-output" / helper.REPO_PORTFOLIO).read_text()
 
 
 def test_offline_seed_upgrade_preserves_published_baseline_but_explicit_reset_clears_it(tmp_path, monkeypatch):
