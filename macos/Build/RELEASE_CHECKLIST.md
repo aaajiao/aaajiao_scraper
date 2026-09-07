@@ -40,6 +40,9 @@ Expected result:
 
 - Model preset selection and migration checks pass
 - App DTO decoding and pure app utility checks pass
+- AppModel tests cover operation exclusion, failed import feedback, fresh publication
+  preflight, cancellation, and publication success followed by a reload failure
+- Process tests cover timeout/cancellation, child-process cleanup, and large pipe output
 
 ```bash
 ./macos/Build/build_local_app.sh
@@ -63,7 +66,8 @@ Expected result:
 - Review queue fixture is visible
 - `acceptRecord` works
 - `getApplyPreview` works
-- `applyAcceptedRecords --dry-run` regenerates workspace files
+- `applyAcceptedRecords --dry-run` returns `staging_path` containing generated artifacts
+  while leaving the workspace baseline unchanged
 - `resetWorkspace` recreates the workspace and refreshes the GitHub baseline, or reports a clear seed fallback
 - `applyAcceptedRecords` commits and pushes to `origin/<baseline branch>` from a managed
   temporary clone (it never writes to the sandbox checkout itself)
@@ -71,6 +75,14 @@ Expected result:
   current branch/upstream doesn't match the baseline branch
 - `applyAcceptedRecords` marks the batch failed (with the remote's rejection reason
   recorded) when the push itself is rejected, instead of losing the failure silently
+- Concurrent remote additions survive publication; conflicting edits to the reviewed
+  artwork stop publication and keep the queue intact
+- Failed apply followed by discard cannot contaminate a later batch
+- Partial publication keeps failed and unreviewed records in the same queue for retry
+- Cancelling before the first result or mid-batch does not checkpoint unprocessed URLs
+  or leave an empty batch that blocks baseline refresh
+- A confirmed push followed by local cleanup failure reports its SHA and a warning,
+  with recovery from the saved publish receipt
 
 ## 5. Optional live validation
 

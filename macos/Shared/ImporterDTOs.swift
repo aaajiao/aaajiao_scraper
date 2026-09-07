@@ -124,6 +124,16 @@ struct ApplyResponse: Codable {
     let batch_id: Int
     let applied_commit_sha: String
     let preview: ApplyPreview
+    let warning_message: String?
+    let remaining_records: Int?
+
+    init(batch_id: Int, applied_commit_sha: String, preview: ApplyPreview, warning_message: String? = nil, remaining_records: Int? = nil) {
+        self.batch_id = batch_id
+        self.applied_commit_sha = applied_commit_sha
+        self.preview = preview
+        self.warning_message = warning_message
+        self.remaining_records = remaining_records
+    }
 }
 
 struct DeleteBatchResponse: Codable {

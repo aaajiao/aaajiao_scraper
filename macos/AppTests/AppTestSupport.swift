@@ -9,6 +9,7 @@ struct AppTestFailure: Error, CustomStringConvertible {
 }
 
 typealias AppTest = (name: String, body: () throws -> Void)
+typealias AsyncAppTest = (name: String, body: @MainActor () async throws -> Void)
 
 func expect(_ condition: @autoclosure () -> Bool, _ message: String) throws {
     if !condition() {
@@ -62,6 +63,26 @@ func runAppTests(_ tests: [AppTest]) {
         for failure in failures {
             fputs("- \(failure)\n", stderr)
         }
+        exit(1)
+    }
+}
+
+@MainActor
+func runAsyncAppTests(_ tests: [AsyncAppTest]) async {
+    var failures: [String] = []
+    for test in tests {
+        do {
+            try await test.body()
+            print("PASS \(test.name)")
+        } catch {
+            failures.append("\(test.name): \(error)")
+            print("FAIL \(test.name): \(error)")
+        }
+    }
+    if failures.isEmpty {
+        print("Async app tests passed: \(tests.count)")
+    } else {
+        for failure in failures { fputs("- \(failure)\n", stderr) }
         exit(1)
     }
 }

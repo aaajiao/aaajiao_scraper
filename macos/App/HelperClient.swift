@@ -1,13 +1,17 @@
 import Foundation
+import Darwin
 
 enum HelperClientError: LocalizedError {
     case missingResources
+    case cancelled
     case nonZeroExit(String)
     case decodeFailure(String)
     case timeout(command: String, seconds: TimeInterval)
 
     var errorDescription: String? {
         switch self {
+        case .cancelled:
+            return "Import cancelled."
         case .missingResources:
             return "Bundled helper resources are missing."
         case .nonZeroExit(let message):
@@ -182,9 +186,35 @@ final class HelperClient: @unchecked Sendable {
         static let extended: TimeInterval = 900
     }
 
-    /// Grace period given to a timed-out process to exit after `terminate()`
-    /// before we give up waiting on it and return control to the caller.
-    private static let terminationGracePeriod: TimeInterval = 5
+    private let executableURL: URL?
+    private let timeoutOverride: TimeInterval?
+    private let terminationGracePeriod: TimeInterval
+    private let commandLock = NSLock()
+    private let stateLock = NSLock()
+    private var activeCommand: HelperRunningCommand?
+
+    /// Overrides are used by isolated process tests; normal app calls use
+    /// the bundled helper and the per-command budgets above.
+    init(
+        executableURL: URL? = nil,
+        timeoutOverride: TimeInterval? = nil,
+        terminationGracePeriod: TimeInterval = 5
+    ) {
+        self.executableURL = executableURL
+        self.timeoutOverride = timeoutOverride
+        self.terminationGracePeriod = terminationGracePeriod
+    }
+
+    /// Only import operations are cancellable. In particular, publishing
+    /// must finish reconciling the remote and local transaction state.
+    /// Returning true acknowledges the request; the async command does not
+    /// finish until the process group has stopped and its output is drained.
+    @discardableResult
+    func cancelCurrentCommand() -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return activeCommand?.requestCancellation() ?? false
+    }
 
     func bootstrapWorkspace(openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> BootstrapResponse {
         try await runCommandAsync(
@@ -260,6 +290,17 @@ final class HelperClient: @unchecked Sendable {
             openAIModelSource: openAIModelSource,
             timeout: Timeout.standard,
             as: SubmitURLResponse.self
+        )
+    }
+
+    func retryRecord(id: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> RecordStatusResponse {
+        try await runCommandAsync(
+            arguments: ["retryRecord", "--id", "\(id)"],
+            openAIKey: openAIKey,
+            openAIModel: openAIModel,
+            openAIModelSource: openAIModelSource,
+            timeout: Timeout.standard,
+            as: RecordStatusResponse.self
         )
     }
 
@@ -383,39 +424,43 @@ final class HelperClient: @unchecked Sendable {
         }
     }
 
-    private func runRawCommand(
+    /// Internal so process lifecycle tests can exercise real, isolated
+    /// executables without requiring a bundle or an external service.
+    func runRawCommand(
         arguments: [String],
-        openAIKey: String,
-        openAIModel: String,
-        openAIModelSource: String,
+        openAIKey: String = "",
+        openAIModel: String = "",
+        openAIModelSource: String = "",
         timeout: TimeInterval,
         onProgress: (@Sendable (HelperProgress) -> Void)? = nil
     ) throws -> Data {
-        let helperURL = Bundle.main.bundleURL
+        // Commands from one client never overlap, even if a caller starts a
+        // second operation before awaiting cancellation of the first one.
+        commandLock.lock()
+        defer { commandLock.unlock() }
+        let helperURL = executableURL ?? Bundle.main.bundleURL
             .appendingPathComponent("Contents/MacOS/AaajiaoHelper", isDirectory: false)
         guard FileManager.default.isExecutableFile(atPath: helperURL.path) else {
             throw HelperClientError.missingResources
         }
-        let process = Process()
-        process.executableURL = helperURL
-        process.arguments = arguments
-        process.environment = [
+        let commandName = arguments.first ?? "helper"
+        let command = HelperRunningCommand(name: commandName)
+        stateLock.lock()
+        activeCommand = command
+        stateLock.unlock()
+        defer {
+            stateLock.lock()
+            activeCommand = nil
+            stateLock.unlock()
+        }
+
+        let environment = [
             "OPENAI_API_KEY": openAIKey,
             "OPENAI_MODEL": openAIModel,
             "OPENAI_MODEL_SOURCE": openAIModelSource
         ].merging(ProcessInfo.processInfo.environment) { new, _ in new }
-
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        // Stream both pipes concurrently with the process running so their
-        // OS buffers never fill up and block the child's write() calls.
-        // When a progress handler is supplied, stderr chunks are also fed
-        // to a StderrProgressFilter (each chunk arrives as soon as the
-        // helper flushes it) so progress lines can be reported incrementally
-        // and kept out of the text that becomes an eventual error message.
         let progressFilter = onProgress.map { StderrProgressFilter(onProgress: $0) }
         let stdoutReader = PipeStreamReader(pipe: stdoutPipe)
         let stderrReader = PipeStreamReader(pipe: stderrPipe, onChunk: progressFilter.map { filter in
@@ -424,35 +469,177 @@ final class HelperClient: @unchecked Sendable {
         stdoutReader.start()
         stderrReader.start()
 
-        let exitGroup = DispatchGroup()
-        exitGroup.enter()
-        process.terminationHandler = { _ in exitGroup.leave() }
+        let pid: pid_t
+        do {
+            // SETPGROUP creates the group atomically at spawn, before any
+            // helper code runs or can create Python/git descendants.
+            pid = try spawnHelper(
+                executableURL: helperURL,
+                arguments: arguments,
+                environment: environment,
+                stdoutPipe: stdoutPipe,
+                stderrPipe: stderrPipe
+            )
+        } catch {
+            stdoutPipe.fileHandleForWriting.closeFile()
+            stderrPipe.fileHandleForWriting.closeFile()
+            stdoutReader.finish(deadline: .distantFuture)
+            stderrReader.finish(deadline: .distantFuture)
+            throw error
+        }
+        stdoutPipe.fileHandleForWriting.closeFile()
+        stderrPipe.fileHandleForWriting.closeFile()
 
-        try process.run()
-
-        let commandName = arguments.first ?? "helper"
-        let exited = exitGroup.wait(timeout: .now() + timeout) == .success
-        guard exited else {
-            process.terminate()
-            // Give the process a short grace period to actually exit so the
-            // pipes get closed and the readers can drain cleanly, then stop
-            // waiting regardless so this call never hangs the caller again.
-            _ = exitGroup.wait(timeout: .now() + Self.terminationGracePeriod)
-            stdoutReader.finish(deadline: .now())
-            stderrReader.finish(deadline: .now())
-            throw HelperClientError.timeout(command: commandName, seconds: timeout)
+        let budget = timeoutOverride ?? timeout
+        let deadline = ProcessInfo.processInfo.systemUptime + max(0, budget)
+        var status: Int32 = 0
+        var reaped = false
+        var stoppedError: Error?
+        while !reaped {
+            do {
+                reaped = try reapHelper(pid, status: &status, blocking: false)
+            } catch {
+                stoppedError = error
+                break
+            }
+            if reaped { break }
+            if command.isCancellationRequested {
+                stoppedError = HelperClientError.cancelled
+                break
+            }
+            if ProcessInfo.processInfo.systemUptime >= deadline {
+                stoppedError = HelperClientError.timeout(command: commandName, seconds: budget)
+                break
+            }
+            command.waitForCancellation(until: Date(timeIntervalSinceNow: min(0.025, max(0, deadline - ProcessInfo.processInfo.systemUptime))))
         }
 
-        let output = stdoutReader.finish(deadline: .now() + Self.terminationGracePeriod)
-        let rawStderr = stderrReader.finish(deadline: .now() + Self.terminationGracePeriod)
-        // With no progress filter this is identical to the raw stderr bytes
-        // (unchanged behavior); with one, progress lines have been stripped
-        // out so they never show up in a user-facing error message.
+        // A timed-out parent or a successful helper with stray descendants
+        // both require group cleanup. Never unlock the app while Python,
+        // git or another inherited child can still write to the workspace.
+        if !reaped || helperGroupExists(pid) {
+            stopHelperGroup(pid, reaped: &reaped, status: &status, gracePeriod: terminationGracePeriod)
+        }
+        let output = stdoutReader.finish(deadline: .distantFuture)
+        let rawStderr = stderrReader.finish(deadline: .distantFuture)
         let errorOutput = progressFilter?.finish() ?? rawStderr
-        guard process.terminationStatus == 0 else {
+        if let stoppedError { throw stoppedError }
+        // waitpid's status is zero only for a clean exit(0); signals and
+        // non-zero exit codes retain their failure status.
+        guard status == 0 else {
             let message = String(decoding: errorOutput, as: UTF8.self)
             throw HelperClientError.nonZeroExit(message.isEmpty ? "Helper failed." : message)
         }
         return output
+    }
+}
+
+/// Cancellation wakes the runner; all signalling and reaping stays on the
+/// runner queue so a late UI click can never target a reused process id.
+private final class HelperRunningCommand {
+    private let cancellable: Bool
+    private let condition = NSCondition()
+    private var cancellationRequested = false
+
+    init(name: String) {
+        cancellable = ["startIncrementalSync", "submitManualURL", "retryRecord"].contains(name)
+    }
+
+    var isCancellationRequested: Bool {
+        condition.lock()
+        defer { condition.unlock() }
+        return cancellationRequested
+    }
+
+    func requestCancellation() -> Bool {
+        guard cancellable else { return false }
+        condition.lock()
+        cancellationRequested = true
+        condition.broadcast()
+        condition.unlock()
+        return true
+    }
+
+    func waitForCancellation(until deadline: Date) {
+        condition.lock()
+        if !cancellationRequested { _ = condition.wait(until: deadline) }
+        condition.unlock()
+    }
+}
+
+private func spawnHelper(
+    executableURL: URL,
+    arguments: [String],
+    environment: [String: String],
+    stdoutPipe: Pipe,
+    stderrPipe: Pipe
+) throws -> pid_t {
+    var attributes: posix_spawnattr_t?
+    var actions: posix_spawn_file_actions_t?
+    try checkSpawnResult(posix_spawnattr_init(&attributes))
+    defer { posix_spawnattr_destroy(&attributes) }
+    try checkSpawnResult(posix_spawn_file_actions_init(&actions))
+    defer { posix_spawn_file_actions_destroy(&actions) }
+    try checkSpawnResult(posix_spawnattr_setpgroup(&attributes, 0))
+    var signalMask = sigset_t()
+    sigemptyset(&signalMask)
+    try checkSpawnResult(posix_spawnattr_setsigmask(&attributes, &signalMask))
+    var defaultSignals = sigset_t()
+    sigemptyset(&defaultSignals)
+    for signal in [SIGTERM, SIGINT, SIGHUP, SIGPIPE, SIGQUIT] { sigaddset(&defaultSignals, signal) }
+    try checkSpawnResult(posix_spawnattr_setsigdefault(&attributes, &defaultSignals))
+    try checkSpawnResult(posix_spawnattr_setflags(
+        &attributes,
+        Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF)
+    ))
+    try checkSpawnResult(posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0))
+    try checkSpawnResult(posix_spawn_file_actions_adddup2(&actions, stdoutPipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO))
+    try checkSpawnResult(posix_spawn_file_actions_adddup2(&actions, stderrPipe.fileHandleForWriting.fileDescriptor, STDERR_FILENO))
+
+    var argv = ([executableURL.path] + arguments).map { strdup($0) } + [nil]
+    var envp = environment.sorted { $0.key < $1.key }.map { strdup("\($0.key)=\($0.value)") } + [nil]
+    defer {
+        for pointer in argv { free(pointer) }
+        for pointer in envp { free(pointer) }
+    }
+    var pid: pid_t = 0
+    let result = posix_spawn(&pid, executableURL.path, &actions, &attributes, &argv, &envp)
+    try checkSpawnResult(result)
+    return pid
+}
+
+private func checkSpawnResult(_ result: Int32) throws {
+    guard result == 0 else { throw POSIXError(POSIXErrorCode(rawValue: result) ?? .EIO) }
+}
+
+private func reapHelper(_ pid: pid_t, status: inout Int32, blocking: Bool) throws -> Bool {
+    while true {
+        let result = waitpid(pid, &status, blocking ? 0 : WNOHANG)
+        if result == pid { return true }
+        if result == 0 { return false }
+        if errno == EINTR { continue }
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .ECHILD)
+    }
+}
+
+private func helperGroupExists(_ pid: pid_t) -> Bool {
+    kill(-pid, 0) == 0 || errno == EPERM
+}
+
+private func stopHelperGroup(_ pid: pid_t, reaped: inout Bool, status: inout Int32, gracePeriod: TimeInterval) {
+    _ = kill(-pid, SIGTERM)
+    let graceDeadline = ProcessInfo.processInfo.systemUptime + max(0, gracePeriod)
+    while ProcessInfo.processInfo.systemUptime < graceDeadline {
+        if !reaped { reaped = (try? reapHelper(pid, status: &status, blocking: false)) ?? true }
+        if reaped && !helperGroupExists(pid) { return }
+        Thread.sleep(forTimeInterval: 0.01)
+    }
+    _ = kill(-pid, SIGKILL)
+    if !reaped { reaped = (try? reapHelper(pid, status: &status, blocking: true)) ?? true }
+    // Acknowledging timeout/cancellation requires actual termination, not
+    // merely delivery of a signal. Orphan descendants are reaped by launchd.
+    while helperGroupExists(pid) {
+        _ = kill(-pid, SIGKILL)
+        Thread.sleep(forTimeInterval: 0.01)
     }
 }

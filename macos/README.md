@@ -32,6 +32,23 @@ reachable; apply fails with a clear error instead of silently publishing to the 
 branch otherwise. Because the push never touches this working tree, run `git pull` here
 afterward to see the new commit locally.
 
+Publishing reads the latest remote data and reapplies only accepted records. Each record
+keeps the baseline it was reviewed against; a conflicting remote edit to the same artwork
+stops publication and leaves the review queue intact. Unrelated remote additions and edits
+are preserved. Output generation and validation happen in the managed clone, and the local
+workspace baseline is updated only after a confirmed push. A failed or discarded apply
+cannot leak its proposed records into another batch. A durable publish receipt distinguishes
+a confirmed publication from local cleanup errors, which are returned as warnings with the
+published commit SHA.
+
+`applyAcceptedRecords --dry-run` writes the proposed artifacts into
+`workspace/apply_previews/batch-<id>/` and returns `staging_path`; it does not replace the
+workspace baseline or publish anything. Failed imports remain available for `retryRecord`
+in their original batch. A partial publication keeps failed and unreviewed records in the
+same queue. Incremental discovery checkpoints URLs only after publication, so cancellation
+cannot hide URLs that had not yet been processed; unresolved queue entries are not duplicated
+by subsequent syncs.
+
 ## Current flow
 
 1. Bootstrap a dedicated workspace from bundled seed data, then refresh the data baseline from GitHub.
@@ -65,8 +82,17 @@ before packaging.
 - `listPendingRecords`
 - `acceptRecord`
 - `rejectRecord`
+- `retryRecord`
 - `getApplyPreview`
 - `applyAcceptedRecords`
+
+Helper commands run in an isolated process group. A timeout terminates and reaps the
+execution process before the app releases its busy state; imports and site syncs also
+support cancellation. Publication cannot be cancelled through the app. Import completion
+messages distinguish successful, review-required, and failed results, and each publication
+request runs a fresh preflight so a repaired Git configuration can be retried immediately.
+Quitting during an import cancels it and waits for termination; quitting during publication
+waits for the confirmed result before closing the app.
 
 ## Build scripts
 

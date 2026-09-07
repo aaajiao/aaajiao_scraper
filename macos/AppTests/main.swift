@@ -5,4 +5,7 @@ runAppTests(
         + appUtilitiesTests()
         + importerDTOTests()
         + helperClientErrorTests()
+        + helperProcessTests()
 )
+
+await runAsyncAppTests(appModelTests())

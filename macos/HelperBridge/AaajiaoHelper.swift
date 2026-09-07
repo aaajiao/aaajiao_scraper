@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 enum HelperBridgeError: LocalizedError {
     case missingExecutable
@@ -37,9 +38,6 @@ struct AaajiaoHelper {
         }
 
         let sitePackages = resourcesURL.appendingPathComponent("python_runtime/lib/python3.9/site-packages").path
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: pythonPath)
-        process.arguments = [enginePath] + Array(CommandLine.arguments.dropFirst())
         var environment = ProcessInfo.processInfo.environment
         environment["AAAJIAO_IMPORTER_BUNDLE_ROOT"] = resourcesURL.path
         if environment["AAAJIAO_REPO_ROOT"]?.isEmpty ?? true {
@@ -49,12 +47,14 @@ struct AaajiaoHelper {
         environment["PYTHONPATH"] = sitePackages
         environment.removeValue(forKey: "PYTHONHOME")
         environment.removeValue(forKey: "PYTHONEXECUTABLE")
-        process.environment = environment
-        process.standardOutput = FileHandle.standardOutput
-        process.standardError = FileHandle.standardError
-
-        try process.run()
-        process.waitUntilExit()
-        Foundation.exit(process.terminationStatus)
+        // Replace this launcher in-place. The app owns this PID and its
+        // process group, so timeout/cancellation reaches Python and every
+        // inherited git or network subprocess without a surviving wrapper.
+        for key in ["PYTHONHOME", "PYTHONEXECUTABLE"] { unsetenv(key) }
+        for (key, value) in environment { setenv(key, value, 1) }
+        var arguments = ([pythonPath, enginePath] + Array(CommandLine.arguments.dropFirst())).map { strdup($0) } + [nil]
+        defer { for pointer in arguments { free(pointer) } }
+        execv(pythonPath, &arguments)
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
     }
 }

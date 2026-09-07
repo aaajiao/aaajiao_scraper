@@ -638,6 +638,7 @@ def test_apply_accepted_records_cleans_up_applied_batch(tmp_path, monkeypatch):
     monkeypatch.setattr(helper, "_generate_workspace_markdown", lambda works: None)
     monkeypatch.setattr(helper, "_validate_workspace_outputs", lambda: None)
     monkeypatch.setattr(helper, "_sync_workspace_to_repo", lambda _: "abc123")
+    monkeypatch.setattr(helper, "_copy_published_baseline_to_workspace", lambda batch_id, sha: None)
 
     response = helper.apply_accepted_records(batch_id)
 
@@ -648,7 +649,7 @@ def test_apply_accepted_records_cleans_up_applied_batch(tmp_path, monkeypatch):
         assert conn.execute("SELECT COUNT(*) FROM records WHERE batch_id = ?", (batch_id,)).fetchone()[0] == 0
 
 
-def test_prune_terminal_batches_removes_completed_and_failed_only(tmp_path, monkeypatch):
+def test_prune_terminal_batches_keeps_failed_imports_for_retry(tmp_path, monkeypatch):
     helper = _load_helper_module()
     monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(tmp_path / "workspace"))
     monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(Path(__file__).resolve().parents[1]))
@@ -695,11 +696,11 @@ def test_prune_terminal_batches_removes_completed_and_failed_only(tmp_path, monk
 
     pruned = helper.prune_terminal_batches()
 
-    assert pruned == 2
+    assert pruned == 1
     with helper.connect_db() as conn:
         assert conn.execute("SELECT COUNT(*) FROM batches WHERE id = ?", (active_batch,)).fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM batches WHERE id = ?", (completed_batch,)).fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM batches WHERE id = ?", (failed_batch,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM batches WHERE id = ?", (failed_batch,)).fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM records WHERE batch_id = ?", (active_batch,)).fetchone()[0] == 1
 
 
@@ -856,7 +857,7 @@ def test_apply_accepted_records_uses_managed_publish_repo_when_source_repo_is_di
         "show",
         "refs/heads/main:aaajiao_works.json",
     )
-    assert "Published Work" in published_json
+    assert "Test Work" in published_json
 
 
 def test_workspace_manifest_keeps_stable_structure_contract(tmp_path, monkeypatch):
@@ -1127,6 +1128,7 @@ def test_apply_accepted_records_restores_unreviewed_incremental_urls(tmp_path, m
     monkeypatch.setattr(helper, "_generate_workspace_markdown", lambda works: None)
     monkeypatch.setattr(helper, "_validate_workspace_outputs", lambda: None)
     monkeypatch.setattr(helper, "_sync_workspace_to_repo", lambda _: "abc123")
+    monkeypatch.setattr(helper, "_copy_published_baseline_to_workspace", lambda batch_id, sha: None)
 
     helper.apply_accepted_records(batch_id)
 
@@ -1136,7 +1138,7 @@ def test_apply_accepted_records_restores_unreviewed_incremental_urls(tmp_path, m
     # ...while the applied record stays cached (already persisted to the baseline).
     assert accepted_url in cache
     with helper.connect_db() as conn:
-        assert conn.execute("SELECT COUNT(*) FROM records WHERE batch_id = ?", (batch_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM records WHERE batch_id = ?", (batch_id,)).fetchone()[0] == 1
 
 
 def test_apply_accepted_records_rejects_branch_mismatch(tmp_path, monkeypatch):
@@ -1189,7 +1191,7 @@ def test_apply_accepted_records_rejects_branch_mismatch(tmp_path, monkeypatch):
     with helper.connect_db() as conn:
         row = conn.execute("SELECT status FROM batches WHERE id = ?", (batch_id,)).fetchone()
         record_count = conn.execute("SELECT COUNT(*) FROM records WHERE batch_id = ?", (batch_id,)).fetchone()[0]
-    assert row["status"] not in {helper.BATCH_FAILED, helper.BATCH_COMPLETED}
+    assert row["status"] == helper.BATCH_FAILED
     assert record_count == 1
 
 
@@ -1261,7 +1263,7 @@ def test_apply_accepted_records_marks_batch_failed_with_real_stderr_on_push_reje
         helper.apply_accepted_records(batch_id)
 
     error_message = str(exc_info.value)
-    assert "Failed to publish workspace changes to GitHub" in error_message
+    assert "Failed to publish reviewed changes to GitHub" in error_message
     # The real git stderr must reach the user, not a bare "exit status 1".
     assert "rejected" in error_message.lower() or "fetch first" in error_message.lower()
 
@@ -1271,7 +1273,7 @@ def test_apply_accepted_records_marks_batch_failed_with_real_stderr_on_push_reje
 
     assert row["status"] == helper.BATCH_FAILED
     # last_error carries the same real stderr, not a generic CalledProcessError string.
-    assert row["last_error"] == error_message
+    assert row["last_error"] == helper._fatal_error_message(exc_info.value)
     # A rejected push must not silently drop the accepted record -- it must survive for retry.
     assert record_count == 1
 
@@ -1285,3 +1287,364 @@ def test_apply_accepted_records_marks_batch_failed_with_real_stderr_on_push_reje
     with helper.connect_db() as conn:
         assert conn.execute("SELECT COUNT(*) FROM batches WHERE id = ?", (batch_id,)).fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM records WHERE batch_id = ?", (batch_id,)).fetchone()[0] == 0
+
+
+def _transaction_fixture(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    remote, source, _ = _prepare_baseline_remote(tmp_path)
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    monkeypatch.setenv("AAAJIAO_REPO_ROOT", str(source))
+    helper.ensure_workspace()
+    for name in helper.TARGET_FILES:
+        (helper.workspace_root() / name).write_bytes((source / name).read_bytes())
+    monkeypatch.setattr(
+        helper, "_generate_markdown_at",
+        lambda works, path: path.write_text("# Portfolio\n" + "\n".join(work["title"] for work in works), encoding="utf-8"),
+    )
+    return helper, remote, source
+
+
+def _review_fixture(helper, batch_id, *, title="Imported Work", url="https://eventstructure.com/imported-work", status=None):
+    proposed = {"url": url, "title": title, "images": [], "description_en": f"{title} description"}
+    helper._insert_record(
+        batch_id=batch_id, url=url, status=status or helper.RECORD_ACCEPTED,
+        page_type="artwork", confidence=0.99, is_update=url in helper._existing_urls(),
+        proposed=proposed, error="Network unavailable" if status == helper.RECORD_FAILED else None,
+    )
+    return helper._record_rows(batch_id=batch_id)[0]["id"]
+
+
+def _remote_works(remote):
+    return json.loads(_run_git(remote, "show", "refs/heads/main:aaajiao_works.json"))
+
+
+def test_publish_replays_only_reviewed_delta_onto_latest_remote(tmp_path, monkeypatch):
+    helper, remote, source = _transaction_fixture(tmp_path, monkeypatch)
+    batch_id = helper._create_batch("manual")
+    _review_fixture(helper, batch_id)
+    remote_works = _remote_works(remote)
+    remote_works[0]["description_en"] = "A remote correction made during review.\n\nKeep this formatting."
+    remote_works.append({"title": "Remote Addition", "url": "https://eventstructure.com/remote-addition", "images": []})
+    (source / helper.REPO_WORKS).write_text(json.dumps(remote_works), encoding="utf-8")
+    _run_git(source, "add", helper.REPO_WORKS)
+    _run_git(source, "commit", "-m", "remote artwork update during review")
+    _run_git(source, "push")
+
+    response = helper.apply_accepted_records(batch_id)
+
+    published = _remote_works(remote)
+    assert published[:2] == remote_works
+    assert published[-1]["title"] == "Imported Work"
+    assert response["applied_commit_sha"] == _run_git(remote, "rev-parse", "refs/heads/main")
+    assert helper._load_workspace_works() == published
+
+
+@pytest.mark.parametrize("unknown_legacy_snapshot", [False, True])
+def test_publish_blocks_same_artwork_conflicts_and_unknown_legacy_updates(tmp_path, monkeypatch, unknown_legacy_snapshot):
+    helper, remote, source = _transaction_fixture(tmp_path, monkeypatch)
+    original = helper._load_workspace_works()[0]
+    batch_id = helper._create_batch("manual")
+    record_id = _review_fixture(helper, batch_id, title=original["title"], url=original["url"])
+    if unknown_legacy_snapshot:
+        with helper.connect_db() as conn:
+            conn.execute("UPDATE records SET baseline_record_json = NULL WHERE id = ?", (record_id,))
+    else:
+        current = dict(original, description_en="Concurrent remote correction")
+        (source / helper.REPO_WORKS).write_text(json.dumps([current]), encoding="utf-8")
+        _run_git(source, "add", helper.REPO_WORKS)
+        _run_git(source, "commit", "-m", "same artwork changed remotely")
+        _run_git(source, "push")
+    remote_head = _run_git(remote, "rev-parse", "refs/heads/main")
+    workspace_before = {name: (helper.workspace_root() / name).read_bytes() for name in helper.TARGET_FILES}
+
+    with pytest.raises(RuntimeError, match="no original artwork snapshot" if unknown_legacy_snapshot else "Artwork changed on the remote"):
+        helper.apply_accepted_records(batch_id)
+
+    assert _run_git(remote, "rev-parse", "refs/heads/main") == remote_head
+    assert {name: (helper.workspace_root() / name).read_bytes() for name in helper.TARGET_FILES} == workspace_before
+    assert helper._record_rows(batch_id=batch_id)[0]["status"] == helper.RECORD_ACCEPTED
+
+
+def test_failed_publish_and_discard_do_not_leak_into_another_batch(tmp_path, monkeypatch):
+    helper, remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    before = {name: (helper.workspace_root() / name).read_bytes() for name in helper.TARGET_FILES}
+    first = helper._create_batch("manual")
+    _review_fixture(helper, first, title="Discarded Work", url="https://eventstructure.com/discarded-work")
+    original_run_git = helper._run_git
+
+    def reject_push(root, args, **kwargs):
+        if args[0] == "push":
+            raise subprocess.CalledProcessError(1, ["git", *args], stderr="fixture rejected push")
+        return original_run_git(root, args, **kwargs)
+
+    with monkeypatch.context() as attempt:
+        attempt.setattr(helper, "_run_git", reject_push)
+        with pytest.raises(RuntimeError, match="fixture rejected push"):
+            helper.apply_accepted_records(first)
+    assert {name: (helper.workspace_root() / name).read_bytes() for name in helper.TARGET_FILES} == before
+    helper.delete_batch(first)
+    second = helper._create_batch("manual")
+    _review_fixture(helper, second, title="Retained Work", url="https://eventstructure.com/retained-work")
+
+    helper.apply_accepted_records(second)
+
+    assert [work["title"] for work in _remote_works(remote)] == ["Remote Baseline Work", "Retained Work"]
+
+
+def test_published_commit_survives_local_finalization_failure_and_retry(tmp_path, monkeypatch):
+    helper, remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    batch_id = helper._create_batch("manual")
+    _review_fixture(helper, batch_id)
+    with monkeypatch.context() as attempt:
+        attempt.setattr(helper, "_copy_published_baseline_to_workspace", lambda *args: (_ for _ in ()).throw(OSError("disk unavailable")))
+        response = helper.apply_accepted_records(batch_id)
+    sha = _run_git(remote, "rev-parse", "refs/heads/main")
+    assert response["applied_commit_sha"] == sha
+    assert "Published commit" in response["warning_message"]
+    assert "disk unavailable" in response["warning_message"]
+    assert helper.prune_terminal_batches() == 0
+    assert helper.get_batch_detail(batch_id)["batch"]["status"] == helper.BATCH_COMPLETED
+
+    retry = helper.apply_accepted_records(batch_id)
+
+    assert retry["applied_commit_sha"] == sha
+    assert "warning_message" not in retry
+    assert _run_git(remote, "rev-parse", "refs/heads/main") == sha
+    assert helper._load_workspace_works() == _remote_works(remote)
+    assert not helper._publish_receipt_path(batch_id).exists()
+
+
+def test_retry_resolves_a_push_that_succeeded_before_response_was_lost(tmp_path, monkeypatch):
+    helper, remote, source = _transaction_fixture(tmp_path, monkeypatch)
+    batch_id = helper._create_batch("manual")
+    _review_fixture(helper, batch_id)
+    original_run_git = helper._run_git
+
+    def lose_push_response(root, args, **kwargs):
+        result = original_run_git(root, args, **kwargs)
+        if args[0] == "push":
+            raise RuntimeError("Push response was lost")
+        return result
+
+    with monkeypatch.context() as attempt:
+        attempt.setattr(helper, "_run_git", lose_push_response)
+        with pytest.raises(RuntimeError, match="Push response was lost"):
+            helper.apply_accepted_records(batch_id)
+    sha = _run_git(remote, "rev-parse", "refs/heads/main")
+    assert helper._load_json(helper._publish_receipt_path(batch_id))["status"] == "prepared"
+    # A later remote commit must not prevent recognizing the successful candidate.
+    _run_git(source, "pull", "--ff-only")
+    (source / "later.txt").write_text("remote advanced\n")
+    _run_git(source, "add", "later.txt")
+    _run_git(source, "commit", "-m", "remote advance after successful push")
+    _run_git(source, "push")
+    head = _run_git(remote, "rev-parse", "refs/heads/main")
+
+    result = helper.apply_accepted_records(batch_id)
+
+    assert result["applied_commit_sha"] == sha
+    assert _run_git(remote, "rev-parse", "refs/heads/main") == head
+    assert not helper._publish_receipt_path(batch_id).exists()
+
+
+def test_unknown_previous_push_outcome_blocks_new_push_and_discard(tmp_path, monkeypatch):
+    helper, _remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    batch_id = helper._create_batch("manual")
+    _review_fixture(helper, batch_id)
+    original_run_git = helper._run_git
+
+    def timeout_push(root, args, **kwargs):
+        if args[0] == "push":
+            raise RuntimeError("Network timeout")
+        return original_run_git(root, args, **kwargs)
+
+    with monkeypatch.context() as attempt:
+        attempt.setattr(helper, "_run_git", timeout_push)
+        with pytest.raises(RuntimeError, match="Network timeout"):
+            helper.apply_accepted_records(batch_id)
+    monkeypatch.setattr(helper, "_ensure_publish_repo", lambda _: (_ for _ in ()).throw(RuntimeError("offline")))
+    for operation in (helper.apply_accepted_records, helper.delete_batch):
+        with pytest.raises(RuntimeError, match="previous push outcome is not yet confirmed"):
+            operation(batch_id)
+    assert helper._publish_receipt_path(batch_id).exists()
+    assert helper._record_rows(batch_id=batch_id)[0]["status"] == helper.RECORD_ACCEPTED
+
+
+def test_dry_run_generates_staging_without_mutating_workspace_or_remote(tmp_path, monkeypatch):
+    helper, remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    batch_id = helper._create_batch("manual")
+    _review_fixture(helper, batch_id)
+    before = {name: (helper.workspace_root() / name).read_bytes() for name in helper.TARGET_FILES}
+    head = _run_git(remote, "rev-parse", "refs/heads/main")
+
+    result = helper.apply_accepted_records(batch_id, dry_run=True)
+
+    assert result["dry_run"] is True
+    assert {name: (helper.workspace_root() / name).read_bytes() for name in helper.TARGET_FILES} == before
+    assert _run_git(remote, "rev-parse", "refs/heads/main") == head
+    assert json.loads((Path(result["staging_path"]) / helper.REPO_WORKS).read_text())[-1]["title"] == "Imported Work"
+    assert helper._record_rows(batch_id=batch_id)[0]["status"] == helper.RECORD_ACCEPTED
+
+
+def _import_result(url):
+    return {
+        "should_apply": True, "page_type": "artwork", "confidence": .99,
+        "proposed": {"title": url.rsplit("/", 1)[-1], "url": url, "images": []},
+        "rejection_reason": "",
+    }
+
+
+def _fake_incremental_modules(helper, sitemap):
+    class Scraper:
+        def __init__(self, use_cache):
+            pass
+
+        def _save_sitemap_cache(self, data):
+            helper._write_json_atomic(helper._workspace_sitemap_cache_path(), data)
+
+        def get_all_work_links(self, incremental):
+            old = helper._load_workspace_sitemap_cache()
+            urls = [url for url, stamp in sitemap.items() if old.get(url) != stamp]
+            self._save_sitemap_cache(sitemap)
+            return urls
+
+    return {"AaajiaoScraper": Scraper}
+
+
+def test_interrupted_incremental_does_not_checkpoint_unprocessed_urls(tmp_path, monkeypatch):
+    helper, _remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    urls = [f"https://eventstructure.com/candidate-{index}" for index in range(3)]
+    sitemap = dict.fromkeys(urls, "2026-09-07")
+    monkeypatch.setattr(helper, "_load_snapshot_modules", lambda: _fake_incremental_modules(helper, sitemap))
+    seen = []
+
+    def interrupted_import(url, modules):
+        seen.append(url)
+        if len(seen) == 2:
+            raise KeyboardInterrupt("fixture cancellation")
+        return _import_result(url)
+
+    monkeypatch.setattr(helper, "_import_url", interrupted_import)
+    with pytest.raises(KeyboardInterrupt):
+        helper.start_incremental_sync()
+    assert len(helper._record_rows()) == 1
+    assert all(url not in helper._load_workspace_sitemap_cache() for url in urls)
+    retried = []
+    monkeypatch.setattr(helper, "_import_url", lambda url, modules: (retried.append(url), _import_result(url))[1])
+
+    helper.start_incremental_sync()
+
+    assert retried == urls[1:]
+    assert len(helper._record_rows()) == 3
+    assert helper.start_incremental_sync()["urls_processed"] == 0
+
+
+@pytest.mark.parametrize("mode", ["manual", "incremental"])
+def test_cancel_before_first_record_leaves_prunable_draft(tmp_path, monkeypatch, mode):
+    helper, _remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    url = "https://eventstructure.com/cancel-before-first"
+    monkeypatch.setattr(helper, "_load_snapshot_modules", lambda: _fake_incremental_modules(helper, {url: "2026-09-07"}))
+    monkeypatch.setattr(helper, "_import_url", lambda *args: (_ for _ in ()).throw(KeyboardInterrupt("cancel")))
+    with pytest.raises(KeyboardInterrupt):
+        if mode == "manual":
+            helper.submit_manual_url(url)
+        else:
+            helper.start_incremental_sync()
+    assert helper._record_rows() == []
+    assert not helper._workspace_has_active_review_state()
+    assert helper.prune_terminal_batches() == 1
+    assert url not in helper._load_workspace_sitemap_cache()
+
+
+def test_partial_apply_confirms_only_published_urls_and_keeps_failed_record_retryable(tmp_path, monkeypatch):
+    helper, remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    accepted_url = "https://eventstructure.com/accepted-work"
+    failed_url = "https://eventstructure.com/failed-work"
+    sitemap = {accepted_url: "2026-09-07", failed_url: "2026-09-07"}
+    monkeypatch.setattr(helper, "_load_snapshot_modules", lambda: _fake_incremental_modules(helper, sitemap))
+
+    def import_url(url, modules):
+        if url == failed_url:
+            raise RuntimeError("Temporary network failure")
+        return _import_result(url)
+
+    monkeypatch.setattr(helper, "_import_url", import_url)
+    batch_id = helper.start_incremental_sync()["batch_id"]
+    rows = helper._record_rows(batch_id=batch_id)
+    failed_id = next(row["id"] for row in rows if row["url"] == failed_url)
+    helper.accept_record(next(row["id"] for row in rows if row["url"] == accepted_url))
+
+    response = helper.apply_accepted_records(batch_id)
+
+    assert response["remaining_records"] == 1
+    assert helper._load_workspace_sitemap_cache().get(accepted_url) == "2026-09-07"
+    assert failed_url not in helper._load_workspace_sitemap_cache()
+    remaining = helper.get_batch_detail(batch_id)["records"]
+    assert len(remaining) == 1
+    assert remaining[0]["id"] == failed_id
+    assert remaining[0]["error_message"] == "Temporary network failure"
+    monkeypatch.setattr(helper, "_import_url", lambda url, modules: _import_result(url))
+    assert helper.retry_record(failed_id)["status"] == helper.RECORD_READY_FOR_REVIEW
+    helper.accept_record(failed_id)
+    helper.apply_accepted_records(batch_id)
+    assert helper._load_workspace_sitemap_cache().get(failed_url) == "2026-09-07"
+    assert len(_remote_works(remote)) == 3
+
+
+def test_retry_record_preserves_identity_original_error_and_attempt_history(tmp_path, monkeypatch):
+    helper, _remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    batch_id = helper._create_batch("manual")
+    record_id = _review_fixture(helper, batch_id, status=helper.RECORD_FAILED)
+    monkeypatch.setattr(helper, "_load_snapshot_modules", lambda: {})
+    monkeypatch.setattr(helper, "_import_url", lambda *args: (_ for _ in ()).throw(RuntimeError("Retry request timed out")))
+
+    with pytest.raises(RuntimeError, match="Retry request timed out"):
+        helper.retry_record(record_id)
+    failed = helper.get_batch_detail(batch_id)["records"][0]
+    assert failed["id"] == record_id
+    assert failed["status"] == helper.RECORD_FAILED
+    assert failed["retry_count"] == 1
+    assert [item["message"] for item in failed["error_history"]] == ["Network unavailable", "Retry request timed out"]
+    monkeypatch.setattr(helper, "_import_url", lambda url, modules: _import_result(url))
+
+    result = helper.retry_record(record_id)
+
+    record = helper.get_batch_detail(batch_id)["records"][0]
+    assert result == {"id": record_id, "batch_id": batch_id, "status": helper.RECORD_READY_FOR_REVIEW}
+    assert len(helper._record_rows(batch_id=batch_id)) == 1
+    assert record["retry_count"] == 2
+    assert record["error_message"] is None
+    assert len(record["error_history"]) == 2
+    assert record["baseline_available"] is True
+    assert record["baseline_record"] is None
+
+
+def test_manual_import_captures_baseline_before_network_work(tmp_path, monkeypatch):
+    helper, _remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    original = helper._load_workspace_works()[0]
+    monkeypatch.setattr(helper, "_load_snapshot_modules", lambda: {})
+
+    def import_with_baseline_change(url, modules):
+        helper._write_workspace_works([dict(original, description_en="Changed during network request")])
+        return _import_result(url)
+
+    monkeypatch.setattr(helper, "_import_url", import_with_baseline_change)
+    response = helper.submit_manual_url(original["url"])
+    record = helper.get_batch_detail(response["batch_id"])["records"][0]
+    assert record["baseline_record"] == original
+
+
+def test_parse_args_accepts_retry_record(monkeypatch):
+    helper = _load_helper_module()
+    monkeypatch.setattr(sys, "argv", ["helper", "retryRecord", "--id", "17"])
+    args = helper.parse_args()
+    assert args.command == "retryRecord"
+    assert args.id == 17
+
+
+def test_optional_vacuum_failure_does_not_turn_cleanup_into_failure(tmp_path, monkeypatch):
+    helper = _load_helper_module()
+    monkeypatch.setenv("AAAJIAO_IMPORTER_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    helper.ensure_workspace()
+    monkeypatch.setattr(helper.sqlite3, "connect", lambda *args: (_ for _ in ()).throw(helper.sqlite3.OperationalError("busy")))
+    helper._vacuum_db_if_needed()

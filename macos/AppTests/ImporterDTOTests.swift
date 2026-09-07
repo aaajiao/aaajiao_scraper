@@ -102,6 +102,14 @@ func importerDTOTests() -> [AppTest] {
             try expectEqual(response.preview.accepted_count, 2, "Decoded accepted count")
             try expectEqual(response.preview.target_files, ["aaajiao_works.json", "aaajiao_portfolio.md"], "Decoded target files")
             try expect(response.preview.will_push, "Decoded preview should allow push")
+            try expectNil(response.warning_message, "Older successful responses have no warning")
+            var payload = try JSONSerialization.jsonObject(with: json) as! [String: Any]
+            payload["warning_message"] = "Published, but local cleanup needs a retry."
+            let warningResponse = try JSONDecoder().decode(
+                ApplyResponse.self, from: JSONSerialization.data(withJSONObject: payload)
+            )
+            try expectEqual(warningResponse.applied_commit_sha, "abc123", "Cleanup warnings preserve the published commit")
+            try expectEqual(warningResponse.warning_message, "Published, but local cleanup needs a retry.", "Decode cleanup warning")
         }),
     ]
 }

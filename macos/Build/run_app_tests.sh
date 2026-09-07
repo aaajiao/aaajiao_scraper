@@ -14,7 +14,10 @@ mkdir -p "${BUILD_DIR}" "${MODULE_CACHE}"
 SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
 SOURCE_FILES=(
   "${MACOS_DIR}/App/AppUtilities.swift"
+  "${MACOS_DIR}/App/AppModel.swift"
   "${MACOS_DIR}/App/HelperClient.swift"
+  "${MACOS_DIR}/App/ImporterHelper.swift"
+  "${MACOS_DIR}/App/Keychain.swift"
   "${MACOS_DIR}/App/OpenAIModelSettings.swift"
   "${MACOS_DIR}/Shared/ImporterDTOs.swift"
   "${MACOS_DIR}/AppTests"/*.swift
@@ -25,6 +28,9 @@ xcrun swiftc \
   -target arm64-apple-macos13.0 \
   -sdk "${SDK_PATH}" \
   -module-cache-path "${MODULE_CACHE}" \
+  -framework SwiftUI \
+  -framework AppKit \
+  -framework Security \
   "${SOURCE_FILES[@]}" \
   -o "${TEST_BINARY}"
 
