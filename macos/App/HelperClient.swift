@@ -315,6 +315,21 @@ final class HelperClient: @unchecked Sendable {
         )
     }
 
+    func updateRecord(id: Int, fields: [String: String], openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> RecordStatusResponse {
+        let editsURL = FileManager.default.temporaryDirectory.appendingPathComponent("aaajiao-record-edits-\(UUID().uuidString).json")
+        let data = try JSONEncoder().encode(fields)
+        try data.write(to: editsURL, options: .atomic)
+        defer { try? FileManager.default.removeItem(at: editsURL) }
+        return try await runCommandAsync(
+            arguments: ["updateRecord", "--id", "\(id)", "--edits-file", editsURL.path],
+            openAIKey: openAIKey,
+            openAIModel: openAIModel,
+            openAIModelSource: openAIModelSource,
+            timeout: Timeout.quick,
+            as: RecordStatusResponse.self
+        )
+    }
+
     func rejectRecord(id: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> RecordStatusResponse {
         try await runCommandAsync(
             arguments: ["rejectRecord", "--id", "\(id)"],

@@ -23,6 +23,8 @@ TEST_REPO="${TMP_ROOT}/repo"
 BOOTSTRAP_JSON="${TMP_ROOT}/bootstrap.json"
 LIST_JSON="${TMP_ROOT}/list.json"
 ACCEPT_JSON="${TMP_ROOT}/accept.json"
+EDIT_JSON="${TMP_ROOT}/edit.json"
+EDITS_FILE="${TMP_ROOT}/edits.json"
 PREVIEW_JSON="${TMP_ROOT}/preview.json"
 DRY_RUN_JSON="${TMP_ROOT}/dry-run.json"
 RESET_JSON="${TMP_ROOT}/reset.json"
@@ -118,6 +120,22 @@ AAAJIAO_IMPORTER_BASELINE_REMOTE_URL="${BASELINE_REMOTE}" \
 AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH="${BASELINE_BRANCH}" \
 "${HELPER_BIN}" acceptRecord --id 1 > "${ACCEPT_JSON}"
 
+cat > "${EDITS_FILE}" <<'JSON'
+{"size":"80 x 50 cm","description_cn":"人工校对"}
+JSON
+
+AAAJIAO_IMPORTER_WORKSPACE_ROOT="${WORKSPACE_ROOT}" \
+AAAJIAO_REPO_ROOT="${TEST_REPO}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_URL="${BASELINE_REMOTE}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH="${BASELINE_BRANCH}" \
+"${HELPER_BIN}" updateRecord --id 1 --edits-file "${EDITS_FILE}" > "${EDIT_JSON}"
+
+AAAJIAO_IMPORTER_WORKSPACE_ROOT="${WORKSPACE_ROOT}" \
+AAAJIAO_REPO_ROOT="${TEST_REPO}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_URL="${BASELINE_REMOTE}" \
+AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH="${BASELINE_BRANCH}" \
+"${HELPER_BIN}" acceptRecord --id 1 > "${ACCEPT_JSON}"
+
 AAAJIAO_IMPORTER_WORKSPACE_ROOT="${WORKSPACE_ROOT}" \
 AAAJIAO_REPO_ROOT="${TEST_REPO}" \
 AAAJIAO_IMPORTER_BASELINE_REMOTE_URL="${BASELINE_REMOTE}" \
@@ -133,7 +151,7 @@ AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH="${BASELINE_BRANCH}" \
 cmp "${WORKSPACE_ROOT}/aaajiao_works.json" "${TMP_ROOT}/baseline-works.json"
 cmp "${WORKSPACE_ROOT}/aaajiao_portfolio.md" "${TMP_ROOT}/baseline-portfolio.md"
 
-export BOOTSTRAP_JSON LIST_JSON ACCEPT_JSON PREVIEW_JSON DRY_RUN_JSON RESET_JSON WORKSPACE_ROOT
+export BOOTSTRAP_JSON LIST_JSON ACCEPT_JSON EDIT_JSON PREVIEW_JSON DRY_RUN_JSON RESET_JSON WORKSPACE_ROOT
 /usr/bin/python3 - <<'PY'
 import json
 import os
@@ -142,6 +160,7 @@ from pathlib import Path
 bootstrap = json.loads(Path(os.environ["BOOTSTRAP_JSON"]).read_text(encoding="utf-8"))
 listing = json.loads(Path(os.environ["LIST_JSON"]).read_text(encoding="utf-8"))
 accepted = json.loads(Path(os.environ["ACCEPT_JSON"]).read_text(encoding="utf-8"))
+edited = json.loads(Path(os.environ["EDIT_JSON"]).read_text(encoding="utf-8"))
 preview = json.loads(Path(os.environ["PREVIEW_JSON"]).read_text(encoding="utf-8"))
 dry_run = json.loads(Path(os.environ["DRY_RUN_JSON"]).read_text(encoding="utf-8"))
 workspace_root = Path(os.environ["WORKSPACE_ROOT"])
@@ -152,6 +171,7 @@ assert bootstrap["settings"]["openai_model_source"] == "default", bootstrap
 assert bootstrap["settings"]["baseline_status"] == "synced", bootstrap
 assert len(listing["pending_records"]) == 1, listing
 assert listing["pending_records"][0]["title"] == "Codex Fixture Work", listing
+assert edited["status"] == "needs_review", edited
 assert accepted["status"] == "accepted", accepted
 assert preview["accepted_count"] == 1, preview
 assert preview["new_count"] == 1, preview
@@ -160,7 +180,10 @@ assert preview["will_push"] is True, preview
 assert dry_run["dry_run"] is True, dry_run
 staging = Path(dry_run["staging_path"])
 assert staging.is_relative_to(workspace_root / "apply_previews"), dry_run
-assert "Codex Fixture Work" in (staging / "aaajiao_works.json").read_text()
+staged_works = json.loads((staging / "aaajiao_works.json").read_text())
+fixture = next(work for work in staged_works if work["url"] == "https://eventstructure.com/codex-fixture-work")
+assert fixture["size"] == "80 x 50 cm", fixture
+assert fixture["description_cn"] == "人工校对", fixture
 assert "Codex Fixture Work" in (staging / "aaajiao_portfolio.md").read_text()
 assert (workspace_root / "aaajiao_works.json").exists()
 assert (workspace_root / "aaajiao_portfolio.md").exists()

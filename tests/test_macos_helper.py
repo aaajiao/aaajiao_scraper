@@ -1648,3 +1648,152 @@ def test_optional_vacuum_failure_does_not_turn_cleanup_into_failure(tmp_path, mo
     helper.ensure_workspace()
     monkeypatch.setattr(helper.sqlite3, "connect", lambda *args: (_ for _ in ()).throw(helper.sqlite3.OperationalError("busy")))
     helper._vacuum_db_if_needed()
+
+
+def test_explicit_review_edits_match_comparison_dry_run_and_published_output(tmp_path, monkeypatch):
+    helper, remote, source = _transaction_fixture(tmp_path, monkeypatch)
+    original = dict(
+        helper._load_workspace_works()[0],
+        title_cn="原作品标题", materials="A long original materials description", credits="Original credits",
+        description_cn="原始中文段落。\n\n保留历史快照。",
+        images=["https://example.com/original-one.jpg", "https://example.com/original-two.jpg"],
+        high_res_images=["https://example.com/original-large.jpg"], video_link="https://vimeo.com/original",
+    )
+    helper._write_workspace_works([original])
+    (source / helper.REPO_WORKS).write_text(json.dumps([original]), encoding="utf-8")
+    _run_git(source, "add", helper.REPO_WORKS)
+    _run_git(source, "commit", "-m", "rich baseline fixture")
+    _run_git(source, "push")
+    batch_id = helper._create_batch("manual")
+    record_id = _review_fixture(helper, batch_id, title=original["title"], url=original["url"])
+    before = {name: (helper.workspace_root() / name).read_bytes() for name in helper.TARGET_FILES}
+    before_head = _run_git(remote, "rev-parse", "refs/heads/main")
+    before_record = helper._record_rows(batch_id=batch_id)[0]
+    edits = {
+        "description_en": "Short.\n\nExactly two paragraphs.", "description_cn": "", "materials": "", "credits": "",
+        "title_cn": "", "images": "", "high_res_images": " https://example.com/replacement.jpg \n\n", "video_link": "",
+        "year": original["year"],
+    }
+
+    response = helper.update_record(record_id, edits)
+
+    assert response == {"id": record_id, "status": helper.RECORD_NEEDS_REVIEW}
+    assert helper.get_apply_preview(batch_id)["accepted_count"] == 0
+    record = helper.get_batch_detail(batch_id)["records"][0]
+    assert record["baseline_fields"]["images"] == "\n".join(original["images"])
+    assert record["baseline_fields"]["description_cn"] == original["description_cn"]
+    assert record["baseline_record"] == original
+    assert record["effective_fields"]["materials"] == ""
+    assert record["effective_fields"]["images"] == ""
+    assert record["effective_fields"]["high_res_images"] == "https://example.com/replacement.jpg"
+    assert record["description_en"] == edits["description_en"]
+    assert record["description_cn"] == record["credits"] == record["video_link"] == ""
+    assert record["images"] == []
+    assert record["high_res_images"] == ["https://example.com/replacement.jpg"]
+    saved = helper._record_rows(batch_id=batch_id)[0]
+    assert saved["proposed_record_json"] == before_record["proposed_record_json"]
+    assert saved["baseline_record_json"] == before_record["baseline_record_json"]
+    assert "year" not in json.loads(saved["edited_fields_json"])
+    assert {name: (helper.workspace_root() / name).read_bytes() for name in helper.TARGET_FILES} == before
+    assert _run_git(remote, "rev-parse", "refs/heads/main") == before_head
+
+    helper.accept_record(record_id)
+    dry_run = helper.apply_accepted_records(batch_id, dry_run=True)
+    staged = json.loads((Path(dry_run["staging_path"]) / helper.REPO_WORKS).read_text())[0]
+    assert helper._review_fields(staged) == record["effective_fields"]
+    assert {name: (helper.workspace_root() / name).read_bytes() for name in helper.TARGET_FILES} == before
+    helper.apply_accepted_records(batch_id)
+    assert _remote_works(remote)[0] == staged
+
+
+def test_review_edit_patches_are_cumulative_and_revoke_prior_acceptance(tmp_path, monkeypatch):
+    helper, _remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    batch_id = helper._create_batch("manual")
+    record_id = _review_fixture(helper, batch_id)
+    helper.update_record(record_id, {"description_en": "One sentence."})
+    helper.accept_record(record_id)
+
+    helper.update_record(record_id, {"title": "Renamed Artwork", "images": "https://example.com/first.jpg\nhttps://example.com/second.jpg"})
+
+    record = helper.get_batch_detail(batch_id)["records"][0]
+    assert record["status"] == helper.RECORD_NEEDS_REVIEW
+    assert record["description_en"] == "One sentence."
+    assert record["title"] == "Renamed Artwork"
+    assert record["url"] == "https://eventstructure.com/imported-work"
+    assert record["images"] == ["https://example.com/first.jpg", "https://example.com/second.jpg"]
+    assert set(json.loads(helper._record_rows(batch_id=batch_id)[0]["edited_fields_json"])) == {"description_en", "title", "images"}
+
+
+@pytest.mark.parametrize("edits", [
+    {"url": "https://eventstructure.com/another-work"},
+    {"source": "changed"},
+    {"unknown_field": "changed"},
+    {"title": "  \n  "},
+    {"images": "javascript:alert(1)"},
+    {"images": "https://example.com/ok.jpg\nfile:///tmp/local.jpg"},
+    {"high_res_images": "/relative/image.jpg"},
+    {"video_link": "https://example.com:invalid-port/video"},
+    {"video_link": "ftp://example.com/video"},
+    {"images": ["https://example.com/not-a-string.jpg"]},
+])
+def test_invalid_review_edits_are_rejected_without_changing_record(tmp_path, monkeypatch, edits):
+    helper, remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    batch_id = helper._create_batch("manual")
+    record_id = _review_fixture(helper, batch_id)
+    before = dict(helper._record_rows(batch_id=batch_id)[0])
+    head = _run_git(remote, "rev-parse", "refs/heads/main")
+
+    with pytest.raises(RuntimeError):
+        helper.update_record(record_id, edits)
+
+    assert dict(helper._record_rows(batch_id=batch_id)[0]) == before
+    assert _run_git(remote, "rev-parse", "refs/heads/main") == head
+
+
+@pytest.mark.parametrize("locked_state", ["failed", "prepared", "published"])
+def test_failed_or_publication_locked_records_cannot_be_edited(tmp_path, monkeypatch, locked_state):
+    helper, _remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    batch_id = helper._create_batch("manual")
+    record_id = _review_fixture(helper, batch_id, status=helper.RECORD_FAILED if locked_state == "failed" else None)
+    if locked_state != "failed":
+        helper._publication_root(batch_id).mkdir(parents=True)
+        helper._write_json_atomic(helper._publish_receipt_path(batch_id), {"status": locked_state})
+    before = dict(helper._record_rows(batch_id=batch_id)[0])
+
+    with pytest.raises(RuntimeError, match="failed import|pending publication"):
+        helper.update_record(record_id, {"title": "Should not be saved"})
+
+    assert dict(helper._record_rows(batch_id=batch_id)[0]) == before
+
+
+def test_review_fields_distinguish_unknown_baseline_from_known_new_work(tmp_path, monkeypatch):
+    helper, _remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    batch_id = helper._create_batch("manual")
+    record_id = _review_fixture(helper, batch_id)
+    known = helper.get_batch_detail(batch_id)["records"][0]
+    assert known["baseline_available"] is True
+    assert known["baseline_fields"] == dict.fromkeys(helper.EDITABLE_FIELDS, "")
+    with helper.connect_db() as conn:
+        conn.execute("UPDATE records SET baseline_record_json = NULL WHERE id = ?", (record_id,))
+
+    unknown = helper.get_batch_detail(batch_id)["records"][0]
+
+    assert unknown["baseline_available"] is False
+    assert unknown["baseline_fields"] is None
+    assert unknown["effective_fields"] == known["effective_fields"]
+
+
+def test_update_record_cli_reads_edits_file(tmp_path, monkeypatch, capsys):
+    helper, _remote, _source = _transaction_fixture(tmp_path, monkeypatch)
+    batch_id = helper._create_batch("manual")
+    record_id = _review_fixture(helper, batch_id)
+    edits_file = tmp_path / "edits.json"
+    edits_file.write_text(json.dumps({"title_cn": "人工校订标题", "description_en": "Concise."}), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["helper", "updateRecord", "--id", str(record_id), "--edits-file", str(edits_file)])
+
+    helper.main()
+
+    assert json.loads(capsys.readouterr().out) == {"id": record_id, "status": helper.RECORD_NEEDS_REVIEW}
+    record = helper.get_batch_detail(batch_id)["records"][0]
+    assert record["title_cn"] == "人工校订标题"
+    assert record["effective_fields"]["description_en"] == "Concise."

@@ -6,6 +6,7 @@ enum ImporterBusyAction {
     case bootstrap
     case importURL
     case retryRecord
+    case editRecord
     case syncSite
     case reloadResults
     case acceptRecord
@@ -36,6 +37,9 @@ enum StatusTone: Equatable {
 @MainActor
 final class AppModel: ObservableObject {
     @Published var manualURL = ""
+    @Published var searchText = "" { didSet { reconcileFilteredSelection() } }
+    @Published var reviewFilter: ReviewFilter = .all { didSet { reconcileFilteredSelection() } }
+    @Published var availableBatches: [BatchSummary] = []
     @Published var currentBatchID: Int?
     @Published var currentBatchDetail: BatchDetailResponse?
     @Published var selectedRecordID: Int?
@@ -49,6 +53,11 @@ final class AppModel: ObservableObject {
     @Published var isShowingImportSheet = false
     @Published var isShowingDeleteConfirmation = false
     @Published var isShowingDiscardConfirmation = false
+    @Published var isShowingRecordEditor = false
+    @Published var recordEditorValues: [String: String] = [:] {
+        didSet { recordEditorError = recordEditorValidationError ?? "" }
+    }
+    @Published var recordEditorError = ""
     @Published var statusMessage = "Ready"
     @Published var statusTone: StatusTone = .neutral
     @Published var settings = AppSettings.empty
@@ -62,6 +71,9 @@ final class AppModel: ObservableObject {
     private let terminateApplication: @MainActor () -> Void
     private var quitCancellationTask: Task<Void, Never>?
     private var hasBootstrapped = false
+    private var editingRecordID: Int?
+    private var editingBatchID: Int?
+    private var recordEditorOriginalValues: [String: String] = [:]
 
     // Keychain reads are relatively expensive and the derived properties below
     // are re-evaluated on every view update, so the last load is cached; call
@@ -152,7 +164,23 @@ final class AppModel: ObservableObject {
     }
 
     var canSubmitManualURL: Bool {
-        !isBusy && canRunProtectedActions && !manualURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        canRunProtectedActions && !isReviewInteractionLocked && !isShowingApplyConfirmation && !manualURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && manualURLValidationMessage == nil
+    }
+
+    var canStartImport: Bool {
+        canRunProtectedActions && !isReviewInteractionLocked && !hasOpenReviewModal
+    }
+
+    var manualURLValidationMessage: String? {
+        artworkURLValidationMessage(manualURL)
+    }
+
+    var isReviewInteractionLocked: Bool {
+        isBusy || isShowingRecordEditor || isQuitRequested
+    }
+
+    private var hasOpenReviewModal: Bool {
+        isShowingImportSheet || isShowingApplyConfirmation
     }
 
     var isBusy: Bool {
@@ -191,12 +219,22 @@ final class AppModel: ObservableObject {
         (currentBatchDetail?.records ?? []).filter { $0.status != "rejected" }
     }
 
+    var filteredCurrentRecords: [ProposedRecord] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return visibleCurrentRecords.filter { record in
+            guard reviewFilter.matches(record) else { return false }
+            guard !query.isEmpty else { return true }
+            let values = [record.url, record.slug] + [RecordField.title, .titleCN, .year, .type, .materials, .descriptionEN, .descriptionCN].map { record.value(for: $0) }
+            return values.contains { $0.localizedStandardContains(query) }
+        }
+    }
+
     var selectedRecord: ProposedRecord? {
         // No selection means no selection: the default "select the first row"
         // behavior is applied once at data-load time in syncSelection(with:),
         // not implicitly on every read here.
         guard let selectedRecordID else { return nil }
-        return visibleCurrentRecords.first { $0.id == selectedRecordID }
+        return filteredCurrentRecords.first { $0.id == selectedRecordID }
     }
 
     var hasAcceptedRecords: Bool {
@@ -231,12 +269,12 @@ final class AppModel: ObservableObject {
     }
 
     var canRequestGitHubSync: Bool {
-        hasAcceptedRecords && !isBusy
+        hasAcceptedRecords && !isReviewInteractionLocked && !hasOpenReviewModal
     }
 
     var canConfirmGitHubSync: Bool {
         guard let preview = currentApplyPreview else { return false }
-        return hasAcceptedRecords && preview.will_push && !isBusy
+        return hasAcceptedRecords && preview.will_push && !isReviewInteractionLocked && !isShowingImportSheet
     }
 
     var gitHubSyncActionTitle: String {
@@ -249,15 +287,15 @@ final class AppModel: ObservableObject {
 
     var canAcceptSelectedRecord: Bool {
         guard let record = selectedRecord else { return false }
-        return !isBusy && record.status != "accepted" && record.status != "failed"
+        return !isReviewInteractionLocked && !hasOpenReviewModal && ReviewFilter.pending.matches(record)
     }
 
     var canDeleteSelectedRecord: Bool {
-        hasSelectedRecord && !isBusy
+        hasSelectedRecord && !isReviewInteractionLocked && !hasOpenReviewModal
     }
 
     var canRetrySelectedRecord: Bool {
-        !isBusy && canRunProtectedActions && selectedRecord?.status == "failed"
+        !isReviewInteractionLocked && !hasOpenReviewModal && canRunProtectedActions && selectedRecord?.status == "failed"
     }
 
     var canCancelCurrentImport: Bool {
@@ -266,7 +304,16 @@ final class AppModel: ObservableObject {
     }
 
     var canDiscardCurrentRun: Bool {
-        hasCurrentRun && !isBusy
+        hasCurrentRun && !isReviewInteractionLocked && !hasOpenReviewModal
+    }
+
+    var canEditSelectedRecord: Bool {
+        guard let record = selectedRecord else { return false }
+        return !isReviewInteractionLocked && !hasOpenReviewModal && ["ready_for_review", "needs_review", "accepted"].contains(record.status)
+    }
+
+    var canSaveRecordEdits: Bool {
+        isShowingRecordEditor && !isBusy && !isQuitRequested && editingRecordID != nil && !changedRecordFields.isEmpty && recordEditorValidationError == nil
     }
 
     var selectedRecordSourceURL: URL? {
@@ -282,7 +329,7 @@ final class AppModel: ObservableObject {
     }
 
     var canRefreshBaseline: Bool {
-        !isBusy && !hasBlockingReviewState
+        !isReviewInteractionLocked && !hasOpenReviewModal && !hasBlockingReviewState
     }
 
     var shouldAnimateGitHubSyncReady: Bool {
@@ -314,6 +361,8 @@ final class AppModel: ObservableObject {
             return "Importing URL..."
         case .retryRecord:
             return "Retrying failed result..."
+        case .editRecord:
+            return "Saving corrections..."
         case .syncSite:
             guard let syncProgress else { return "Syncing site..." }
             return "Syncing site... (\(syncProgress.completed)/\(syncProgress.total))"
@@ -359,6 +408,9 @@ final class AppModel: ObservableObject {
     /// Task that runs the async work.
     private func beginExclusive(_ action: ImporterBusyAction) -> Bool {
         guard !isBusy && !isQuitRequested else { return false }
+        guard !isShowingRecordEditor || action == .editRecord else { return false }
+        guard !isShowingImportSheet || action == .importURL else { return false }
+        guard !isShowingApplyConfirmation || action == .syncGitHub else { return false }
         currentBusyAction = action
         return true
     }
@@ -417,6 +469,19 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func selectBatch(id: Int) {
+        guard id != currentBatchID else { return }
+        guard beginExclusive(.reloadResults) else { return }
+        Task {
+            defer { endExclusive() }
+            do {
+                try await loadBatch(batchID: id, updateStatusMessage: true)
+            } catch {
+                setStatus("Could not load the selected results: \(display(error))", tone: .error)
+            }
+        }
+    }
+
     /// Reloads settings and the active/latest batch. A failure to load a batch
     /// is propagated to the caller (after clearing the now-unloadable run) so
     /// the current review results are never dropped silently — the caller is
@@ -428,6 +493,7 @@ final class AppModel: ObservableObject {
             openAIModelSource: savedOpenAIModelSelection.source
         )
         settings = response.settings
+        availableBatches = response.batches
         syncDraftWithSavedSettingsIfNeeded()
 
         if let currentBatchID {
@@ -461,6 +527,7 @@ final class AppModel: ObservableObject {
     }
 
     func startSync() {
+        guard !isReviewInteractionLocked && !hasOpenReviewModal else { return }
         reloadKeychainCache()
         guard canRunProtectedActions else {
             if hasKeychainAccessFailure {
@@ -495,12 +562,13 @@ final class AppModel: ObservableObject {
                 try await loadBatch(batchID: result.batch_id, updateStatusMessage: false)
                 reportImportOutcome(isSiteSync: true)
             } catch {
-                reportImportError(error)
+                await reportImportError(error)
             }
         }
     }
 
     func requestImportSheet() {
+        guard canStartImport else { return }
         isShowingImportSheet = true
     }
 
@@ -509,6 +577,7 @@ final class AppModel: ObservableObject {
     }
 
     func requestWorkspaceReset() {
+        guard !isReviewInteractionLocked && !hasOpenReviewModal else { return }
         isShowingResetConfirmation = true
     }
 
@@ -525,6 +594,7 @@ final class AppModel: ObservableObject {
                     openAIModelSource: savedOpenAIModelSelection.source
                 )
                 settings = response.settings
+                availableBatches = []
                 clearCurrentRun()
                 isShowingResetConfirmation = false
             } catch {
@@ -571,6 +641,7 @@ final class AppModel: ObservableObject {
     }
 
     func submitURL() {
+        guard !isReviewInteractionLocked && !isShowingApplyConfirmation else { return }
         reloadKeychainCache()
         guard canRunProtectedActions else {
             if hasKeychainAccessFailure {
@@ -582,6 +653,10 @@ final class AppModel: ObservableObject {
         }
         let trimmed = manualURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        if let validationMessage = manualURLValidationMessage {
+            setStatus(validationMessage, tone: .warning)
+            return
+        }
         guard beginExclusive(.importURL) else { return }
         setStatus("Importing URL...", tone: .info)
         Task {
@@ -598,7 +673,7 @@ final class AppModel: ObservableObject {
                 try await loadBatch(batchID: result.batch_id, updateStatusMessage: false)
                 reportImportOutcome(isSiteSync: false)
             } catch {
-                reportImportError(error)
+                await reportImportError(error)
             }
         }
     }
@@ -609,6 +684,104 @@ final class AppModel: ObservableObject {
         setStatus("Stopping import...", tone: .info)
         // Keep the exclusive gate until the awaiting operation confirms that
         // its process has stopped. A cancellation request is not completion.
+    }
+
+    func beginEditingSelectedRecord() {
+        guard canEditSelectedRecord, let record = selectedRecord else { return }
+        editingRecordID = record.id
+        editingBatchID = record.batch_id
+        recordEditorOriginalValues = Dictionary(uniqueKeysWithValues: RecordField.allCases.map { ($0.rawValue, record.value(for: $0)) })
+        recordEditorValues = recordEditorOriginalValues
+        recordEditorError = ""
+        currentApplyPreview = nil
+        isShowingRecordEditor = true
+    }
+
+    func cancelRecordEditing() {
+        guard !isBusy else { return }
+        finishRecordEditing()
+    }
+
+    func saveRecordEdits() {
+        guard isShowingRecordEditor, !isBusy, let recordID = editingRecordID, let batchID = editingBatchID else { return }
+        if let error = recordEditorValidationError {
+            recordEditorError = error
+            return
+        }
+        let fields = changedRecordFields
+        guard !fields.isEmpty, beginExclusive(.editRecord) else { return }
+        recordEditorError = ""
+        Task {
+            defer { endExclusive() }
+            do {
+                _ = try await helper.updateRecord(
+                    id: recordID,
+                    fields: fields,
+                    openAIKey: savedOpenAIKey,
+                    openAIModel: savedOpenAIModelSelection.effectiveModel,
+                    openAIModelSource: savedOpenAIModelSelection.source
+                )
+            } catch {
+                // Keep the draft open so a temporary save failure never loses
+                // the user's corrections or forces them to retype their work.
+                recordEditorError = display(error)
+                return
+            }
+            finishRecordEditing()
+            currentApplyPreview = nil
+            do {
+                try await loadBatch(batchID: batchID, updateStatusMessage: false)
+                if !filteredCurrentRecords.contains(where: { $0.id == recordID }) {
+                    searchText = ""
+                    reviewFilter = .all
+                }
+                selectedRecordID = recordID
+                setStatus("Corrections saved. Review and accept the updated result before publishing.", tone: .success)
+            } catch {
+                currentBatchID = batchID
+                currentBatchDetail = nil
+                selectedRecordID = nil
+                setStatus("Corrections saved, but reloading the result failed — use Reload Results.", tone: .warning)
+            }
+        }
+    }
+
+    private var changedRecordFields: [String: String] {
+        var changes: [String: String] = [:]
+        for field in RecordField.allCases {
+            guard let value = recordEditorValues[field.rawValue], value != recordEditorOriginalValues[field.rawValue] else { continue }
+            changes[field.rawValue] = value
+        }
+        return changes
+    }
+
+    private var recordEditorValidationError: String? {
+        guard isShowingRecordEditor else { return nil }
+        if (recordEditorValues[RecordField.title.rawValue] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "The English title cannot be empty."
+        }
+        let changes = changedRecordFields
+        for field in [RecordField.images, .highResImages] {
+            guard let changed = changes[field.rawValue] else { continue }
+            let urls = changed.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            if urls.contains(where: { !isAbsoluteWebURL($0) }) {
+                return "\(field.label) must contain one full http(s) URL per line."
+            }
+        }
+        if let video = changes[RecordField.videoLink.rawValue]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !video.isEmpty && !isAbsoluteWebURL(video) {
+            return "The video URL must be a full http(s) URL."
+        }
+        return nil
+    }
+
+    private func finishRecordEditing() {
+        isShowingRecordEditor = false
+        recordEditorValues = [:]
+        recordEditorOriginalValues = [:]
+        recordEditorError = ""
+        editingRecordID = nil
+        editingBatchID = nil
     }
 
     func retrySelectedRecord() {
@@ -632,7 +805,7 @@ final class AppModel: ObservableObject {
                     setStatus("Retried \(record.displayTitle). Review the updated result.", tone: .success)
                 }
             } catch {
-                reportImportError(error)
+                await reportImportError(error)
             }
         }
     }
@@ -655,7 +828,28 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func reportImportError(_ error: Error) {
+    private func reportImportError(_ error: Error) async {
+        if !isQuitRequested {
+            // The helper may have committed partial records before cancellation
+            // or an error. Refresh the batch inventory so that run remains
+            // reachable without restarting the app or discarding an older run.
+            do {
+                let response = try await helper.listPendingRecords(
+                    openAIKey: savedOpenAIKey,
+                    openAIModel: savedOpenAIModelSelection.effectiveModel,
+                    openAIModelSource: savedOpenAIModelSelection.source
+                )
+                settings = response.settings
+                availableBatches = response.batches
+                let recoveryBatchID = currentBusyAction == .retryRecord ? currentBatchID : response.batches.first?.id
+                if let recoveryBatchID {
+                    try await loadBatch(batchID: recoveryBatchID, updateStatusMessage: false)
+                }
+            } catch {
+                // Keep the original operation error visible. A later Reload
+                // Results can retry this read without rerunning the import.
+            }
+        }
         if case HelperClientError.cancelled = error {
             setStatus("Import cancelled. Use Reload Results to inspect any saved progress.", tone: .info)
         } else {
@@ -664,7 +858,11 @@ final class AppModel: ObservableObject {
     }
 
     func acceptSelectedRecord() {
+        guard canAcceptSelectedRecord else { return }
         guard let record = selectedRecord else { return }
+        let recordsBeforeAccept = filteredCurrentRecords
+        let index = recordsBeforeAccept.firstIndex(where: { $0.id == record.id }) ?? 0
+        let nextIDs = Array(recordsBeforeAccept.dropFirst(index + 1)) + Array(recordsBeforeAccept.prefix(index))
         guard beginExclusive(.acceptRecord) else { return }
         Task {
             defer { endExclusive() }
@@ -677,6 +875,10 @@ final class AppModel: ObservableObject {
                 )
                 if let batchID = currentBatchID {
                     try await loadBatch(batchID: batchID, updateStatusMessage: false)
+                }
+                let pending = filteredCurrentRecords.filter { ReviewFilter.pending.matches($0) }
+                if let next = nextIDs.first(where: { candidate in pending.contains(where: { $0.id == candidate.id }) }) ?? pending.first {
+                    selectedRecordID = next.id
                 }
                 setStatus("Accepted \(record.displayTitle)", tone: .success)
             } catch {
@@ -705,6 +907,7 @@ final class AppModel: ObservableObject {
                         openAIModel: savedOpenAIModelSelection.effectiveModel,
                         openAIModelSource: savedOpenAIModelSelection.source
                     )
+                    availableBatches.removeAll { $0.id == batchID }
                     clearCurrentRun()
                     try await refresh(allowFallbackBatch: false)
                     setStatus("Discarded current results", tone: .success)
@@ -743,6 +946,7 @@ final class AppModel: ObservableObject {
                     openAIModel: savedOpenAIModelSelection.effectiveModel,
                     openAIModelSource: savedOpenAIModelSelection.source
                 )
+                availableBatches.removeAll { $0.id == batchID }
                 clearCurrentRun()
                 try await refresh(allowFallbackBatch: false)
                 setStatus("Discarded current results", tone: .success)
@@ -808,6 +1012,7 @@ final class AppModel: ObservableObject {
                     // addressable so its failed/unreviewed rows can be resumed.
                     currentApplyPreview = nil
                 } else {
+                    availableBatches.removeAll { $0.id == batchID }
                     clearCurrentRun()
                 }
             } catch {
@@ -961,9 +1166,18 @@ final class AppModel: ObservableObject {
             openAIModel: savedOpenAIModelSelection.effectiveModel,
             openAIModelSource: savedOpenAIModelSelection.source
         )
+        let switchedBatch = currentBatchID != batchID
         currentBatchID = batchID
         currentBatchDetail = detail
-        syncSelection(with: detail.records.filter { $0.status != "rejected" })
+        if switchedBatch {
+            selectedRecordID = nil
+            searchText = ""
+            reviewFilter = .all
+        }
+        availableBatches.removeAll { $0.id == batchID }
+        availableBatches.append(detail.batch)
+        availableBatches.sort { $0.id > $1.id }
+        reconcileFilteredSelection()
         // The apply preview is a full-merge computation; fetch it lazily when
         // the user actually requests a GitHub sync (requestApply), not eagerly
         // after every data reload. Any preview from a prior load is now stale.
@@ -988,6 +1202,10 @@ final class AppModel: ObservableObject {
             return
         }
         selectedRecordID = records.first?.id
+    }
+
+    private func reconcileFilteredSelection() {
+        syncSelection(with: filteredCurrentRecords)
     }
 
     private func syncDraftWithSavedSettingsIfNeeded() {

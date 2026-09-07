@@ -1,0 +1,452 @@
+{
+  "note": "Static UI fixtures copied from the shared portfolio for layout testing. Review states and field edits are illustrative. Every preview mutation stays in memory.",
+  "batches": [
+    {
+      "id": 202,
+      "mode": "incremental"
+    },
+    {
+      "id": 101,
+      "mode": "manual"
+    }
+  ],
+  "records": [
+    {
+      "title": "Windows Gravestone",
+      "title_cn": "视窗碑林",
+      "year": "2016",
+      "type": "Installation",
+      "materials": "Metal structure, UV print",
+      "size": "Dimensions variable",
+      "duration": "",
+      "credits": "In collaboration with Xu Cong and Shen jiujiu.",
+      "description_en": "This piece was done in collaboration with Xu Cong and Shen jiujiu.",
+      "description_cn": "作品是与许聪和沈赳赳共同完成。",
+      "video_link": "",
+      "images": [
+        "https://payload.cargocollective.com/1/0/8955/11731713/20160617-001_5000.jpg",
+        "https://payload.cargocollective.com/1/0/8955/11731713/20160617-002_5000.jpg"
+      ],
+      "high_res_images": [
+        "https://payload.cargocollective.com/1/0/8955/11731713/20160617-001_5000.jpg",
+        "https://payload.cargocollective.com/1/0/8955/11731713/20160617-002_5000.jpg"
+      ],
+      "id": 2001,
+      "batch_id": 202,
+      "url": "https://eventstructure.com/Windows-Gravestone",
+      "slug": "Windows-Gravestone",
+      "status": "needs_review",
+      "page_type": "artwork",
+      "confidence": 0.83,
+      "is_update": true,
+      "error_message": "Preview review note: check the updated materials, dimensions and bilingual descriptions.",
+      "baseline_available": true,
+      "baseline_record": {
+        "url": "https://eventstructure.com/Windows-Gravestone",
+        "title": "Windows Gravestone",
+        "title_cn": "视窗碑林",
+        "year": "2016",
+        "type": "Installation",
+        "materials": "metal structure with UV print",
+        "size": "",
+        "duration": "",
+        "credits": "Built for OS Windows Graveston / 给视窗系统构建墓碑。. This piece was done in collaboration with Xu Cong and Shen jiujiu",
+        "description_en": "This piece was done in collaboration with Xu Cong and Shen jiujiu. / 作品是与许聪和沈赳赳共同完成。",
+        "description_cn": "作品是与许聪和沈赳赳共同完成。",
+        "images": [
+          "https://payload.cargocollective.com/1/0/8955/11731713/20160617-001_5000.jpg",
+          "https://payload.cargocollective.com/1/0/8955/11731713/20160617-002_5000.jpg"
+        ],
+        "high_res_images": [
+          "https://payload.cargocollective.com/1/0/8955/11731713/20160617-001_5000.jpg",
+          "https://payload.cargocollective.com/1/0/8955/11731713/20160617-002_5000.jpg"
+        ],
+        "source": "hybrid_layer2",
+        "video_link": ""
+      },
+      "baseline_fields": {
+        "title": "Windows Gravestone",
+        "title_cn": "视窗碑林",
+        "year": "2016",
+        "type": "Installation",
+        "materials": "metal structure with UV print",
+        "size": "",
+        "duration": "",
+        "credits": "Built for OS Windows Graveston / 给视窗系统构建墓碑。. This piece was done in collaboration with Xu Cong and Shen jiujiu",
+        "description_en": "This piece was done in collaboration with Xu Cong and Shen jiujiu. / 作品是与许聪和沈赳赳共同完成。",
+        "description_cn": "作品是与许聪和沈赳赳共同完成。",
+        "video_link": "",
+        "images": "https://payload.cargocollective.com/1/0/8955/11731713/20160617-001_5000.jpg\nhttps://payload.cargocollective.com/1/0/8955/11731713/20160617-002_5000.jpg",
+        "high_res_images": "https://payload.cargocollective.com/1/0/8955/11731713/20160617-001_5000.jpg\nhttps://payload.cargocollective.com/1/0/8955/11731713/20160617-002_5000.jpg"
+      },
+      "effective_fields": {
+        "title": "Windows Gravestone",
+        "title_cn": "视窗碑林",
+        "year": "2016",
+        "type": "Installation",
+        "materials": "Metal structure, UV print",
+        "size": "Dimensions variable",
+        "duration": "",
+        "credits": "In collaboration with Xu Cong and Shen jiujiu.",
+        "description_en": "This piece was done in collaboration with Xu Cong and Shen jiujiu.",
+        "description_cn": "作品是与许聪和沈赳赳共同完成。",
+        "video_link": "",
+        "images": "https://payload.cargocollective.com/1/0/8955/11731713/20160617-001_5000.jpg\nhttps://payload.cargocollective.com/1/0/8955/11731713/20160617-002_5000.jpg",
+        "high_res_images": "https://payload.cargocollective.com/1/0/8955/11731713/20160617-001_5000.jpg\nhttps://payload.cargocollective.com/1/0/8955/11731713/20160617-002_5000.jpg"
+      },
+      "error_history": [],
+      "retry_count": 0
+    },
+    {
+      "title": "gumdrop",
+      "title_cn": "橡皮软糖",
+      "year": "2017-2019",
+      "type": "Installation",
+      "materials": "Cellophane, UV printing, digital printing, acrylic wood",
+      "size": "Dimension variable",
+      "duration": "",
+      "credits": "",
+      "description_en": "gumdrop is an installation artwork that explores the interplay between materiality and perception, utilizing a variety of techniques to create a dynamic visual experience.",
+      "description_cn": "橡皮软糖是一件装置艺术作品，探讨了物质性与感知之间的相互作用，利用多种技术创造出动态的视觉体验。",
+      "video_link": "",
+      "images": [
+        "https://payload.cargocollective.com/1/0/8955/14091573/gumdrop_2017-2019_Cellophane--UV-printing--digital-printing--acrylic-wood-installationUV_Dimension-variable_1623.jpg",
+        "https://payload.cargocollective.com/1/0/8955/14091573/DSCF9928_5000.jpg"
+      ],
+      "high_res_images": [
+        "https://payload.cargocollective.com/1/0/8955/14091573/gumdrop_2017-2019_Cellophane--UV-printing--digital-printing--acrylic-wood-installationUV_Dimension-variable_1623.jpg",
+        "https://payload.cargocollective.com/1/0/8955/14091573/DSCF9928_5000.jpg"
+      ],
+      "id": 2002,
+      "batch_id": 202,
+      "url": "https://eventstructure.com/gumdrop",
+      "slug": "gumdrop",
+      "status": "ready_for_review",
+      "page_type": "artwork",
+      "confidence": 0.83,
+      "is_update": false,
+      "error_message": null,
+      "baseline_available": true,
+      "baseline_record": null,
+      "baseline_fields": {
+        "title": "",
+        "title_cn": "",
+        "year": "",
+        "type": "",
+        "materials": "",
+        "size": "",
+        "duration": "",
+        "credits": "",
+        "description_en": "",
+        "description_cn": "",
+        "video_link": "",
+        "images": "",
+        "high_res_images": ""
+      },
+      "effective_fields": {
+        "title": "gumdrop",
+        "title_cn": "橡皮软糖",
+        "year": "2017-2019",
+        "type": "Installation",
+        "materials": "Cellophane, UV printing, digital printing, acrylic wood",
+        "size": "Dimension variable",
+        "duration": "",
+        "credits": "",
+        "description_en": "gumdrop is an installation artwork that explores the interplay between materiality and perception, utilizing a variety of techniques to create a dynamic visual experience.",
+        "description_cn": "橡皮软糖是一件装置艺术作品，探讨了物质性与感知之间的相互作用，利用多种技术创造出动态的视觉体验。",
+        "video_link": "",
+        "images": "https://payload.cargocollective.com/1/0/8955/14091573/gumdrop_2017-2019_Cellophane--UV-printing--digital-printing--acrylic-wood-installationUV_Dimension-variable_1623.jpg\nhttps://payload.cargocollective.com/1/0/8955/14091573/DSCF9928_5000.jpg",
+        "high_res_images": "https://payload.cargocollective.com/1/0/8955/14091573/gumdrop_2017-2019_Cellophane--UV-printing--digital-printing--acrylic-wood-installationUV_Dimension-variable_1623.jpg\nhttps://payload.cargocollective.com/1/0/8955/14091573/DSCF9928_5000.jpg"
+      },
+      "error_history": [],
+      "retry_count": 0
+    },
+    {
+      "title": "foam wave",
+      "title_cn": "棉的浪",
+      "year": "2017",
+      "type": "Installation",
+      "materials": "海绵，UV打印 ／ foam, UV print",
+      "size": "Dimension variable / 尺寸可变",
+      "duration": "",
+      "credits": "",
+      "description_en": "Foam Wave is an installation that explores the interaction between digital and physical realms, utilizing UV printing techniques to create a dynamic visual experience.",
+      "description_cn": "棉的浪是一个装置艺术作品，探讨数字与物理领域之间的互动，利用UV打印技术创造出动态的视觉体验。",
+      "video_link": "",
+      "images": [
+        "https://payload.cargocollective.com/1/0/8955/12786182/Foam-Wave2017-aaajiao-Installationfoam--UV-print-Size-Variable-Image-courtesy-of-LUXELAKES-A4-Art-Museum-photographer-HB-A2017I--UVUA-O-A4A_5000.jpg",
+        "https://payload.cargocollective.com/1/0/8955/12786182/fw2_1280.jpg"
+      ],
+      "high_res_images": [
+        "https://payload.cargocollective.com/1/0/8955/12786182/Foam-Wave2017-aaajiao-Installationfoam--UV-print-Size-Variable-Image-courtesy-of-LUXELAKES-A4-Art-Museum-photographer-HB-A2017I--UVUA-O-A4A_5000.jpg",
+        "https://payload.cargocollective.com/1/0/8955/12786182/fw2_1280.jpg"
+      ],
+      "id": 2003,
+      "batch_id": 202,
+      "url": "https://eventstructure.com/foam-wave",
+      "slug": "foam-wave",
+      "status": "failed",
+      "page_type": "artwork",
+      "confidence": 0,
+      "is_update": false,
+      "error_message": "Preview failure: the image source did not respond. Retry this record to continue reviewing.",
+      "baseline_available": true,
+      "baseline_record": null,
+      "baseline_fields": {
+        "title": "",
+        "title_cn": "",
+        "year": "",
+        "type": "",
+        "materials": "",
+        "size": "",
+        "duration": "",
+        "credits": "",
+        "description_en": "",
+        "description_cn": "",
+        "video_link": "",
+        "images": "",
+        "high_res_images": ""
+      },
+      "effective_fields": {
+        "title": "foam wave",
+        "title_cn": "棉的浪",
+        "year": "2017",
+        "type": "Installation",
+        "materials": "海绵，UV打印 ／ foam, UV print",
+        "size": "Dimension variable / 尺寸可变",
+        "duration": "",
+        "credits": "",
+        "description_en": "Foam Wave is an installation that explores the interaction between digital and physical realms, utilizing UV printing techniques to create a dynamic visual experience.",
+        "description_cn": "棉的浪是一个装置艺术作品，探讨数字与物理领域之间的互动，利用UV打印技术创造出动态的视觉体验。",
+        "video_link": "",
+        "images": "https://payload.cargocollective.com/1/0/8955/12786182/Foam-Wave2017-aaajiao-Installationfoam--UV-print-Size-Variable-Image-courtesy-of-LUXELAKES-A4-Art-Museum-photographer-HB-A2017I--UVUA-O-A4A_5000.jpg\nhttps://payload.cargocollective.com/1/0/8955/12786182/fw2_1280.jpg",
+        "high_res_images": "https://payload.cargocollective.com/1/0/8955/12786182/Foam-Wave2017-aaajiao-Installationfoam--UV-print-Size-Variable-Image-courtesy-of-LUXELAKES-A4-Art-Museum-photographer-HB-A2017I--UVUA-O-A4A_5000.jpg\nhttps://payload.cargocollective.com/1/0/8955/12786182/fw2_1280.jpg"
+      },
+      "error_history": [
+        {
+          "at": "2026-09-07T08:25:00Z",
+          "message": "Preview failure: artwork page request timed out."
+        },
+        {
+          "at": "2026-09-07T08:26:00Z",
+          "message": "Preview failure: the image source did not respond. Retry this record to continue reviewing."
+        }
+      ],
+      "retry_count": 1
+    },
+    {
+      "title": "404",
+      "title_cn": "404",
+      "year": "2017",
+      "type": "Installation",
+      "materials": "Ink, sponge roller",
+      "size": "Dimension variable",
+      "duration": "",
+      "credits": "",
+      "description_en": "404 is the error message which appears on blocked websites in China. Translating the digital message back into analog form, 404 (2017) is aaajiao’s subtle commentary on censorship and the flow of information in our digital culture. The message is always the same, no matter the diversity of content it is covering from view. Entirely site-specific, this work takes a new form with each installation; multiplying the message 404 in a diversity of forms and contexts. - DR. RACHEL RITS-VOLLOCH",
+      "description_cn": "",
+      "video_link": "",
+      "images": [
+        "https://payload.cargocollective.com/1/0/8955/12885091/20170523-015_5000.jpg",
+        "https://payload.cargocollective.com/1/0/8955/12885091/20170523-025_800.jpg"
+      ],
+      "high_res_images": [
+        "https://payload.cargocollective.com/1/0/8955/12885091/20170523-015_5000.jpg",
+        "https://payload.cargocollective.com/1/0/8955/12885091/20170523-025_800.jpg"
+      ],
+      "id": 2004,
+      "batch_id": 202,
+      "url": "https://eventstructure.com/404404404",
+      "slug": "404404404",
+      "status": "accepted",
+      "page_type": "artwork",
+      "confidence": 0.94,
+      "is_update": false,
+      "error_message": null,
+      "baseline_available": true,
+      "baseline_record": null,
+      "baseline_fields": {
+        "title": "",
+        "title_cn": "",
+        "year": "",
+        "type": "",
+        "materials": "",
+        "size": "",
+        "duration": "",
+        "credits": "",
+        "description_en": "",
+        "description_cn": "",
+        "video_link": "",
+        "images": "",
+        "high_res_images": ""
+      },
+      "effective_fields": {
+        "title": "404",
+        "title_cn": "404",
+        "year": "2017",
+        "type": "Installation",
+        "materials": "Ink, sponge roller",
+        "size": "Dimension variable",
+        "duration": "",
+        "credits": "",
+        "description_en": "404 is the error message which appears on blocked websites in China. Translating the digital message back into analog form, 404 (2017) is aaajiao’s subtle commentary on censorship and the flow of information in our digital culture. The message is always the same, no matter the diversity of content it is covering from view. Entirely site-specific, this work takes a new form with each installation; multiplying the message 404 in a diversity of forms and contexts. - DR. RACHEL RITS-VOLLOCH",
+        "description_cn": "",
+        "video_link": "",
+        "images": "https://payload.cargocollective.com/1/0/8955/12885091/20170523-015_5000.jpg\nhttps://payload.cargocollective.com/1/0/8955/12885091/20170523-025_800.jpg",
+        "high_res_images": "https://payload.cargocollective.com/1/0/8955/12885091/20170523-015_5000.jpg\nhttps://payload.cargocollective.com/1/0/8955/12885091/20170523-025_800.jpg"
+      },
+      "error_history": [],
+      "retry_count": 0
+    },
+    {
+      "title": "Avatar",
+      "title_cn": "头像",
+      "year": "2017",
+      "type": "Video",
+      "materials": "Gif animation, screen / Gif 动画、屏幕",
+      "size": "Dimension variable / 尺寸可变",
+      "duration": "10’41",
+      "credits": "",
+      "description_en": "Framed in a palm-size, delicate, old-fashioned screen, this pixelated GIF animation of a teenage girl in a gust of wind (“Avatar”) translates the typical but precise social media cuteness and solitude into an anonymous portrait of a collective of users.",
+      "description_cn": "巴掌大的录像装置《头像》循环播放着一张似曾相识的gif头像。大颗粒像素肖像，他／她的头发在风中飘拂，他／她的性格因此得以伸张，情绪获得表达。就像众多应用中的用户以类似gif动画定义自己在虚拟世界的化身一样，《头像》也是为这个集体创作的一部无名“自画像”。",
+      "video_link": "",
+      "images": [
+        "https://payload.cargocollective.com/1/0/8955/12884201/20170523-070_800.jpg",
+        "https://payload.cargocollective.com/1/0/8955/12884201/20170523-071_800.jpg"
+      ],
+      "high_res_images": [
+        "https://payload.cargocollective.com/1/0/8955/12884201/20170523-070_800.jpg",
+        "https://payload.cargocollective.com/1/0/8955/12884201/20170523-071_800.jpg"
+      ],
+      "id": 1001,
+      "batch_id": 101,
+      "url": "https://eventstructure.com/Avatar",
+      "slug": "Avatar",
+      "status": "ready_for_review",
+      "page_type": "artwork",
+      "confidence": 0.83,
+      "is_update": false,
+      "error_message": null,
+      "baseline_available": true,
+      "baseline_record": null,
+      "baseline_fields": {
+        "title": "",
+        "title_cn": "",
+        "year": "",
+        "type": "",
+        "materials": "",
+        "size": "",
+        "duration": "",
+        "credits": "",
+        "description_en": "",
+        "description_cn": "",
+        "video_link": "",
+        "images": "",
+        "high_res_images": ""
+      },
+      "effective_fields": {
+        "title": "Avatar",
+        "title_cn": "头像",
+        "year": "2017",
+        "type": "Video",
+        "materials": "Gif animation, screen / Gif 动画、屏幕",
+        "size": "Dimension variable / 尺寸可变",
+        "duration": "10’41",
+        "credits": "",
+        "description_en": "Framed in a palm-size, delicate, old-fashioned screen, this pixelated GIF animation of a teenage girl in a gust of wind (“Avatar”) translates the typical but precise social media cuteness and solitude into an anonymous portrait of a collective of users.",
+        "description_cn": "巴掌大的录像装置《头像》循环播放着一张似曾相识的gif头像。大颗粒像素肖像，他／她的头发在风中飘拂，他／她的性格因此得以伸张，情绪获得表达。就像众多应用中的用户以类似gif动画定义自己在虚拟世界的化身一样，《头像》也是为这个集体创作的一部无名“自画像”。",
+        "video_link": "",
+        "images": "https://payload.cargocollective.com/1/0/8955/12884201/20170523-070_800.jpg\nhttps://payload.cargocollective.com/1/0/8955/12884201/20170523-071_800.jpg",
+        "high_res_images": "https://payload.cargocollective.com/1/0/8955/12884201/20170523-070_800.jpg\nhttps://payload.cargocollective.com/1/0/8955/12884201/20170523-071_800.jpg"
+      },
+      "error_history": [],
+      "retry_count": 0
+    },
+    {
+      "title": "Cloud.data",
+      "title_cn": "",
+      "year": "2009",
+      "type": "Installation",
+      "materials": "screen, acrylic, mirror",
+      "size": "210 × 75 × 200cm",
+      "duration": "",
+      "credits": "concept: aaajiao; computer graphics, video editing: aaajiao, liu xiaoguang; sound: nara",
+      "description_en": "In his latest piece Cloud, 12 flat and cold screens simulate a small region of a dark sky, but in the other way this matrix is able to contain a boundless 3-dimension sky of a digital reality. Clouds generated by the artist’s computing language are seen flying over the screens… So how do we feel the textile dimension, the color, or even temperature…of a virtual object? Apparently, we very much rely on the knowledge understanding of the technology application, but maybe in the not far future, a sixth sense will finally be stimulated in human body to deal with the cyber reality.",
+      "description_cn": "在作品《云》中，12块冰冷的纯平显示器模拟出了一小片昏暗的天空。与此同时，这个矩阵却也在数字时空中为我们营造了一片无边无垠的三维天空。由艺术家（或者更准确的说，是由计算机程序语言）生成的“白云”在虚拟空际缓慢漂过……那我们究竟该怎么去感知一个虚拟物体的质地、色彩、维度，甚至是温度呢？显然，我们目前还必须依赖知识（对现代数字化技术的了解）来做出判断。但或许在不久的将来，人体将能够“模拟”出某种“第六感”，使我们更好的去感知“数字时空”。",
+      "video_link": "https://player.vimeo.com/video/11923207",
+      "images": [
+        "https://payload.cargocollective.com/1/0/8955/193901/DSC_0186_o.JPG",
+        "https://payload.cargocollective.com/1/0/8955/193901/DSC_0177_o.JPG"
+      ],
+      "high_res_images": [
+        "https://payload.cargocollective.com/1/0/8955/193901/DSC_0186_o.JPG",
+        "https://payload.cargocollective.com/1/0/8955/193901/DSC_0177_o.JPG"
+      ],
+      "id": 1002,
+      "batch_id": 101,
+      "url": "https://eventstructure.com/Cloud-data",
+      "slug": "Cloud-data",
+      "status": "needs_review",
+      "page_type": "artwork",
+      "confidence": 0.83,
+      "is_update": true,
+      "error_message": null,
+      "baseline_available": true,
+      "baseline_record": {
+        "url": "https://eventstructure.com/Cloud-data",
+        "title": "Cloud.data",
+        "title_cn": "",
+        "year": "2009",
+        "type": "Installation",
+        "materials": "screen, acrylic, mirror",
+        "size": "210 × 75 × 200cm",
+        "duration": "",
+        "credits": "concept: aaajiao; computer graphics, video editing: aaajiao, liu xiaoguang; sound: nara",
+        "description_en": "In his latest piece Cloud, 12 flat and cold screens simulate a small region of a dark sky, but in the other way this matrix is able to contain a boundless 3-dimension sky of a digital reality. Clouds generated by the artist’s computing language are seen flying over the screens… So how do we feel the textile dimension, the color, or even temperature…of a virtual object? Apparently, we very much rely on the knowledge understanding of the technology application, but maybe in the not far future, a sixth sense will finally be stimulated in human body to deal with the cyber reality.",
+        "description_cn": "在作品《云》中，12块冰冷的纯平显示器模拟出了一小片昏暗的天空。与此同时，这个矩阵却也在数字时空中为我们营造了一片无边无垠的三维天空。由艺术家（或者更准确的说，是由计算机程序语言）生成的“白云”在虚拟空际缓慢漂过……那我们究竟该怎么去感知一个虚拟物体的质地、色彩、维度，甚至是温度呢？显然，我们目前还必须依赖知识（对现代数字化技术的了解）来做出判断。但或许在不久的将来，人体将能够“模拟”出某种“第六感”，使我们更好的去感知“数字时空”。",
+        "images": [
+          "https://payload.cargocollective.com/1/0/8955/193901/DSC_0186_o.JPG",
+          "https://payload.cargocollective.com/1/0/8955/193901/DSC_0177_o.JPG"
+        ],
+        "high_res_images": [
+          "https://payload.cargocollective.com/1/0/8955/193901/DSC_0186_o.JPG",
+          "https://payload.cargocollective.com/1/0/8955/193901/DSC_0177_o.JPG"
+        ],
+        "source": "hybrid_layer2",
+        "video_link": "https://player.vimeo.com/video/11923207"
+      },
+      "baseline_fields": {
+        "title": "Cloud.data",
+        "title_cn": "",
+        "year": "2009",
+        "type": "Installation",
+        "materials": "screen, acrylic, mirror",
+        "size": "210 × 75 × 200cm",
+        "duration": "",
+        "credits": "concept: aaajiao; computer graphics, video editing: aaajiao, liu xiaoguang; sound: nara",
+        "description_en": "In his latest piece Cloud, 12 flat and cold screens simulate a small region of a dark sky, but in the other way this matrix is able to contain a boundless 3-dimension sky of a digital reality. Clouds generated by the artist’s computing language are seen flying over the screens… So how do we feel the textile dimension, the color, or even temperature…of a virtual object? Apparently, we very much rely on the knowledge understanding of the technology application, but maybe in the not far future, a sixth sense will finally be stimulated in human body to deal with the cyber reality.",
+        "description_cn": "在作品《云》中，12块冰冷的纯平显示器模拟出了一小片昏暗的天空。与此同时，这个矩阵却也在数字时空中为我们营造了一片无边无垠的三维天空。由艺术家（或者更准确的说，是由计算机程序语言）生成的“白云”在虚拟空际缓慢漂过……那我们究竟该怎么去感知一个虚拟物体的质地、色彩、维度，甚至是温度呢？显然，我们目前还必须依赖知识（对现代数字化技术的了解）来做出判断。但或许在不久的将来，人体将能够“模拟”出某种“第六感”，使我们更好的去感知“数字时空”。",
+        "video_link": "https://player.vimeo.com/video/11923207",
+        "images": "https://payload.cargocollective.com/1/0/8955/193901/DSC_0186_o.JPG\nhttps://payload.cargocollective.com/1/0/8955/193901/DSC_0177_o.JPG",
+        "high_res_images": "https://payload.cargocollective.com/1/0/8955/193901/DSC_0186_o.JPG\nhttps://payload.cargocollective.com/1/0/8955/193901/DSC_0177_o.JPG"
+      },
+      "effective_fields": {
+        "title": "Cloud.data",
+        "title_cn": "",
+        "year": "2009",
+        "type": "Installation",
+        "materials": "screen, acrylic, mirror",
+        "size": "210 × 75 × 200cm",
+        "duration": "",
+        "credits": "concept: aaajiao; computer graphics, video editing: aaajiao, liu xiaoguang; sound: nara",
+        "description_en": "In his latest piece Cloud, 12 flat and cold screens simulate a small region of a dark sky, but in the other way this matrix is able to contain a boundless 3-dimension sky of a digital reality. Clouds generated by the artist’s computing language are seen flying over the screens… So how do we feel the textile dimension, the color, or even temperature…of a virtual object? Apparently, we very much rely on the knowledge understanding of the technology application, but maybe in the not far future, a sixth sense will finally be stimulated in human body to deal with the cyber reality.",
+        "description_cn": "在作品《云》中，12块冰冷的纯平显示器模拟出了一小片昏暗的天空。与此同时，这个矩阵却也在数字时空中为我们营造了一片无边无垠的三维天空。由艺术家（或者更准确的说，是由计算机程序语言）生成的“白云”在虚拟空际缓慢漂过……那我们究竟该怎么去感知一个虚拟物体的质地、色彩、维度，甚至是温度呢？显然，我们目前还必须依赖知识（对现代数字化技术的了解）来做出判断。但或许在不久的将来，人体将能够“模拟”出某种“第六感”，使我们更好的去感知“数字时空”。",
+        "video_link": "https://player.vimeo.com/video/11923207",
+        "images": "https://payload.cargocollective.com/1/0/8955/193901/DSC_0186_o.JPG\nhttps://payload.cargocollective.com/1/0/8955/193901/DSC_0177_o.JPG",
+        "high_res_images": "https://payload.cargocollective.com/1/0/8955/193901/DSC_0186_o.JPG\nhttps://payload.cargocollective.com/1/0/8955/193901/DSC_0177_o.JPG"
+      },
+      "error_history": [],
+      "retry_count": 0
+    }
+  ]
+}

@@ -18,6 +18,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 import requests
 from requests import RequestException
@@ -117,6 +118,11 @@ PROPOSED_FIELDS = {
     "high_res_images",
     "source",
 }
+EDITABLE_FIELDS = (
+    "title", "title_cn", "year", "type", "materials", "size", "duration", "credits",
+    "description_en", "description_cn", "video_link", "images", "high_res_images",
+)
+IMAGE_FIELDS = {"images", "high_res_images"}
 
 
 def _vacuum_db_if_needed() -> None:
@@ -743,6 +749,7 @@ def init_db() -> None:
     _ensure_column(conn, "records", "baseline_record_json", "TEXT")
     _ensure_column(conn, "records", "error_history_json", "TEXT NOT NULL DEFAULT '[]'")
     _ensure_column(conn, "records", "retry_count", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "records", "edited_fields_json", "TEXT NOT NULL DEFAULT '{}'")
     conn.commit()
     conn.close()
 
@@ -1802,8 +1809,33 @@ def _refresh_batch_status(conn: sqlite3.Connection, batch_id: int) -> None:
     )
 
 
-def _record_to_dto(row: sqlite3.Row) -> Dict[str, Any]:
+def _effective_record(row: sqlite3.Row, edits: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """The single source of truth for review, preview, and published field values."""
     proposed = json.loads(row["proposed_record_json"]) if row["proposed_record_json"] else {}
+    baseline = json.loads(row["baseline_record_json"]) if row["baseline_record_json"] else None
+    effective = _merge_existing_work_with_proposed(baseline, proposed) if baseline is not None else dict(proposed)
+    overrides = json.loads(row["edited_fields_json"] or "{}") if edits is None else edits
+    for field, value in overrides.items():
+        effective[field] = value.splitlines() if field in IMAGE_FIELDS else value
+    return effective
+
+
+def _review_fields(record: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    data = record or {}
+    return {
+        field: (
+            "\n".join(str(value) for value in data.get(field, []) if value)
+            if field in IMAGE_FIELDS and isinstance(data.get(field, []), list)
+            else data[field] if isinstance(data.get(field), str) else _normalize_string(data.get(field))
+        )
+        for field in EDITABLE_FIELDS
+    }
+
+
+def _record_to_dto(row: sqlite3.Row) -> Dict[str, Any]:
+    proposed = _effective_record(row)
+    fields = _review_fields(proposed)
+    baseline = json.loads(row["baseline_record_json"]) if row["baseline_record_json"] else None
     images = proposed.get("images", [])
     return {
         "id": row["id"],
@@ -1814,17 +1846,17 @@ def _record_to_dto(row: sqlite3.Row) -> Dict[str, Any]:
         "page_type": row["page_type"],
         "confidence": row["confidence"],
         "is_update": bool(row["is_update"]),
-        "title": _normalize_string(proposed.get("title")),
-        "title_cn": _normalize_string(proposed.get("title_cn")),
-        "year": _normalize_string(proposed.get("year")),
-        "type": _normalize_string(proposed.get("type")),
-        "materials": _normalize_string(proposed.get("materials")),
-        "size": _normalize_string(proposed.get("size")),
-        "duration": _normalize_string(proposed.get("duration")),
-        "credits": _normalize_string(proposed.get("credits")),
-        "description_en": _normalize_string(proposed.get("description_en")),
-        "description_cn": _normalize_string(proposed.get("description_cn")),
-        "video_link": _normalize_string(proposed.get("video_link")),
+        "title": fields["title"],
+        "title_cn": fields["title_cn"],
+        "year": fields["year"],
+        "type": fields["type"],
+        "materials": fields["materials"],
+        "size": fields["size"],
+        "duration": fields["duration"],
+        "credits": fields["credits"],
+        "description_en": fields["description_en"],
+        "description_cn": fields["description_cn"],
+        "video_link": fields["video_link"],
         "images": images if isinstance(images, list) else [],
         "high_res_images": (
             proposed.get("high_res_images", [])
@@ -1833,7 +1865,9 @@ def _record_to_dto(row: sqlite3.Row) -> Dict[str, Any]:
         ),
         "error_message": row["error_message"],
         "baseline_available": row["baseline_record_json"] is not None,
-        "baseline_record": json.loads(row["baseline_record_json"]) if row["baseline_record_json"] else None,
+        "baseline_record": baseline,
+        "baseline_fields": _review_fields(baseline) if row["baseline_record_json"] is not None else None,
+        "effective_fields": fields,
         "error_history": json.loads(row["error_history_json"] or "[]"),
         "retry_count": row["retry_count"],
     }
@@ -1959,7 +1993,7 @@ def _merge_records_into_baseline(
                 f"This older review has no original artwork snapshot: {url}. "
                 "No changes were published. Re-import this artwork before applying it."
             )
-        desired = _merge_existing_work_with_proposed(baseline, proposed) if baseline is not None else proposed
+        desired = _effective_record(row)
         if check_conflicts and current != baseline and current != desired:
             raise RuntimeError(
                 f"Artwork changed on the remote since review: {url}. "
@@ -2220,6 +2254,71 @@ def accept_record(record_id: int) -> Dict[str, Any]:
 
 def reject_record(record_id: int) -> Dict[str, Any]:
     return _set_record_status(record_id, RECORD_REJECTED)
+
+
+def _is_http_url(value: str) -> bool:
+    if any(character.isspace() for character in value):
+        return False
+    try:
+        parsed = urlsplit(value)
+        # Accessing port also validates malformed/non-numeric/out-of-range ports.
+        parsed.port
+        return parsed.scheme.lower() in {"http", "https"} and bool(parsed.netloc and parsed.hostname)
+    except ValueError:
+        return False
+
+
+def _normalize_record_edits(edits: Dict[str, str]) -> Dict[str, str]:
+    if not isinstance(edits, dict) or any(not isinstance(key, str) or not isinstance(value, str) for key, value in edits.items()):
+        raise RuntimeError("Record edits must be a JSON object containing text values")
+    unknown = set(edits) - set(EDITABLE_FIELDS)
+    if unknown:
+        raise RuntimeError(f"Cannot edit these fields: {', '.join(sorted(unknown))}")
+    normalized = {}
+    for field, value in edits.items():
+        if field in IMAGE_FIELDS:
+            urls = [line.strip() for line in value.splitlines() if line.strip()]
+            if any(not _is_http_url(url) for url in urls):
+                raise RuntimeError(f"{field} must contain one absolute http(s) URL per line")
+            normalized[field] = "\n".join(urls)
+        elif field == "video_link":
+            url = value.strip()
+            if url and not _is_http_url(url):
+                raise RuntimeError("video_link must be an absolute http(s) URL or empty")
+            normalized[field] = url
+        elif field == "title":
+            normalized[field] = value.strip()
+        else:
+            normalized[field] = value
+    return normalized
+
+
+def update_record(record_id: int, edits: Dict[str, str]) -> Dict[str, Any]:
+    """Store explicit overrides in the review queue; require acceptance again."""
+    normalized = _normalize_record_edits(edits)
+    ensure_workspace()
+    with _publish_repo_lock():
+        with connect_db() as conn:
+            row = conn.execute("SELECT * FROM records WHERE id = ?", (record_id,)).fetchone()
+            if row is None:
+                raise RuntimeError(f"Record {record_id} not found")
+            if row["status"] == RECORD_FAILED or not row["proposed_record_json"]:
+                raise RuntimeError("Retry the failed import before editing its fields")
+            batch_id = int(row["batch_id"])
+            if _publish_receipt_path(batch_id).exists():
+                raise RuntimeError("This batch has a pending publication. Retry its sync before editing reviewed records")
+            current_fields = _review_fields(_effective_record(row))
+            overrides = json.loads(row["edited_fields_json"] or "{}")
+            overrides.update({field: value for field, value in normalized.items() if value != current_fields[field]})
+            if not _normalize_string(_effective_record(row, overrides).get("title")):
+                raise RuntimeError("Title is required")
+            conn.execute(
+                "UPDATE records SET edited_fields_json = ?, status = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(overrides, ensure_ascii=False), RECORD_NEEDS_REVIEW, now_iso(), record_id),
+            )
+            _touch_batch(conn, batch_id, status=BATCH_REVIEWING, last_error="")
+            _refresh_batch_status(conn, batch_id)
+    return {"id": record_id, "status": RECORD_NEEDS_REVIEW}
 
 
 def retry_record(record_id: int) -> Dict[str, Any]:
@@ -2498,6 +2597,10 @@ def parse_args() -> argparse.Namespace:
     retry = sub.add_parser("retryRecord")
     retry.add_argument("--id", type=int, required=True)
 
+    update = sub.add_parser("updateRecord")
+    update.add_argument("--id", type=int, required=True)
+    update.add_argument("--edits-file", required=True)
+
     batch_detail = sub.add_parser("getBatchDetail")
     batch_detail.add_argument("--batch-id", type=int, required=True)
 
@@ -2555,6 +2658,8 @@ def main() -> None:
         result = reject_record(args.id)
     elif args.command == "retryRecord":
         result = retry_record(args.id)
+    elif args.command == "updateRecord":
+        result = update_record(args.id, _load_json(Path(args.edits_file)))
     elif args.command == "getBatchDetail":
         result = get_batch_detail(args.batch_id)
     elif args.command == "getApplyPreview":

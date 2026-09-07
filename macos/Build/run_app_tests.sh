@@ -19,6 +19,7 @@ SOURCE_FILES=(
   "${MACOS_DIR}/App/ImporterHelper.swift"
   "${MACOS_DIR}/App/Keychain.swift"
   "${MACOS_DIR}/App/OpenAIModelSettings.swift"
+  "${MACOS_DIR}/App/ReviewModels.swift"
   "${MACOS_DIR}/Shared/ImporterDTOs.swift"
   "${MACOS_DIR}/AppTests"/*.swift
 )

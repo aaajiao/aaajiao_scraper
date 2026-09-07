@@ -83,6 +83,7 @@ before packaging.
 - `acceptRecord`
 - `rejectRecord`
 - `retryRecord`
+- `updateRecord`
 - `getApplyPreview`
 - `applyAcceptedRecords`
 
@@ -93,6 +94,33 @@ messages distinguish successful, review-required, and failed results, and each p
 request runs a fresh preflight so a repaired Git configuration can be retried immediately.
 Quitting during an import cancels it and waits for termination; quitting during publication
 waits for the confirmed result before closing the app.
+
+## Review interface
+
+The sidebar switches between review runs and filters results by status, title, Chinese
+title, or URL. Accepting a result advances to the next pending result. Failed rows have an
+in-place retry action, and active imports have a Stop Import control.
+
+Artwork updates open in a Changes view that compares the saved baseline with the effective
+values to be published. Old records without a baseline snapshot are labelled as unknown.
+The Details view includes lazy image previews, source links, bilingual descriptions, and
+import error history. Edit Fields saves corrections to the review database only and returns
+an accepted result to `needs_review`. Explicit corrections can shorten or clear text and
+remove images; they are preserved exactly when the result is subsequently accepted and
+published. The source URL remains the record's fixed identity.
+
+Publication has a dedicated review sheet showing accepted/new/updated counts, repository,
+branch, and target files. Failed and unreviewed results remain in the queue after a partial
+publication. Secondary workspace actions are grouped in the toolbar's More menu.
+
+Keyboard commands: `⌘N` import URL, `⇧⌘I` sync site, `⌘R` reload, `⌘Return` accept and next,
+`⌘E` edit fields, `⇧⌘R` retry, `⇧⌘P` review publication, and `⌘,` settings. Editing uses native
+text controls and supports their standard selection, copy/paste, and undo behavior.
+
+Build the isolated native preview with `./macos/Build/build_ui_preview.sh`. It runs the
+production views and model with an in-memory helper and preferences, allowing review-flow
+and appearance checks without using Keychain, the real workspace, or GitHub. See
+[`AppPreviews/README.md`](AppPreviews/README.md).
 
 ## Build scripts
 

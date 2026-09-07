@@ -1,5 +1,10 @@
 import Foundation
 
+struct RecordError: Codable, Hashable {
+    let at: String
+    let message: String
+}
+
 struct ProposedRecord: Codable, Identifiable, Hashable {
     let id: Int
     let batch_id: Int
@@ -23,9 +28,53 @@ struct ProposedRecord: Codable, Identifiable, Hashable {
     let images: [String]
     let high_res_images: [String]
     let error_message: String?
+    let baseline_fields: [String: String]?
+    let effective_fields: [String: String]?
+    let baseline_available: Bool?
+    let error_history: [RecordError]?
+    let retry_count: Int?
+
+    init(
+        id: Int, batch_id: Int, url: String, slug: String, status: String, page_type: String,
+        confidence: Double, is_update: Bool, title: String, title_cn: String, year: String,
+        type: String, materials: String, size: String, duration: String, credits: String,
+        description_en: String, description_cn: String, video_link: String, images: [String],
+        high_res_images: [String], error_message: String?, baseline_fields: [String: String]? = nil,
+        effective_fields: [String: String]? = nil, baseline_available: Bool? = nil,
+        error_history: [RecordError]? = nil, retry_count: Int? = nil
+    ) {
+        self.id = id
+        self.batch_id = batch_id
+        self.url = url
+        self.slug = slug
+        self.status = status
+        self.page_type = page_type
+        self.confidence = confidence
+        self.is_update = is_update
+        self.title = title
+        self.title_cn = title_cn
+        self.year = year
+        self.type = type
+        self.materials = materials
+        self.size = size
+        self.duration = duration
+        self.credits = credits
+        self.description_en = description_en
+        self.description_cn = description_cn
+        self.video_link = video_link
+        self.images = images
+        self.high_res_images = high_res_images
+        self.error_message = error_message
+        self.baseline_fields = baseline_fields
+        self.effective_fields = effective_fields
+        self.baseline_available = baseline_available
+        self.error_history = error_history
+        self.retry_count = retry_count
+    }
 
     var displayTitle: String {
-        title.isEmpty ? slug : title
+        let effectiveTitle = effective_fields?["title"] ?? title
+        return effectiveTitle.isEmpty ? slug : effectiveTitle
     }
 }
 

@@ -3,6 +3,181 @@ import Foundation
 @MainActor
 func appModelTests() -> [AsyncAppTest] {
     [
+        ("search and status filters never leave a hidden record actionable", {
+            let helper = ModelTestHelper(detail: modelBatch(["ready_for_review", "accepted", "failed"]))
+            let model = makeTestModel(helper)
+            installBatch(helper.detail, in: model)
+            model.reviewFilter = .failed
+            try expectEqual(model.filteredCurrentRecords.map(\.id), [3], "Only failed rows match the filter")
+            try expectEqual(model.selectedRecordID, 3, "Selection follows a visible row")
+            model.searchText = "no matching artwork"
+            try expectNil(model.selectedRecord, "An empty search result has no selected record")
+            model.selectedRecordID = 1
+            model.confirmDeleteSelectedRecord()
+            try expect(!model.isBusy, "A stale hidden selection cannot start a delete")
+            try expect(!model.canDeleteSelectedRecord, "Delete must be disabled for hidden selections")
+            model.searchText = "WORK-2"
+            try expectEqual(model.selectedRecord?.id, 3, "Search matches URLs without case sensitivity")
+        }),
+        ("accept advances to the next visible unreviewed result", {
+            let helper = ModelTestHelper(detail: modelBatch(["ready_for_review", "failed", "needs_review", "accepted"]))
+            let model = makeTestModel(helper)
+            installBatch(helper.detail, in: model)
+            helper.detail = modelBatch(["accepted", "failed", "needs_review", "accepted"])
+            model.acceptSelectedRecord()
+            try await waitForModel { !model.isBusy }
+            try expectEqual(helper.acceptedIDs, [1], "Accept the selected result")
+            try expectEqual(model.selectedRecord?.id, 3, "Skip failures and already-accepted rows when advancing")
+        }),
+        ("batch switching refreshes records and resets stale selection and filters", {
+            let original = modelBatch(["failed"])
+            let next = modelBatch(["ready_for_review"], batchID: 8, firstRecordID: 50)
+            let helper = ModelTestHelper(detail: original)
+            helper.detailsByID = [7: original, 8: next]
+            helper.listedBatches = [next.batch, original.batch]
+            let model = makeTestModel(helper)
+            installBatch(original, in: model)
+            model.refreshFromUI()
+            try await waitForModel { !model.isBusy }
+            try expectEqual(model.availableBatches.map(\.id), [8, 7], "Keep all review batches discoverable")
+            model.searchText = "work"
+            model.reviewFilter = .failed
+            model.currentApplyPreview = modelPreview(willPush: true)
+            model.selectBatch(id: 8)
+            try await waitForModel { !model.isBusy }
+            try expectEqual(model.currentBatchID, 8, "Load the chosen batch")
+            try expectEqual(model.selectedRecord?.id, 50, "Select a record belonging to the new batch")
+            try expectEqual(model.searchText, "", "A prior batch's search should not hide the new run")
+            try expectEqual(model.reviewFilter, .all, "Show the full chosen batch")
+            try expectNil(model.currentApplyPreview, "A preview from another batch cannot survive switching")
+        }),
+        ("record field access preserves explicit empty corrections and unknown baselines", {
+            let record = modelBatch(["needs_review"], effectiveFields: ["title": "Corrected", "description_en": ""], baselineFields: ["description_en": "Earlier description"], baselineAvailable: true).records[0]
+            try expectEqual(record.value(for: .title), "Corrected", "Editor uses the helper's merged effective fields")
+            try expectEqual(record.value(for: .descriptionEN), "", "An explicit cleared value must not fall back")
+            try expectEqual(record.baselineValue(for: .descriptionEN), "Earlier description", "Keep the baseline comparison separate")
+            try expectNil(modelBatch(["needs_review"]).records[0].baselineValue(for: .title), "An unavailable baseline must remain unknown")
+        }),
+        ("editor sends only changed fields and requires the result to be reviewed again", {
+            let helper = ModelTestHelper(detail: modelBatch(["accepted"], effectiveFields: ["credits": "Earlier credit"]))
+            let model = makeTestModel(helper)
+            installBatch(helper.detail, in: model)
+            model.beginEditingSelectedRecord()
+            try expect(!model.canSaveRecordEdits, "Opening an unchanged draft is not a saveable edit")
+            let description = "First paragraph.\n\n第二段。"
+            model.recordEditorValues["credits"] = ""
+            model.recordEditorValues["description_en"] = description
+            helper.detail = modelBatch(["needs_review"], effectiveFields: ["credits": "", "description_en": description])
+            model.saveRecordEdits()
+            try await waitForModel { !model.isBusy }
+            try expectEqual(helper.updatedFields, [["credits": "", "description_en": description]], "Send only the changed values, preserving explicit clears and paragraph breaks")
+            try expectEqual(model.selectedRecord?.status, "needs_review", "Saving corrections revokes acceptance")
+            try expect(!model.isShowingRecordEditor, "Close the sheet only after a successful save")
+            try expectNil(model.currentApplyPreview, "A correction invalidates the old publish preview")
+        }),
+        ("open editor blocks menu mutations and batch changes without losing the draft", {
+            let helper = ModelTestHelper(detail: modelBatch(["needs_review"]))
+            let model = makeTestModel(helper)
+            installBatch(helper.detail, in: model)
+            model.beginEditingSelectedRecord()
+            model.recordEditorValues["title"] = "Unsaved correction"
+            model.manualURL = "https://eventstructure.com/work"
+            model.startSync()
+            model.submitURL()
+            model.acceptSelectedRecord()
+            model.confirmDiscardCurrentRun()
+            model.selectBatch(id: 8)
+            model.refreshFromUI()
+            model.requestImportSheet()
+            try expect(!model.isBusy && !model.isShowingImportSheet, "No conflicting operation or sheet may open")
+            try expectEqual(helper.submitCalls + helper.syncCalls + helper.listCalls + helper.acceptedIDs.count, 0, "Every menu entry respects the editor gate")
+            try expectEqual(model.currentBatchID, 7, "The editing record's batch stays selected")
+            try expectEqual(model.recordEditorValues["title"], "Unsaved correction", "Keep the draft intact")
+        }),
+        ("save failure leaves corrections open for retry", {
+            let helper = ModelTestHelper(detail: modelBatch(["needs_review"]))
+            helper.updateError = AppTestFailure(message: "Workspace is busy")
+            let model = makeTestModel(helper)
+            installBatch(helper.detail, in: model)
+            model.beginEditingSelectedRecord()
+            model.recordEditorValues["title"] = "Preserve this correction"
+            model.saveRecordEdits()
+            try await waitForModel { !model.isBusy }
+            try expect(model.isShowingRecordEditor, "A failed save must keep the sheet open")
+            try expectEqual(model.recordEditorValues["title"], "Preserve this correction", "A save error cannot erase the draft")
+            try expect(!model.recordEditorError.isEmpty, "Show the save failure inline")
+            try expect(model.canSaveRecordEdits, "The unchanged draft can be retried")
+        }),
+        ("editor rejects blank titles and invalid changed media URLs", {
+            let helper = ModelTestHelper(detail: modelBatch(["needs_review"]))
+            let model = makeTestModel(helper)
+            installBatch(helper.detail, in: model)
+            model.beginEditingSelectedRecord()
+            model.recordEditorValues["title"] = "  "
+            try expect(!model.canSaveRecordEdits, "Titles must retain a nonempty value")
+            model.recordEditorValues["title"] = "Valid title"
+            model.recordEditorValues["images"] = "file:///tmp/local-image.jpg"
+            model.saveRecordEdits()
+            try expectEqual(helper.updatedFields.count, 0, "Invalid URLs must not reach the helper")
+            try expect(!model.recordEditorError.isEmpty, "Explain the invalid field inline")
+            model.recordEditorValues["images"] = "https://example.com/a.jpg\nhttps://example.com/a.jpg"
+            try expect(model.canSaveRecordEdits, "Valid repeated image URLs preserve their intended order")
+        }),
+        ("manual URL validation is shared by button and direct submission", {
+            let helper = ModelTestHelper(detail: modelBatch(["ready_for_review"]))
+            let model = makeTestModel(helper)
+            for invalid in ["https://example.com/work", "file:///tmp/work", "https://eventstructure.com/", "https://eventstructure.com.evil.example/work", "https://user@eventstructure.com/work"] {
+                model.manualURL = invalid
+                try expect(!model.canSubmitManualURL && model.manualURLValidationMessage != nil, "Reject unsupported artwork URL: \(invalid)")
+                model.submitURL()
+            }
+            try expectEqual(helper.submitCalls, 0, "Direct command submission must use the same validation as the button")
+            model.manualURL = "  https://www.eventstructure.com/foam-wave  "
+            try expect(model.canSubmitManualURL, "Allow a full artwork URL with surrounding whitespace")
+        }),
+        ("import and publish sheets only allow their own confirmation action", {
+            let helper = ModelTestHelper(detail: modelBatch(["needs_review", "accepted"]))
+            let model = makeTestModel(helper)
+            installBatch(helper.detail, in: model)
+            model.manualURL = "https://eventstructure.com/work"
+            model.requestImportSheet()
+            try expect(model.canSubmitManualURL, "The Import sheet must allow its own valid submit")
+            model.acceptSelectedRecord()
+            model.confirmApply()
+            model.selectBatch(id: 8)
+            try expect(!model.isBusy && !model.canDeleteSelectedRecord && !model.canRequestGitHubSync, "Other review mutations are blocked while importing a URL")
+            model.cancelImportSheet()
+            model.currentApplyPreview = modelPreview(willPush: true)
+            model.isShowingApplyConfirmation = true
+            try expect(model.canConfirmGitHubSync, "The Publish sheet must allow its own confirmation")
+            model.submitURL()
+            model.acceptSelectedRecord()
+            model.confirmDeleteSelectedRecord()
+            try expectEqual(helper.submitCalls + helper.acceptedIDs.count, 0, "Keyboard and direct mutation entrypoints honor the Publish modal")
+            try expect(!model.isBusy, "No conflicting action starts behind the Publish sheet")
+            model.confirmApply()
+            try await waitForModel { !model.isBusy }
+            try expectEqual(helper.applyCalls, 1, "Only the explicit Publish confirmation starts an apply")
+        }),
+        ("cancelled import discovers its saved batch while keeping earlier runs reachable", {
+            let original = modelBatch(["accepted"])
+            let partial = modelBatch(["needs_review"], mode: "incremental", batchID: 8, firstRecordID: 80)
+            let helper = ModelTestHelper(detail: original)
+            helper.holdSubmit = true
+            helper.listedBatches = [partial.batch, original.batch]
+            helper.detailsByID = [7: original, 8: partial]
+            let model = makeTestModel(helper)
+            installBatch(original, in: model)
+            model.manualURL = "https://eventstructure.com/work"
+            model.submitURL()
+            try await waitForModel { helper.submitContinuation != nil }
+            model.cancelCurrentImport()
+            helper.completeCancellation()
+            try await waitForModel { !model.isBusy }
+            try expectEqual(model.availableBatches.map(\.id), [8, 7], "Cancelled partial results and older runs stay in the picker")
+            try expectEqual(model.currentBatchID, 8, "Show the saved interrupted run")
+            try expectEqual(model.selectedRecord?.id, 80, "Partial records are available for review")
+        }),
         ("manual import reports persisted extraction failure", {
             let helper = ModelTestHelper(detail: modelBatch(["failed"]))
             let model = makeTestModel(helper)
@@ -271,14 +446,15 @@ private func installBatch(_ detail: BatchDetailResponse, in model: AppModel) {
     model.selectedRecordID = detail.records.first?.id
 }
 
-private func modelBatch(_ statuses: [String], mode: String = "manual", firstRecordID: Int = 1) -> BatchDetailResponse {
+private func modelBatch(_ statuses: [String], mode: String = "manual", batchID: Int = 7, firstRecordID: Int = 1, effectiveFields: [String: String]? = nil, baselineFields: [String: String]? = nil, baselineAvailable: Bool? = nil) -> BatchDetailResponse {
     let records = statuses.enumerated().map { index, status in
         ProposedRecord(
-            id: index + firstRecordID, batch_id: 7, url: "https://eventstructure.com/work-\(index)", slug: "work-\(index)",
+            id: index + firstRecordID, batch_id: batchID, url: "https://eventstructure.com/work-\(index)", slug: "work-\(index)",
             status: status, page_type: "artwork", confidence: 0.9, is_update: false,
             title: "Work \(index)", title_cn: "", year: "", type: "", materials: "", size: "", duration: "", credits: "",
             description_en: "", description_cn: "", video_link: "", images: [], high_res_images: [],
-            error_message: status == "failed" ? "AI request failed" : nil
+            error_message: status == "failed" ? "AI request failed" : nil,
+            baseline_fields: baselineFields, effective_fields: effectiveFields, baseline_available: baselineAvailable
         )
     }
     let accepted = statuses.filter { $0 == "accepted" }.count
@@ -286,7 +462,7 @@ private func modelBatch(_ statuses: [String], mode: String = "manual", firstReco
     let deleted = statuses.filter { $0 == "rejected" }.count
     let pending = statuses.count - accepted - failed - deleted
     return BatchDetailResponse(
-        batch: BatchSummary(id: 7, mode: mode, status: "reviewing", total_records: records.count, accepted_records: accepted, ready_records: pending, last_error: ""),
+        batch: BatchSummary(id: batchID, mode: mode, status: "reviewing", total_records: records.count, accepted_records: accepted, ready_records: pending, last_error: ""),
         records: records, total_records: records.count, accepted_count: accepted, deleted_count: deleted,
         failed_count: failed, syncable_count: accepted, pending_count: pending
     )
@@ -301,6 +477,8 @@ private func modelPreview(willPush: Bool) -> ApplyPreview {
 @MainActor
 private final class ModelTestHelper: ImporterHelper {
     var detail: BatchDetailResponse
+    var detailsByID: [Int: BatchDetailResponse] = [:]
+    var listedBatches: [BatchSummary] = []
     var previews: [ApplyPreview] = []
     var submitCalls = 0
     var syncCalls = 0
@@ -309,6 +487,9 @@ private final class ModelTestHelper: ImporterHelper {
     var applyCalls = 0
     var cancelCalls = 0
     var retryIDs: [Int] = []
+    var acceptedIDs: [Int] = []
+    var updatedFields: [[String: String]] = []
+    var updateError: Error?
     var listError: Error?
     var applyWarning: String?
     var remainingAfterApply: Int?
@@ -330,7 +511,7 @@ private final class ModelTestHelper: ImporterHelper {
         if holdList {
             return try await withCheckedThrowingContinuation { listContinuation = $0 }
         }
-        return PendingRecordsResponse(settings: .empty, batches: [], pending_records: [])
+        return PendingRecordsResponse(settings: .empty, batches: listedBatches, pending_records: [])
     }
     func resetWorkspace(openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> BootstrapResponse {
         throw AppTestFailure(message: "Unexpected workspace reset")
@@ -370,7 +551,8 @@ private final class ModelTestHelper: ImporterHelper {
         listContinuation = nil
     }
     func acceptRecord(id: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> RecordStatusResponse {
-        throw AppTestFailure(message: "Unexpected accept")
+        acceptedIDs.append(id)
+        return RecordStatusResponse(id: id, status: "accepted")
     }
     func rejectRecord(id: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> RecordStatusResponse {
         throw AppTestFailure(message: "Unexpected reject")
@@ -379,7 +561,12 @@ private final class ModelTestHelper: ImporterHelper {
         retryIDs.append(id)
         return RecordStatusResponse(id: id, status: detail.records.first(where: { $0.id == id })?.status ?? "failed")
     }
-    func getBatchDetail(batchID: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> BatchDetailResponse { detail }
+    func updateRecord(id: Int, fields: [String: String], openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> RecordStatusResponse {
+        updatedFields.append(fields)
+        if let updateError { throw updateError }
+        return RecordStatusResponse(id: id, status: "needs_review")
+    }
+    func getBatchDetail(batchID: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> BatchDetailResponse { detailsByID[batchID] ?? detail }
     func getApplyPreview(batchID: Int, openAIKey: String, openAIModel: String, openAIModelSource: String) async throws -> ApplyPreview {
         previewCalls += 1
         return previews.isEmpty ? modelPreview(willPush: true) : previews.removeFirst()

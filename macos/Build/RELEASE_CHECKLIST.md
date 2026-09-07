@@ -83,6 +83,14 @@ Expected result:
   or leave an empty batch that blocks baseline refresh
 - A confirmed push followed by local cleanup failure reports its SHA and a warning,
   with recovery from the saved publish receipt
+- Field editing changes only review data and resets acceptance; shortened/cleared fields
+  and removed images match both the Changes view and the published output
+
+Before packaging a UI change, build `./macos/Build/build_ui_preview.sh` and inspect its
+isolated native app. Check search/status filters, switching runs, accept-and-next, failed
+retry, field editing and validation, the publication sheet, image loading/fallback, and
+Settings. Check a compact window and both light/dark appearance. The preview uses in-memory
+fixtures and never publishes to a real repository.
 
 ## 5. Optional live validation
 
