@@ -2,6 +2,10 @@
 
 This directory contains the local-only macOS importer app and its bundled Python engine.
 
+The distributed app requires an Apple Silicon Mac running macOS 14 or later. Its bundled
+Python runtime sets this minimum. Local release builds are ad-hoc signed and are not
+notarized by Apple.
+
 The repository now has two parallel product surfaces:
 
 - `portfolio_scraper/` for the Python scraper product line

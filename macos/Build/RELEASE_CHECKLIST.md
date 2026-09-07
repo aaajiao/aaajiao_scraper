@@ -151,4 +151,7 @@ Expected result:
   `source_commit`; it's a gitignored build artifact rebuilt by `prepare_seed.sh` on every
   run, so there is nothing to `git add` for it
 - Confirm `python_runtime.mode` is `wheelhouse` for the final release build
+- Confirm `LSMinimumSystemVersion` and release requirements cover the minimum macOS
+  version of every bundled executable and library. Inspect Mach-O build versions with
+  `xcrun vtool -show-build`; the current bundled Python runtime requires macOS 14.
 - Confirm the repo is clean after the final commit
