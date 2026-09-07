@@ -9,17 +9,24 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             if model.shouldShowStatusBanner { ContextBannerView() }
-            NavigationSplitView {
-                SidebarView()
-                    .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 350)
-            } detail: {
-                DetailColumnView()
-                    .safeAreaInset(edge: .bottom, spacing: 0) {
-                        if model.hasSelectedRecord { SelectionActionBar() }
-                    }
+            GeometryReader { bounds in
+                NavigationSplitView {
+                    SidebarView()
+                        .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 350)
+                        // Native split items otherwise use the full list's fitting
+                        // height as their minimum and clip controls in small windows.
+                        .frame(minHeight: 0, maxHeight: .infinity)
+                } detail: {
+                    DetailColumnView()
+                        .safeAreaInset(edge: .bottom, spacing: 0) {
+                            if model.hasSelectedRecord { SelectionActionBar() }
+                        }
+                        .frame(minHeight: 0, maxHeight: .infinity)
+                }
+                .frame(width: bounds.size.width, height: bounds.size.height)
             }
         }
-        .frame(minWidth: 900, minHeight: 620)
+        .frame(minWidth: 900, maxWidth: .infinity, minHeight: 620, maxHeight: .infinity)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button { model.requestImportSheet() } label: {
@@ -152,6 +159,7 @@ private struct SidebarView: View {
                 }
             }
             .listStyle(.sidebar)
+            .frame(minHeight: 0, maxHeight: .infinity)
             .overlay {
                 if model.filteredCurrentRecords.isEmpty {
                     VStack(spacing: 8) {

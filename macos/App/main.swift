@@ -36,11 +36,6 @@ struct AaajiaoImporterApp: App {
     private var model: AppModel { appDelegate.model }
 
     var body: some Scene {
-        MenuBarExtra("aaajiao Importer", systemImage: "tray.full") {
-            MenuBarMenuView()
-                .environmentObject(model)
-        }
-
         Window("Importer", id: importerWindowID) {
             ContentView()
                 .environmentObject(model)
@@ -49,6 +44,11 @@ struct AaajiaoImporterApp: App {
         .windowResizability(.contentMinSize)
         .commands {
             AppCommands(model: model)
+        }
+
+        MenuBarExtra("aaajiao Importer", systemImage: "tray.full") {
+            MenuBarMenuView()
+                .environmentObject(model)
         }
 
         Window("Settings", id: settingsWindowID) {

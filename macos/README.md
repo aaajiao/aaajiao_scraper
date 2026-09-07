@@ -114,6 +114,10 @@ timeout separately from the 120-second validation response timeout.
 
 ## Review interface
 
+Launching the app opens the Importer window. Its menu bar entry remains available when
+the window is closed. Resizing keeps the queue controls and review actions visible;
+long lists and artwork details scroll within the available column height.
+
 The sidebar switches between review runs and filters results by status, title, Chinese
 title, or URL. Accepting a result advances to the next pending result. Failed rows have an
 in-place retry action, and active imports have a Stop Import control.

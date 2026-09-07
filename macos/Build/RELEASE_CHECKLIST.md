@@ -99,6 +99,9 @@ fixtures and never publishes to a real repository.
 
 - At 900 × 620, Import URL, Check for Updates, and Publish retain visible text; More has
   a VoiceOver name, and review actions fit without clipping.
+- Relaunching the app presents the Importer window, while closing it leaves the menu
+  bar entry available. Both columns shrink and scroll without clipping their headers
+  or bottom actions; native split-view minimum heights must not exceed the viewport.
 - Check Empty Queue, No Site Updates, and All Accepted preview scenarios; search with no
   matches must differ from a genuinely empty queue.
 - Accepting the last pending artwork exposes the publication step; Review Next reveals
