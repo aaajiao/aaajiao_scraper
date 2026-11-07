@@ -1,0 +1,3 @@
+# Installer tools only; used before the complete environment is synced.
+pip==26.3
+uv==0.13.7

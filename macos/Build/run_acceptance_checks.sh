@@ -5,6 +5,7 @@ setopt null_glob
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MACOS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${MACOS_DIR}/.." && pwd)"
+BUILD_PYTHON="${REPO_ROOT}/.venv/bin/python"
 
 APP_NAME="aaajiao Importer"
 APP_BUNDLE="${REPO_ROOT}/dist/${APP_NAME}.app"
@@ -49,7 +50,7 @@ cp "${WORKSPACE_ROOT}/aaajiao_works.json" "${TMP_ROOT}/baseline-works.json"
 cp "${WORKSPACE_ROOT}/aaajiao_portfolio.md" "${TMP_ROOT}/baseline-portfolio.md"
 
 export WORKSPACE_ROOT
-/usr/bin/python3 - <<'PY'
+"${BUILD_PYTHON}" - <<'PY'
 import json
 import os
 import sqlite3
@@ -156,7 +157,7 @@ cmp "${WORKSPACE_ROOT}/aaajiao_works.json" "${TMP_ROOT}/baseline-works.json"
 cmp "${WORKSPACE_ROOT}/aaajiao_portfolio.md" "${TMP_ROOT}/baseline-portfolio.md"
 
 export BOOTSTRAP_JSON LIST_JSON ACCEPT_JSON EDIT_JSON PREVIEW_JSON DRY_RUN_JSON RESET_JSON WORKSPACE_ROOT
-/usr/bin/python3 - <<'PY'
+"${BUILD_PYTHON}" - <<'PY'
 import json
 import os
 import re
@@ -207,7 +208,7 @@ AAAJIAO_IMPORTER_BASELINE_REMOTE_URL="${BASELINE_REMOTE}" \
 AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH="${BASELINE_BRANCH}" \
 "${HELPER_BIN}" resetWorkspace > "${RESET_JSON}"
 
-/usr/bin/python3 - <<'PY'
+"${BUILD_PYTHON}" - <<'PY'
 import json, os
 from pathlib import Path
 result = json.loads(Path(os.environ["RESET_JSON"]).read_text())

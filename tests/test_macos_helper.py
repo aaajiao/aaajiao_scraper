@@ -979,7 +979,7 @@ def test_copy_seed_payload_tolerates_missing_seed_cache(tmp_path, monkeypatch):
     # Provide required seed target files and snapshot, but deliberately omit Seed/cache.
     repo_root = Path(__file__).resolve().parents[1]
     (seed_dir / helper.REPO_WORKS).write_text(
-        (repo_root / "macos" / "Seed" / helper.REPO_WORKS).read_text(encoding="utf-8"),
+        (repo_root / helper.REPO_WORKS).read_text(encoding="utf-8"),
         encoding="utf-8",
     )
     (seed_dir / helper.REPO_PORTFOLIO).write_text("# Seed\n", encoding="utf-8")

@@ -5,6 +5,7 @@ setopt null_glob
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MACOS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${MACOS_DIR}/.." && pwd)"
+BUILD_PYTHON="${REPO_ROOT}/.venv/bin/python"
 
 APP_NAME="aaajiao Importer"
 APP_BUNDLE="${REPO_ROOT}/dist/${APP_NAME}.app"
@@ -40,6 +41,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
+echo "Checking the packaged runtime and relocated helper..."
+RELOCATED_APP="${TMP_ROOT}/Moved App/aaajiao Importer.app"
+mkdir -p "${RELOCATED_APP:h}"
+/usr/bin/ditto "${APP_BUNDLE}" "${RELOCATED_APP}"
+APP_RESOURCES="${RELOCATED_APP}/Contents/Resources"
+APP_BINARY="${RELOCATED_APP}/Contents/MacOS/AaajiaoImporter"
+HELPER_BIN="${RELOCATED_APP}/Contents/MacOS/AaajiaoHelper"
+INFO_PLIST="${RELOCATED_APP}/Contents/Info.plist"
+"${BUILD_PYTHON}" "${SCRIPT_DIR}/verify_python_runtime.py" "${APP_RESOURCES}/python_runtime" --app "${RELOCATED_APP}"
+codesign --verify --deep --strict "${RELOCATED_APP}"
+
 echo "Running helper smoke tests..."
 git clone --quiet --bare "${REPO_ROOT}" "${BASELINE_REMOTE}"
 BASELINE_BRANCH="$(git -C "${REPO_ROOT}" branch --show-current)"
@@ -47,6 +59,9 @@ AAAJIAO_IMPORTER_WORKSPACE_ROOT="${WORKSPACE_ROOT}" \
 AAAJIAO_REPO_ROOT="${REPO_ROOT}" \
 AAAJIAO_IMPORTER_BASELINE_REMOTE_URL="${BASELINE_REMOTE}" \
 AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH="${BASELINE_BRANCH}" \
+PYTHONHOME="/invalid/outside/python-home" \
+PYTHONEXECUTABLE="/invalid/outside/python" \
+PYTHONPATH="/invalid/outside/packages" \
 "${HELPER_BIN}" bootstrapWorkspace > "${BOOTSTRAP_JSON}"
 
 AAAJIAO_IMPORTER_WORKSPACE_ROOT="${WORKSPACE_ROOT}" \
@@ -56,7 +71,7 @@ AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH="${BASELINE_BRANCH}" \
 "${HELPER_BIN}" overview > "${OVERVIEW_JSON}"
 
 export BOOTSTRAP_JSON OVERVIEW_JSON WORKSPACE_ROOT INFO_PLIST APP_BINARY
-/usr/bin/python3 - <<'PY'
+"${BUILD_PYTHON}" - <<'PY'
 import json
 import os
 import plistlib
@@ -83,4 +98,5 @@ assert b"Settings" in binary_data, "Settings entry missing from app binary"
 assert b"Quit aaajiao Importer" in binary_data, "Quit entry missing from app binary"
 PY
 
+codesign --verify --deep --strict "${RELOCATED_APP}"
 echo "Smoke test passed"

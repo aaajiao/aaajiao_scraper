@@ -5,6 +5,7 @@ setopt null_glob
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MACOS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${MACOS_DIR}/.." && pwd)"
+BUILD_PYTHON="${REPO_ROOT}/.venv/bin/python"
 
 APP_NAME="aaajiao Importer"
 APP_BUNDLE="${REPO_ROOT}/dist/${APP_NAME}.app"
@@ -55,7 +56,7 @@ OPENAI_MODEL="${OPENAI_MODEL}" \
 
 export SUBMIT_JSON OVERVIEW_JSON TARGET_URL OPENAI_MODEL
 export HAS_OPENAI_KEY="$([[ -n "${OPENAI_API_KEY}" ]] && echo 1 || echo 0)"
-/usr/bin/python3 - <<'PY'
+"${BUILD_PYTHON}" - <<'PY'
 import json
 import os
 from pathlib import Path

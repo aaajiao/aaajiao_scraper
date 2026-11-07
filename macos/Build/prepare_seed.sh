@@ -5,6 +5,11 @@ setopt null_glob
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MACOS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${MACOS_DIR}/.." && pwd)"
+BUILD_PYTHON="${REPO_ROOT}/.venv/bin/python"
+if [[ ! -x "${BUILD_PYTHON}" ]]; then
+  echo "Prepare the repository .venv before building the app." >&2
+  exit 1
+fi
 
 SEED_DIR="${MACOS_DIR}/Seed"
 VENDOR_DIR="${MACOS_DIR}/Vendor"
@@ -14,10 +19,8 @@ WHEELHOUSE_DIR="${VENDOR_DIR}/wheelhouse"
 SEED_MANIFEST_PATH="${SEED_DIR}/seed_manifest.json"
 REQUIREMENTS_FILE="${SCRIPT_DIR}/wheelhouse_requirements.txt"
 
-XCODE_PYTHON_ROOT="/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9"
-XCODE_PYTHON_BIN="${XCODE_PYTHON_ROOT}/bin/python3.9"
-
-runtime_mode="prebuilt_runtime"
+RUNTIME_MANIFEST_PATH="${SCRIPT_DIR}/python_runtime_manifest.json"
+runtime_mode="standalone_wheelhouse"
 
 echo "Preparing seed payload..."
 rm -rf "${PYTHON_SNAPSHOT_DIR}" "${SEED_DIR}/cache"
@@ -37,33 +40,36 @@ cp "${REPO_ROOT}/aaajiao_portfolio.md" "${SEED_DIR}/aaajiao_portfolio.md"
 
 wheel_files=("${WHEELHOUSE_DIR}"/*.whl)
 if [[ "${#wheel_files[@]}" -gt 0 ]]; then
-  if [[ ! -x "${XCODE_PYTHON_BIN}" ]]; then
-    echo "Missing Xcode bundled Python at ${XCODE_PYTHON_BIN}" >&2
+  "${BUILD_PYTHON}" "${SCRIPT_DIR}/prepare_python_runtime.py"
+  RUNTIME_PYTHON="${PYTHON_RUNTIME_DIR}/bin/python3"
+  unset PYTHONHOME PYTHONPATH PYTHONEXECUTABLE PYTHONUSERBASE __PYVENV_LAUNCHER__
+  export PYTHONNOUSERSITE=1
+  SITE_PACKAGES="$("${RUNTIME_PYTHON}" -I -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+  if [[ "${SITE_PACKAGES}" != "${PYTHON_RUNTIME_DIR}/"* ]]; then
+    echo "Refusing to install dependencies outside the bundled runtime: ${SITE_PACKAGES}" >&2
     exit 1
   fi
-  echo "Preparing bundled Python runtime from wheelhouse..."
-  rm -rf "${PYTHON_RUNTIME_DIR}"
-  cp -R "${XCODE_PYTHON_ROOT}" "${PYTHON_RUNTIME_DIR}"
-  ln -sf python3.9 "${PYTHON_RUNTIME_DIR}/bin/python3"
-  "${XCODE_PYTHON_BIN}" -m pip install \
+  echo "Installing the pinned standalone runtime dependencies from the offline wheelhouse..."
+  "${RUNTIME_PYTHON}" -I -m pip install \
     --disable-pip-version-check \
     --no-index \
     --find-links "${WHEELHOUSE_DIR}" \
     --upgrade \
-    --target "${PYTHON_RUNTIME_DIR}/lib/python3.9/site-packages" \
+    --only-binary=:all: \
+    --no-compile \
+    --target "${SITE_PACKAGES}" \
     -r "${REQUIREMENTS_FILE}"
-  runtime_mode="wheelhouse"
-elif [[ -x "${PYTHON_RUNTIME_DIR}/bin/python3.9" ]]; then
-  echo "Reusing existing vendored Python runtime..."
+  # pip --target creates unused CLI entry points with absolute build-directory
+  # shebangs. The app only imports these packages; do not ship those launchers.
+  rm -rf "${SITE_PACKAGES}/bin"
 else
-  echo "No wheelhouse found in ${WHEELHOUSE_DIR} and no prebuilt runtime available." >&2
-  echo "Populate macos/Vendor/wheelhouse or prepare macos/Vendor/python_runtime first." >&2
+  echo "No wheelhouse found in ${WHEELHOUSE_DIR}. Run ./macos/Build/refresh_wheelhouse.sh first." >&2
   exit 1
 fi
 
 echo "Writing seed manifest..."
-export REPO_ROOT SEED_DIR PYTHON_SNAPSHOT_DIR PYTHON_RUNTIME_DIR WHEELHOUSE_DIR SEED_MANIFEST_PATH REQUIREMENTS_FILE runtime_mode
-/usr/bin/python3 - <<'PY'
+export REPO_ROOT SEED_DIR PYTHON_SNAPSHOT_DIR PYTHON_RUNTIME_DIR WHEELHOUSE_DIR SEED_MANIFEST_PATH REQUIREMENTS_FILE RUNTIME_MANIFEST_PATH runtime_mode
+"${BUILD_PYTHON}" - <<'PY'
 import hashlib
 import json
 import os
@@ -98,6 +104,7 @@ wheelhouse_dir = Path(os.environ["WHEELHOUSE_DIR"])
 manifest_path = Path(os.environ["SEED_MANIFEST_PATH"])
 requirements_file = Path(os.environ["REQUIREMENTS_FILE"])
 runtime_mode = os.environ["runtime_mode"]
+runtime_manifest = json.loads(Path(os.environ["RUNTIME_MANIFEST_PATH"]).read_text())
 
 try:
     source_commit = subprocess.run(
@@ -152,10 +159,14 @@ manifest = {
         "cache_files": count_files(seed_dir / "cache"),
     },
     "python_runtime": {
+        **runtime_manifest,
         "mode": runtime_mode,
         "wheel_count": len(list(wheelhouse_dir.glob("*.whl"))),
-        "python_exists": (runtime_dir / "bin" / "python3.9").exists(),
+        "python_exists": (runtime_dir / runtime_manifest["executable"]).exists(),
         "requirements_sha256": sha256(requirements_file),
+        "wheel_sha256": {path.name: sha256(path) for path in sorted(wheelhouse_dir.glob("*.whl"))},
+        "native_sources": json.loads((requirements_file.parent / "native_wheel_sources.json").read_text()),
+        "native_build_constraints_sha256": sha256(requirements_file.parent / "native_build_constraints.txt"),
     },
 }
 

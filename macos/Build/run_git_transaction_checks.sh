@@ -5,6 +5,7 @@ setopt null_glob
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MACOS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${MACOS_DIR}/.." && pwd)"
+BUILD_PYTHON="${REPO_ROOT}/.venv/bin/python"
 
 APP_NAME="aaajiao Importer"
 APP_BUNDLE="${REPO_ROOT}/dist/${APP_NAME}.app"
@@ -45,7 +46,7 @@ AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH="${BRANCH_NAME}" \
 "${HELPER_BIN}" bootstrapWorkspace >/dev/null
 
 export WORKSPACE_ROOT
-/usr/bin/python3 - <<'PY'
+"${BUILD_PYTHON}" - <<'PY'
 import json
 import os
 import sqlite3
@@ -125,7 +126,7 @@ AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH="${BRANCH_NAME}" \
 "${HELPER_BIN}" applyAcceptedRecords --batch-id 1 > "${APPLY_JSON}"
 
 export TEST_REPO REMOTE_REPO BRANCH_NAME PREVIEW_JSON APPLY_JSON INITIAL_HEAD
-/usr/bin/python3 - <<'PY'
+"${BUILD_PYTHON}" - <<'PY'
 import json
 import os
 import re
@@ -199,7 +200,7 @@ git -C "${TEST_REPO}" push --quiet -u origin other-branch
 export WORKSPACE_ROOT
 BRANCH_MISMATCH_URL="https://eventstructure.com/codex-branch-mismatch-fixture"
 export BRANCH_MISMATCH_URL
-/usr/bin/python3 - <<'PY'
+"${BUILD_PYTHON}" - <<'PY'
 import json
 import os
 import sqlite3
@@ -299,7 +300,7 @@ chmod +x "${HOOK_PATH}"
 
 PUSH_FAILURE_URL="https://eventstructure.com/codex-push-failure-fixture"
 export PUSH_FAILURE_URL
-/usr/bin/python3 - <<'PY'
+"${BUILD_PYTHON}" - <<'PY'
 import json
 import os
 import sqlite3
@@ -385,7 +386,7 @@ if ! grep -q "simulated push failure" "${PUSH_FAILURE_ERR}"; then
 fi
 
 export TEST_REPO INITIAL_HEAD WORKSPACE_ROOT
-/usr/bin/python3 - <<'PY'
+"${BUILD_PYTHON}" - <<'PY'
 import os
 import sqlite3
 import subprocess
@@ -429,7 +430,7 @@ AAAJIAO_IMPORTER_BASELINE_REMOTE_BRANCH="${BRANCH_NAME}" \
 "${HELPER_BIN}" applyAcceptedRecords --batch-id 3 > "${RETRY_JSON}"
 
 export RETRY_JSON WORKSPACE_ROOT REMOTE_REPO BRANCH_NAME
-/usr/bin/python3 - <<'PY'
+"${BUILD_PYTHON}" - <<'PY'
 import json
 import os
 import sqlite3

@@ -2,8 +2,8 @@
 
 This directory contains the local-only macOS importer app and its bundled Python engine.
 
-The distributed app requires an Apple Silicon Mac running macOS 14 or later. Its bundled
-Python runtime sets this minimum. Local release builds are ad-hoc signed and are not
+The distributed app requires an Apple Silicon Mac running macOS 14 or later. The app
+keeps this deployment minimum while its bundled runtime is checked against it. Local release builds are ad-hoc signed and are not
 notarized by Apple.
 
 The repository now has two parallel product surfaces:
@@ -235,6 +235,49 @@ GitHub baseline status, commit, and fallback error details for the workspace dat
 `wheelhouse_requirements.txt` is the pinned runtime dependency lock for the bundled Python
 environment. `refresh_wheelhouse.sh` downloads wheels into `macos/Vendor/wheelhouse/`, and
 `verify_wheelhouse.sh` proves that the wheelhouse can satisfy an offline install.
+
+The app and the repository development environment both use **CPython 3.15.2**. The
+app carries its own standard-GIL arm64 interpreter from
+[Astral Python Build Standalone](https://github.com/astral-sh/python-build-standalone/releases/tag/20261026),
+not a copy of `.venv`, Homebrew Python, or Xcode's Python framework.
+`Build/python_runtime_manifest.json` pins the release URL, SHA-256, Python version,
+ABI, executable, and relative package location. `prepare_python_runtime.py` verifies
+the archive before extracting it and checks the interpreter identity. Downloads are
+cached in `macos/.build/runtime-downloads/`; normal builds reuse the verified archive.
+Build utilities use the repository `.venv`; prepare that development environment first.
+The first build needs network access for this pinned archive, while dependencies are
+installed only from the committed wheelhouse.
+
+`pydantic-core 2.46.5` has no upstream cp315 macOS wheel. Its committed
+`cp315-cp315-macosx_11_0_arm64` wheel is compiled from the official PyPI source archive
+pinned in `Build/native_wheel_sources.json`, using the standalone interpreter,
+the official rustup **1.99.1-aarch64-apple-darwin** toolchain, the installed Xcode C
+toolchain, and **maturin 1.16.0** constrained by
+`Build/native_build_constraints.txt`. `refresh_wheelhouse.sh` checks the Rust version
+and selects that toolchain explicitly; it never changes the user's default Rust.
+Install it with `rustup toolchain install 1.99.1 --profile minimal --no-self-update`.
+Rust source/cache/toolchain paths are remapped to generic `/build/*` prefixes and
+release debug information and symbols are stripped. `verify_wheel_paths.py` scans
+every wheel member for local machine paths before a refreshed wheelhouse is accepted.
+Generated SBOM references use the pinned official source archive URL instead of the
+temporary build directory; dependency and license data remain intact, and `wheel pack`
+regenerates RECORD hashes. Runtime preparation also rejects any version that differs
+from the repository `.python-version`.
+The remaining runtime packages match the tested development
+versions; only build tools and GUI-only dependencies are excluded. Ordinary offline
+app builds do not need Rust or rebuild this native wheel.
+The generated seed manifest records every wheel's SHA-256 and the native build inputs.
+Unused wheel command-line launchers with absolute build paths are omitted from the app.
+
+The bridge reads the bundled runtime manifest instead of assuming a Python minor
+version or an external installation path. `smoke_test_app.sh` copies the completed
+app to a different path containing spaces, runs the helper there with a temporary
+workspace and local Git remote, and verifies Python 3.15.2 and the pinned dependencies.
+`verify_python_runtime.py` inspects every bundled Mach-O file and RPATH, rejects
+non-system external dependencies or escaping symlinks, checks the arm64 architecture,
+and ensures deployment targets do not exceed the app's declared minimum. This check
+includes native wheels as well as the interpreter, app, and bridge. Building or testing
+does not install the app or touch the user's real importer workspace.
 
 The isolated acceptance and Git transaction scripts set
 `AAAJIAO_IMPORTER_SITE_ORDER_FILE` to a temporary JSON array of canonical artwork URLs.

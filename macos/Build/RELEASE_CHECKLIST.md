@@ -15,6 +15,8 @@ step and section 6's file-eyeballing steps (`.app` not staged, `seed_manifest.js
 - Confirm `portfolio_scraper/scraper/` contains the intended Python snapshot for the release build.
 - Confirm `aaajiao_works.json` and `aaajiao_portfolio.md` are the intended seed baseline.
 - Confirm `macos/Vendor/wheelhouse/` matches `macos/Build/wheelhouse_requirements.txt`.
+- Confirm `python_runtime_manifest.json` pins the intended standalone CPython version,
+  release URL and SHA-256. The current runtime is standard-GIL arm64 CPython 3.15.2.
 
 ## 2. Refresh offline dependencies
 
@@ -27,6 +29,13 @@ Expected result:
 
 - All pinned wheels are present in `macos/Vendor/wheelhouse/`
 - Offline install verification passes
+- Native cp315 wheels import under the pinned standalone interpreter. Refreshing
+  `pydantic-core 2.46.5` requires official rustup toolchain 1.99.1 and the Xcode C toolchain; its official
+  source hash and maturin 1.16.0 build constraint are recorded in the Build directory.
+  A normal app build uses the committed wheel and does not compile it again.
+- The wheel member scan rejects user-home, Homebrew, and machine-specific temporary
+  paths. Refresh remaps source/cache/toolchain prefixes and strips release debug data;
+  it selects the pinned Rust toolchain without changing the system/default Rust.
 
 ## 3. Build the app bundle
 
@@ -58,6 +67,11 @@ Expected result:
 - `macos/Seed/seed_manifest.json` is regenerated
 - `dist/aaajiao Importer.app` is rebuilt and ad-hoc signed
 - `smoke_test_app.sh` passes automatically
+- Smoke uses a relocated copy of the bundle, a temporary workspace, and a local Git
+  remote. It confirms Python 3.15.2, exact dependency versions, and helper startup even
+  with invalid inherited Python paths. No installed app or real workspace is changed.
+- Every Mach-O executable/library has arm64 support, all non-system dependencies and
+  RPATHs remain inside the bundle, and all minimum OS versions fit Info.plist.
 
 ## 4. Run acceptance checks
 
@@ -158,8 +172,10 @@ Expected result:
 - Confirm the freshly regenerated `macos/Seed/seed_manifest.json` shows the intended
   `source_commit`; it's a gitignored build artifact rebuilt by `prepare_seed.sh` on every
   run, so there is nothing to `git add` for it
-- Confirm `python_runtime.mode` is `wheelhouse` for the final release build
+- Confirm `python_runtime.mode` is `standalone_wheelhouse`, and its version, ABI,
+  release URL and SHA-256 match `Build/python_runtime_manifest.json`.
 - Confirm `LSMinimumSystemVersion` and release requirements cover the minimum macOS
   version of every bundled executable and library. Inspect Mach-O build versions with
-  `xcrun vtool -show-build`; the current bundled Python runtime requires macOS 14.
+  `xcrun vtool -show-build`; `verify_python_runtime.py` checks every bundled native file
+  automatically. The app retains its macOS 14 deployment contract.
 - Confirm the repo is clean after the final commit

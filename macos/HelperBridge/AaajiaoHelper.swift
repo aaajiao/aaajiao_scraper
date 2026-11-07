@@ -23,12 +23,15 @@ struct AaajiaoHelper {
         let contentsURL = macOSURL.deletingLastPathComponent()
         let resourcesURL = contentsURL.appendingPathComponent("Resources", isDirectory: true)
 
-        let pythonCandidates = [
-            resourcesURL.appendingPathComponent("python_runtime/bin/python3").path,
-            resourcesURL.appendingPathComponent("python_runtime/bin/python3.9").path,
-            resourcesURL.appendingPathComponent("python_runtime/bin/python").path
-        ]
-        guard let pythonPath = pythonCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+        let runtimeURL = resourcesURL.appendingPathComponent("python_runtime", isDirectory: true)
+        struct RuntimeManifest: Decodable {
+            let executable: String
+            let site_packages: String
+        }
+        let manifestURL = runtimeURL.appendingPathComponent("runtime_manifest.json")
+        let runtime = try JSONDecoder().decode(RuntimeManifest.self, from: Data(contentsOf: manifestURL))
+        let pythonPath = runtimeURL.appendingPathComponent(runtime.executable).path
+        guard FileManager.default.isExecutableFile(atPath: pythonPath) else {
             throw HelperBridgeError.missingResources
         }
 
@@ -37,7 +40,7 @@ struct AaajiaoHelper {
             throw HelperBridgeError.missingResources
         }
 
-        let sitePackages = resourcesURL.appendingPathComponent("python_runtime/lib/python3.9/site-packages").path
+        let sitePackages = runtimeURL.appendingPathComponent(runtime.site_packages).path
         var environment = ProcessInfo.processInfo.environment
         environment["AAAJIAO_IMPORTER_BUNDLE_ROOT"] = resourcesURL.path
         if environment["AAAJIAO_REPO_ROOT"]?.isEmpty ?? true {
@@ -47,12 +50,16 @@ struct AaajiaoHelper {
         environment["PYTHONPATH"] = sitePackages
         environment.removeValue(forKey: "PYTHONHOME")
         environment.removeValue(forKey: "PYTHONEXECUTABLE")
+        environment.removeValue(forKey: "PYTHONUSERBASE")
+        environment.removeValue(forKey: "__PYVENV_LAUNCHER__")
         // Replace this launcher in-place. The app owns this PID and its
         // process group, so timeout/cancellation reaches Python and every
         // inherited git or network subprocess without a surviving wrapper.
-        for key in ["PYTHONHOME", "PYTHONEXECUTABLE"] { unsetenv(key) }
+        for key in ["PYTHONHOME", "PYTHONEXECUTABLE", "PYTHONUSERBASE", "__PYVENV_LAUNCHER__"] { unsetenv(key) }
         for (key, value) in environment { setenv(key, value, 1) }
-        var arguments = ([pythonPath, enginePath] + Array(CommandLine.arguments.dropFirst())).map { strdup($0) } + [nil]
+        // Signed Resources must stay immutable; never write import bytecode
+        // into bundled dependencies when the helper first starts.
+        var arguments = ([pythonPath, "-B", enginePath] + Array(CommandLine.arguments.dropFirst())).map { strdup($0) } + [nil]
         defer { for pointer in arguments { free(pointer) } }
         execv(pythonPath, &arguments)
         throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)

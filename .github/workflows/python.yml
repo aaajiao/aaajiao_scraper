@@ -1,0 +1,66 @@
+name: Python 3.15
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Locked Python, offline tests, GUI and wheel
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      RUSTUP_TOOLCHAIN: 1.99.1
+      PYTHON_DOTENV_DISABLED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      UV_PYTHON_DOWNLOADS: never
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up the pinned Python interpreter
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: .python-version
+
+      - name: Install native build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential pkg-config cmake gfortran \
+            libjpeg-dev zlib1g-dev libpng-dev libfreetype6-dev \
+            liblcms2-dev libtiff-dev libwebp-dev libopenjp2-7-dev \
+            libssl-dev libffi-dev libopenblas-dev liblapack-dev
+          rustup toolchain install 1.99.1 --profile minimal
+          rustc --version
+          cargo --version
+
+      - name: Bootstrap the hash-locked environment
+        env:
+          PYTHON_BIN: python
+        run: ./tools/bootstrap_python.sh
+
+      - name: Verify dependencies and interpreter
+        run: |
+          ./.venv/bin/python -m pip check
+          ./.venv/bin/python tools/check_environment.py
+
+      - name: Check migration tools
+        run: ./.venv/bin/ruff check --select E9,F tools tests/conftest.py macos/Build/*.py
+
+      - name: Run the complete test suite offline
+        run: ./.venv/bin/python tools/run_tests.py
+
+      - name: Verify the Streamlit page and launcher
+        run: ./.venv/bin/python tools/check_gui.py
+
+      - name: Build and verify the installed wheel
+        run: ./.venv/bin/python tools/check_wheel.py

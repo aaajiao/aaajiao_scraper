@@ -17,11 +17,10 @@
 
 ## 快速开始
 
-安装依赖：
+开发与 GUI 固定使用 CPython **3.15.2**。在仓库根目录重建锁定环境：
 
 ```bash
-pip install -e .
-pip install -e ".[dev]"
+./tools/bootstrap_python.sh
 ```
 
 启动 GUI：
@@ -33,34 +32,39 @@ pip install -e ".[dev]"
 或直接运行：
 
 ```bash
-python3 -m streamlit run portfolio_scraper/app.py
+./.venv/bin/python -m streamlit run portfolio_scraper/app.py
 ```
+
+依赖版本、SHA-256 校验、原生构建工具、干净环境验证与 macOS helper
+独立运行时的说明见 [`DEVELOPMENT.md`](../DEVELOPMENT.md)。
 
 ## 常用命令
 
 测试：
 
 ```bash
-python3 -m pytest portfolio_scraper/tests/ -v
-python3 -m pytest portfolio_scraper/tests/ --cov=portfolio_scraper/scraper --cov-report=html
+./.venv/bin/python tools/run_tests.py
+./.venv/bin/python tools/check_gui.py
+./.venv/bin/python tools/check_wheel.py
+./.venv/bin/python -m pytest portfolio_scraper/tests/ --cov=portfolio_scraper/scraper --cov-report=html
 ```
 
 脚本：
 
 ```bash
-python portfolio_scraper/scripts/batch_update_works.py --limit 10 --dry-run
-python portfolio_scraper/scripts/clean_size_materials.py aaajiao_works.json --dry-run
-python portfolio_scraper/scripts/clean_materials_credits.py --dry-run
-python portfolio_scraper/scripts/generate_web_report.py
-python portfolio_scraper/scripts/verify_portfolio.py
+./.venv/bin/python portfolio_scraper/scripts/batch_update_works.py --limit 10 --dry-run
+./.venv/bin/python portfolio_scraper/scripts/clean_size_materials.py aaajiao_works.json --dry-run
+./.venv/bin/python portfolio_scraper/scripts/clean_materials_credits.py --dry-run
+./.venv/bin/python portfolio_scraper/scripts/generate_web_report.py
+./.venv/bin/python portfolio_scraper/scripts/verify_portfolio.py
 ```
 
 质量工具：
 
 ```bash
-ruff format portfolio_scraper
-ruff check portfolio_scraper
-mypy portfolio_scraper/scraper/
+./.venv/bin/ruff format portfolio_scraper
+./.venv/bin/ruff check portfolio_scraper
+./.venv/bin/mypy portfolio_scraper/scraper/
 ```
 
 ## 架构摘要

@@ -2,7 +2,7 @@
 # Documentation: https://docs.astral.sh/ruff/
 
 line-length = 100
-target-version = "py39"
+target-version = "py315"
 
 extend-exclude = [
     ".cache",
@@ -31,8 +31,6 @@ ignore = [
     "E501",     # line too long (handled by formatter)
     "B008",     # do not perform function calls in argument defaults
     "B905",     # zip without explicit strict parameter
-    "ANN101",   # missing type annotation for self
-    "ANN102",   # missing type annotation for cls
     "ANN401",   # dynamically typed expressions (Any) are disallowed
 ]
 

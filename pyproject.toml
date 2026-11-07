@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools==84.2.1", "wheel==0.48.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -11,17 +11,14 @@ authors = [
 ]
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.9"
+requires-python = ">=3.15"
 keywords = ["scraper", "web-scraping", "ai", "firecrawl", "portfolio"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.15",
 ]
 
 dependencies = [
@@ -31,7 +28,7 @@ dependencies = [
     "streamlit>=1.29.0",
     "pandas>=2.0.0",
     "python-dotenv>=1.0.0",
-    "pydantic>=2.5.0",
+    "pydantic>=2.13.5",
 ]
 
 [project.optional-dependencies]
@@ -43,9 +40,9 @@ dev = [
     "pytest-asyncio>=0.21.0",
     
     # Code Quality
-    "ruff>=0.1.0",
-    "black>=23.0.0",
-    "mypy>=1.7.0",
+    "ruff>=0.17.4",
+    "black>=26.10.1",
+    "mypy>=2.4.1",
     "isort>=5.12.0",
     
     # Type Stubs
@@ -60,7 +57,7 @@ async = [
 ]
 
 config = [
-    "pydantic>=2.5.0",
+    "pydantic>=2.13.5",
     "pydantic-settings>=2.1.0",
 ]
 
@@ -71,13 +68,10 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/aaajiao-scraper"
-Documentation = "https://github.com/yourusername/aaajiao-scraper#readme"
-Repository = "https://github.com/yourusername/aaajiao-scraper"
-Issues = "https://github.com/yourusername/aaajiao-scraper/issues"
-
-[project.scripts]
-aaajiao-scraper = "scraper.cli:main"
+Homepage = "https://github.com/aaajiao/aaajiao_scraper"
+Documentation = "https://github.com/aaajiao/aaajiao_scraper#readme"
+Repository = "https://github.com/aaajiao/aaajiao_scraper"
+Issues = "https://github.com/aaajiao/aaajiao_scraper/issues"
 
 # ==================
 # Tool Configurations
@@ -91,52 +85,14 @@ exclude = ["tests*", "scripts*"]
 [tool.setuptools.package-data]
 scraper = ["py.typed"]
 
-# ==================
-# Ruff Configuration
-# ==================
-[tool.ruff]
-line-length = 100
-target-version = "py39"
-extend-exclude = [
-    ".cache",
-    ".venv",
-    "agent_discovery_output",
-    "xxx",
-]
-
-[tool.ruff.lint]
-select = [
-    "E",      # pycodestyle errors
-    "W",      # pycodestyle warnings
-    "F",      # pyflakes
-    "I",      # isort
-    "N",      # pep8-naming
-    "UP",     # pyupgrade
-    "B",      # flake8-bugbear
-    "C4",     # flake8-comprehensions
-    "SIM",    # flake8-simplify
-    "RUF",    # ruff-specific rules
-]
-ignore = [
-    "E501",   # line too long (handled by black)
-    "B008",   # do not perform function calls in argument defaults
-    "B905",   # zip without explicit strict parameter
-]
-
-[tool.ruff.lint.per-file-ignores]
-"__init__.py" = ["F401"]  # imported but unused
-"tests/**/*.py" = ["N802", "N803"]  # function/argument naming
-"portfolio_scraper/tests/**/*.py" = ["N802", "N803"]  # function/argument naming
-
-[tool.ruff.lint.isort]
-known-first-party = ["scraper"]
+# Ruff configuration is maintained only in .ruff.toml.
 
 # ==================
 # Black Configuration
 # ==================
 [tool.black]
 line-length = 100
-target-version = ['py39']
+target-version = ['py315']
 extend-exclude = '''
 /(
   | .cache
@@ -149,7 +105,7 @@ extend-exclude = '''
 # MyPy Configuration
 # ==================
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.15"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false  # Start lenient, tighten over time

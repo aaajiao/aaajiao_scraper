@@ -83,7 +83,7 @@ If you change seed/build/apply behavior in `macos/`, update:
 
 ## Common Commands
 
-Use the repository-standard virtual environment at `.venv/` for Python, pip, pytest, Streamlit, and related tooling. Do not create or use `.venv-local/` in this repository.
+Use standard CPython 3.15.2 from `.python-version` and the repository-standard `.venv/` for Python, pip, pytest, Streamlit, and related tooling. Do not create or use `.venv-local/`. Rebuild with `./tools/bootstrap_python.sh`; dependency versions, hashes, and build inputs are in `requirements/`. See `DEVELOPMENT.md`. The macOS helper also uses a separately pinned standalone CPython 3.15.2 and its own ABI-specific wheelhouse; never copy the development environment into the app.
 
 ### Python product surface
 
@@ -95,8 +95,10 @@ Use the repository-standard virtual environment at `.venv/` for Python, pip, pyt
 ./.venv/bin/ruff format portfolio_scraper
 ./.venv/bin/ruff check portfolio_scraper
 ./.venv/bin/mypy portfolio_scraper/scraper/
-./.venv/bin/pip install -e .
-./.venv/bin/pip install -e ".[dev]"
+./tools/bootstrap_python.sh
+./.venv/bin/python tools/run_tests.py
+./.venv/bin/python tools/check_gui.py
+./.venv/bin/python tools/check_wheel.py
 ```
 
 ### macOS product surface

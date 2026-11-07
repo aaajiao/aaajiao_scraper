@@ -7,7 +7,7 @@ in an explicit, controlled flow.
 
 ## Tech Stack
 
-- Python 3.9+, Requests, BeautifulSoup, Pandas, and Pydantic for scraping, normalization, and data validation
+- CPython 3.15.2, Requests, BeautifulSoup, Pandas, and Pydantic for scraping, normalization, and data validation
 - Streamlit for the Python-side GUI and operator workflows
 - OpenAI structured outputs and Firecrawl Extract API v2 for AI-assisted record extraction
 - SwiftUI, AppKit, and Foundation for the local macOS importer app
@@ -50,20 +50,25 @@ aaajiao_scraper/
 
 ## Quick Start
 
-Python product surface:
+Python product surface (CPython 3.15.2):
 
 ```bash
+./tools/bootstrap_python.sh
 ./start_gui.command
-python3 -m pytest portfolio_scraper/tests/ -v
-python portfolio_scraper/scripts/batch_update_works.py --limit 10 --dry-run
+./.venv/bin/python tools/run_tests.py
+./.venv/bin/python tools/check_gui.py
+./.venv/bin/python portfolio_scraper/scripts/batch_update_works.py --limit 10 --dry-run
 ```
+
+See [DEVELOPMENT.md](DEVELOPMENT.md) for locked dependencies, clean rebuilds,
+installed-wheel verification, and the independent macOS runtime.
 
 macOS product surface:
 
 ```bash
 ./macos/Build/prepare_seed.sh
 ./macos/Build/build_local_app.sh
-python3 -m pytest tests/test_macos_helper.py -v
+./.venv/bin/python -m pytest tests/test_macos_helper.py -v
 ```
 
 ## Documentation
